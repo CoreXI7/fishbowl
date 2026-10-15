@@ -1,0 +1,57 @@
+# homelab-dash collector config: /etc/homelab-dash/collector.toml
+# Every key is optional; the defaults work on most Debian/Ubuntu boxes.
+
+# Where hw.json is written (mount this folder read-only into the dash container at /hw).
+# out_dir = "/var/lib/homelab-dash"
+
+# UID the dash container runs as (owns the small request folder used by the cron "Looks good" button).
+# dash_uid = 1000
+
+# Network interface for the up/down rate. Default: the one with the default route.
+# net_if = "eth0"
+
+# Seconds between updates (SMART runs every 5 min, security checks every minute).
+# interval = 5
+
+# Mount points to show in the Drives panel (globs allowed). Default: "/", "/mnt/*", "/media/*/*", "/srv/*".
+# Mounts listed here explicitly (no glob) show "NOT MOUNTED" if they disappear.
+# mounts = ["/", "/mnt/disk1", "/mnt/disk2", "/mnt/parity"]
+# mount_labels = { "/" = "boot SSD", "/mnt/parity" = "parity" }
+
+# Set false to skip nvidia-smi even if it is installed.
+# gpu = true
+
+[security]
+# fail2ban jail to report on ("" to skip).
+fail2ban_jail = "sshd"
+# systemd unit for SSH logins ("ssh" on Debian/Ubuntu also checks "sshd"; "" to skip).
+ssh_unit = "ssh"
+# Authelia container name, to count failed logins ("" to skip).
+authelia_container = ""
+# Flag known crypto-miner process names and show the top CPU users.
+process_watch = true
+# bad_process_names = ["xmrig", "minerd", "kinsing"]
+# Flag any crontab change until you click "Looks good" on the dashboard.
+cron_watch = true
+# Show UFW / firewalld status.
+firewall = true
+# Files you locked with `chattr +i`; the dash goes red if a lock disappears.
+# immutable_files = ["/opt/app/config.ini"]
+
+[backup]
+# Your backup script's log. Lines starting with YYYY-MM-DD are grouped by the last day.
+# log = "/var/log/backup.log"
+# The last run is OK if success_regex matches (when set) and failure_regex does not.
+# success_regex = "backup ok"
+# failure_regex = "(?i)\\berror|failed\\b"
+# Backups older than this many hours count as stale.
+# max_age_hours = 26
+
+# Check that fresh backup files exist (newest file age, count, size).
+# [[backup.artifacts]]
+# label = "Nightly snapshot"
+# glob = "/mnt/backup/snapshot-*.tar.gz"
+#
+# [[backup.artifacts]]
+# label = "DB dumps"
+# glob = "/srv/backups/db/*.sql.gz"

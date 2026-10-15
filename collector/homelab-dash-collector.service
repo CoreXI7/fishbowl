@@ -1,0 +1,21 @@
+[Unit]
+Description=homelab-dash host stats collector (writes /var/lib/homelab-dash/hw.json)
+After=docker.service
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/homelab-dash-collector
+Restart=always
+RestartSec=10
+Nice=10
+# Runs as root (smartctl, fail2ban, journal), but can't modify the system and never touches the network.
+StateDirectory=homelab-dash
+StateDirectoryMode=0755
+ProtectHome=read-only
+ProtectSystem=full
+PrivateTmp=yes
+NoNewPrivileges=yes
+MemoryMax=200M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

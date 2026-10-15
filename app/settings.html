@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · homelab dash</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1><a href="/" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:8px"><svg class="cutie" viewBox="0 0 40 40" aria-hidden="true">
+    <defs><radialGradient id="bub" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#fff"/><stop offset=".45" stop-color="#cfeeff"/><stop offset="1" stop-color="#8fcdf5"/></radialGradient></defs>
+    <circle cx="14" cy="24" r="10" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/><circle cx="28" cy="13" r="7" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/>
+    <circle cx="30" cy="30" r="4.5" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/></svg>
+    <span id="site-title">homelab</span></a> <span class="tag">settings</span> <span class="tag" id="demo-tag" hidden>demo · changes aren't saved</span></h1>
+  <a class="pill" href="/" style="margin-left:auto;text-decoration:none;color:inherit">← Dashboard</a>
+</header>
+<div id="bubbles" aria-hidden="true"></div>
+<div class="set-wrap">
+  <div class="banner" id="banner" hidden></div>
+
+  <section>
+    <h2>Look &amp; feel</h2>
+    <div class="fgrid">
+      <label class="field"><span>Title</span><input type="text" data-k="site.title" maxlength="60"></label>
+      <label class="field"><span>Tagline (all good)</span><input type="text" data-k="site.tagline" maxlength="120"></label>
+      <label class="field"><span>Tagline (something down)</span><input type="text" data-k="site.tagline_down" maxlength="120"></label>
+      <label class="field"><span>Click emoji</span><input type="text" data-k="site.click_emoji" maxlength="16"><small>Rains down when you click the title or mascot.</small></label>
+    </div>
+    <h3 style="font:600 14px Fredoka,sans-serif;margin:16px 0 8px">Mascot <small class="mute" style="font-weight:400">(optional, left column)</small></h3>
+    <div class="mascot-ed">
+      <img id="mascot-prev" alt="" hidden>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span><label class="pill" style="cursor:pointer">Upload image… <input type="file" id="mascot-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
+          <button class="ibtn danger" id="mascot-rm" hidden>Remove</button></span>
+        <small class="mute">PNG, JPEG, WebP or GIF, up to 2 MB. A transparent PNG looks best.</small>
+      </div>
+    </div>
+    <div class="fgrid" style="margin-top:10px">
+      <label class="field"><span>Art credit</span><input type="text" data-k="site.mascot_credit" maxlength="80" placeholder="art: …"></label>
+      <label class="field"><span>Greeting</span><input type="text" data-k="site.greeting" maxlength="200" placeholder="Hi! Everything's up."></label>
+    </div>
+    <label class="field" style="margin-top:10px"><span>Things the mascot says (one per line)</span><textarea data-k="site.quotes" data-list></textarea></label>
+  </section>
+
+  <section>
+    <h2>Services <small id="svc-count"></small></h2>
+    <p class="hint">Found automatically from Nginx Proxy Manager. Group them, rename them and pick icons. Icons are names from
+      <a href="https://dashboard-icons.homarr.dev" target="_blank" rel="noopener">dashboard-icons</a> (e.g. <code>plex</code>, <code>sonarr</code>);
+      leave empty to use the site's own favicon. Services you haven't grouped show up under "New / other" on the dashboard.</p>
+    <div id="groups"></div>
+    <button id="add-group">+ Add group</button>
+    <div id="unassigned"></div>
+    <div id="hidden-wrap" style="margin-top:14px"></div>
+  </section>
+
+  <section>
+    <h2>Extra services <small>not in NPM</small></h2>
+    <p class="hint">Anything else you want health-checked: a NAS, a router, a box on another network.</p>
+    <div id="extras"></div>
+    <button id="add-extra">+ Add service</button>
+  </section>
+
+  <section>
+    <h2>Integrations</h2>
+    <p class="hint">Keys are stored on the server and never shown again (you'll only see "saved"). Changing an address means typing its key again,
+      so a key can't be sent to a new server by accident. <b>Test</b> checks what's saved, so save first.</p>
+    <form class="fgrid" id="integ" onsubmit="return false" autocomplete="off"></form>
+  </section>
+
+  <section>
+    <h2>Security</h2>
+    <label class="field"><span>Trusted IPs (one per line; a prefix ends with a dot, like <code>192.168.1.</code>)</span>
+      <textarea data-k="known_ips" data-list placeholder="192.168.1.&#10;203.0.113.7"></textarea>
+      <small>SSH and SSO logins from anywhere else are flagged red. This list stays on the server.</small></label>
+  </section>
+
+  <section>
+    <h2>Fixed settings <small>change these in docker-compose.yml / .env</small></h2>
+    <p class="hint">These protect the dashboard itself, so they can't be changed from a web page.</p>
+    <div class="ro" id="infra"></div>
+  </section>
+</div>
+
+<div class="savebar"><span class="msg" id="msg">Loading…</span><button id="reload">Discard changes</button><button class="ok" id="save" disabled>Save</button></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/png/";
+let V = null, S = null, SEC = {}, dirty = false;
+
+async function api(url, opts = {}) {
+  const r = await fetch(url, {credentials: "same-origin", ...opts});
+  if (r.redirected || (r.headers.get("content-type") || "").indexOf("json") < 0) { location.reload(); throw new Error("session expired"); }
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+const post = (url, body) => api(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+
+function setDirty(d = true) {
+  dirty = d;
+  $("save").disabled = !d || !V.ui_enabled;
+  $("msg").innerHTML = !V.ui_enabled ? '<span class="warn-t">Read-only: the settings page is disabled (SETTINGS_UI=0).</span>'
+    : !V.writable ? '<span class="crit-t">The data folder is not writable, so saving will fail. Make it writable by uid 1000.</span>'
+    : d ? '<span class="warn-t">● Unsaved changes</span>' : '<span class="mute">All changes saved.</span>';
+}
+addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+// ---------- simple fields (data-k="site.title", data-list = one per line) ----------
+const getPath = (o, k) => k.split(".").reduce((a, p) => a && a[p], o);
+const setPath = (o, k, v) => { const ps = k.split("."), last = ps.pop(); ps.reduce((a, p) => a[p] = a[p] || {}, o)[last] = v; };
+function bindFields() {
+  document.querySelectorAll("[data-k]").forEach(el => {
+    const v = getPath(S, el.dataset.k);
+    el.value = el.hasAttribute("data-list") ? (v || []).join("\n") : (v ?? "");
+    el.disabled = !V.ui_enabled;
+    el.oninput = () => { setPath(S, el.dataset.k, el.hasAttribute("data-list") ? el.value.split("\n").map(x => x.trim()).filter(Boolean) : el.value); setDirty(); };
+  });
+}
+
+// ---------- mascot ----------
+function renderMascot() {
+  $("mascot-prev").hidden = !S.site.mascot; if (S.site.mascot) $("mascot-prev").src = S.site.mascot;
+  $("mascot-rm").hidden = !S.site.mascot;
+}
+$("mascot-file").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  if (f.size > 2 * 1024 * 1024) return showErr("That image is over 2 MB.");
+  try {
+    const r = await api("/api/upload", {method: "POST", headers: {"Content-Type": "application/octet-stream"}, body: f});
+    S.site.mascot = r.url; renderMascot(); setDirty();
+  } catch (err) { showErr("Upload failed: " + err.message); }
+  e.target.value = "";
+};
+$("mascot-rm").onclick = () => { S.site.mascot = ""; renderMascot(); setDirty(); };
+
+// ---------- services: groups, labels, icons, hidden ----------
+const iconSrc = (host) => {
+  const icon = (S.apps[host] || {}).icon || "";
+  return icon ? (icon.startsWith("/") ? icon : CDN + icon + ".png") : (V.demo ? "" : "/api/icon?host=" + encodeURIComponent(host));
+};
+function iconFail(img) { const d = document.createElement("span"); d.className = "lt"; d.textContent = img.dataset.letter || "?"; img.replaceWith(d); }
+const app = host => S.apps[host] = S.apps[host] || {};
+function cleanApp(host) { const a = S.apps[host]; if (a && !a.label && !a.icon && !a.url) delete S.apps[host]; }
+
+function srow(host, gi, idx, len) {
+  const a = S.apps[host] || {}, found = V.discovered.includes(host) || S.services.some(x => x.name === host);
+  const opts = [`<option value="">move to…</option>`, ...S.groups.map((g, i) => i === gi ? "" : `<option value="${i}">${esc(g.name)}</option>`),
+                gi >= 0 ? `<option value="-1">(no group)</option>` : ""].join("");
+  const src = iconSrc(host), letter = esc(((a.label || host)[0] || "?").toUpperCase());
+  return `<div class="srow" data-host="${esc(host)}">
+    ${src ? `<img src="${esc(src)}" alt="" data-letter="${letter}" onerror="iconFail(this)">` : `<span class="lt">${letter}</span>`}
+    <div class="host" title="${esc(host)}">${esc(host)}${found ? "" : "<small>not found any more</small>"}</div>
+    <input type="text" placeholder="${esc(host.split(".")[0])}" value="${esc(a.label || "")}" data-f="label" aria-label="label">
+    <input type="text" placeholder="icon (auto)" value="${esc(a.icon || "")}" data-f="icon" aria-label="icon">
+    <span class="acts">
+      ${gi >= 0 ? `<button class="ibtn" data-a="up" ${idx === 0 ? "disabled" : ""} title="move up">↑</button><button class="ibtn" data-a="down" ${idx === len - 1 ? "disabled" : ""} title="move down">↓</button>` : ""}
+      <select data-a="move" aria-label="move to group">${opts}</select>
+      <button class="ibtn danger" data-a="hide" title="hide from the dashboard">hide</button>
+    </span></div>`;
+}
+
+function renderServices() {
+  const grouped = new Set(S.groups.flatMap(g => g.hosts)), hidden = new Set(S.skip_hosts);
+  const all = [...new Set([...V.discovered, ...S.services.map(x => x.name)])].filter(h => !hidden.has(h));
+  $("svc-count").textContent = `${all.length} found`;
+  $("groups").innerHTML = S.groups.map((g, gi) => `<div class="grp-ed" data-g="${gi}">
+      <div class="gh"><input type="text" value="${esc(g.name)}" data-gname aria-label="group name">
+        <button class="ibtn" data-ga="up" ${gi === 0 ? "disabled" : ""} title="move group up">↑</button>
+        <button class="ibtn" data-ga="down" ${gi === S.groups.length - 1 ? "disabled" : ""} title="move group down">↓</button>
+        <button class="ibtn danger" data-ga="del" title="delete group (its services become ungrouped)">delete</button>
+        <small class="mute" style="margin-left:auto">${g.hosts.length} service${g.hosts.length === 1 ? "" : "s"}</small></div>
+      ${g.hosts.map((h, i) => srow(h, gi, i, g.hosts.length)).join("") || '<div class="hint">Empty. Move services here with "move to…".</div>'}
+    </div>`).join("");
+  const loose = all.filter(h => !grouped.has(h));
+  $("unassigned").innerHTML = loose.length ? `<div class="grp-ed" data-g="-1" style="margin-top:12px"><div class="gh"><b>Not in a group</b>
+      <small class="mute">shown as "New / other" on the dashboard</small></div>${loose.map(h => srow(h, -1, 0, 0)).join("")}</div>` : "";
+  $("hidden-wrap").innerHTML = S.skip_hosts.length ? `<div class="hint" style="margin-bottom:6px">Hidden from the dashboard (click to show again):</div>
+      <div class="chiplist">${S.skip_hosts.map(h => `<button data-unhide="${esc(h)}">${esc(h)} ✕</button>`).join("")}</div>` : "";
+  document.querySelectorAll("#groups input, #groups button, #groups select, #unassigned input, #unassigned button, #unassigned select, #hidden-wrap button, #add-group")
+    .forEach(el => el.disabled = el.disabled || !V.ui_enabled);
+}
+
+function onServicesEvent(e) {
+  const t = e.target, row = t.closest(".srow"), grp = t.closest(".grp-ed");
+  const gi = grp ? +grp.dataset.g : null;
+  if (t.dataset.unhide) { S.skip_hosts = S.skip_hosts.filter(h => h !== t.dataset.unhide); renderServices(); return setDirty(); }
+  if (t.hasAttribute("data-gname")) { if (e.type === "input") { S.groups[gi].name = t.value; setDirty(); } return; }
+  if (t.dataset.ga && e.type === "click") {
+    const g = S.groups;
+    if (t.dataset.ga === "up") [g[gi - 1], g[gi]] = [g[gi], g[gi - 1]];
+    if (t.dataset.ga === "down") [g[gi + 1], g[gi]] = [g[gi], g[gi + 1]];
+    if (t.dataset.ga === "del" && confirm(`Delete the group "${g[gi].name}"? Its services become ungrouped.`)) g.splice(gi, 1);
+    renderServices(); return setDirty();
+  }
+  if (!row) return;
+  const host = row.dataset.host;
+  if (t.dataset.f && e.type === "input") {
+    app(host)[t.dataset.f] = t.value.trim(); cleanApp(host); setDirty();
+    if (t.dataset.f === "icon") { const img = row.querySelector("img,.lt"), src = iconSrc(host); if (img && src) img.outerHTML = `<img src="${esc(src)}" alt="" data-letter="?" onerror="iconFail(this)">`; }
+    return;
+  }
+  const a = t.dataset.a;
+  if (a === "move" && e.type === "change" && t.value !== "") {
+    S.groups.forEach(g => g.hosts = g.hosts.filter(h => h !== host));
+    if (+t.value >= 0) S.groups[+t.value].hosts.push(host);
+  } else if ((a === "up" || a === "down") && e.type === "click") {
+    const hs = S.groups[gi].hosts, i = hs.indexOf(host), j = a === "up" ? i - 1 : i + 1;
+    [hs[i], hs[j]] = [hs[j], hs[i]];
+  } else if (a === "hide" && e.type === "click") {
+    S.groups.forEach(g => g.hosts = g.hosts.filter(h => h !== host));
+    if (!S.skip_hosts.includes(host)) S.skip_hosts.push(host);
+  } else return;
+  renderServices(); setDirty();
+}
+["click", "input", "change"].forEach(ev => {
+  $("groups").addEventListener(ev, onServicesEvent); $("unassigned").addEventListener(ev, onServicesEvent); $("hidden-wrap").addEventListener(ev, onServicesEvent);
+});
+$("add-group").onclick = () => { S.groups.push({name: "New group", hosts: []}); renderServices(); setDirty(); };
+
+// ---------- extra services ----------
+function renderExtras() {
+  $("extras").innerHTML = S.services.map((x, i) => `<div class="fgrid" data-i="${i}" style="grid-template-columns:1fr 1.4fr auto auto;align-items:end;margin-bottom:8px">
+      <label class="field"><span>Name (shown, and links to https://name)</span><input type="text" value="${esc(x.name)}" data-x="name" placeholder="nas.lan"></label>
+      <label class="field"><span>Address to check</span><input type="url" value="${esc(x.url)}" data-x="url" placeholder="http://192.168.1.5:5000"></label>
+      <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" ${x.auth ? "checked" : ""} data-x="auth"> 🔒 SSO</label>
+      <button class="ibtn danger" data-xdel style="margin-bottom:6px">remove</button></div>`).join("") || '<div class="hint">None.</div>';
+  $("extras").querySelectorAll("input,button").forEach(el => el.disabled = !V.ui_enabled);
+  $("add-extra").disabled = !V.ui_enabled;
+}
+$("extras").addEventListener("input", e => { const row = e.target.closest("[data-i]"); if (!row) return; const x = S.services[+row.dataset.i], k = e.target.dataset.x;
+  x[k] = k === "auth" ? e.target.checked : e.target.value.trim(); setDirty(); });
+$("extras").addEventListener("click", e => { if (e.target.hasAttribute("data-xdel")) { S.services.splice(+e.target.closest("[data-i]").dataset.i, 1); renderExtras(); renderServices(); setDirty(); } });
+$("add-extra").onclick = () => { S.services.push({name: "", url: "", auth: false}); renderExtras(); setDirty(); };
+
+// ---------- integrations ----------
+const INTEG = [
+  {k: "qbittorrent", title: "qBittorrent", what: "torrents + VPN-leak check", fields: [["qbit_user", "Username", "text"], ["qbit_pass", "Password", "password"]],
+   extra: `<label class="field"><span>Your real home IP (optional)</span><input type="text" data-k="qbittorrent.home_ip" placeholder="203.0.113.10"><small>If qBittorrent ever shows this IP, the VPN leaked: big red banner.</small></label>`,
+   url: "http://192.168.1.10:8080"},
+  {k: "seerr", title: "Seerr / Overseerr / Jellyseerr", what: "approve requests", fields: [["seerr_key", "API key", "password"]], url: "http://overseerr:5055",
+   help: "Settings → General → API Key"},
+  {k: "tautulli", title: "Tautulli", what: "Plex Now Playing", fields: [["tautulli_key", "API key", "password"]], url: "http://tautulli:8181",
+   help: "Settings → Web Interface → API Key"},
+];
+function renderInteg() {
+  $("integ").innerHTML = INTEG.map(it => {
+    const urlLocked = V.locked_urls[it.k], on = S[it.k].url && it.fields.every(([f]) => V.secrets[f].set);
+    return `<div class="integ" data-it="${it.k}">
+      <h3><span>${esc(it.title)} <small class="mute" style="font:400 12px 'M PLUS Rounded 1c'">${esc(it.what)}</small></span>
+        <span class="${on ? "ok-t" : "mute"}" style="font-size:12px">${on ? "● on" : "○ off"}</span></h3>
+      <label class="field"><span>Address</span><input type="url" data-k="${it.k}.url" placeholder="${esc(it.url)}" ${urlLocked ? "disabled" : ""}>
+        ${urlLocked ? '<small class="lockt">🔒 set in the environment</small>' : ""}</label>
+      ${it.fields.map(([f, label, type]) => { const st = V.secrets[f];
+        return `<label class="field" style="margin-top:8px"><span>${esc(label)}${it.help && type === "password" ? ` <small>(${esc(it.help)})</small>` : ""}</span>
+          <input type="${type}" data-secret="${f}" autocomplete="${type === "password" ? "new-password" : "off"}" ${st.locked ? "disabled" : ""}
+            placeholder="${st.locked ? "🔒 set in the environment" : st.set ? "•••••• saved (leave empty to keep)" : "not set"}">
+          ${st.set && !st.locked ? `<small><label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-clear="${f}"> remove saved value</label></small>` : ""}</label>`; }).join("")}
+      ${it.extra ? `<div style="margin-top:8px">${it.extra}</div>` : ""}
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center"><button class="ibtn" data-test="${it.k}">Test</button><span class="res" data-res="${it.k}"></span></div>
+    </div>`; }).join("");
+}
+$("integ").addEventListener("input", e => {
+  if (e.target.dataset.secret) { SEC[e.target.dataset.secret] = e.target.value; setDirty(); }
+  if (e.target.dataset.clear) { SEC[e.target.dataset.clear + "_clear"] = e.target.checked; setDirty(); }
+});
+$("integ").addEventListener("click", async e => {
+  const k = e.target.dataset.test; if (!k) return;
+  const res = document.querySelector(`[data-res="${k}"]`);
+  if (dirty) { res.innerHTML = '<span class="warn-t">Save first: Test uses the saved settings.</span>'; return; }
+  res.textContent = "testing…";
+  try { const r = await post("/api/settings/test", {name: k}); res.innerHTML = `<span class="${r.ok ? "ok-t" : "crit-t"}">${r.ok ? "✓" : "✗"} ${esc(r.detail)}</span>`; }
+  catch (err) { res.innerHTML = `<span class="crit-t">✗ ${esc(err.message)}</span>`; }
+});
+
+// ---------- fixed settings ----------
+function renderInfra() {
+  const i = V.infra;
+  $("infra").innerHTML = [
+    ["Dashboard address (CSRF guard)", i.origins.length ? i.origins.join(", ") : "not set: any page on the dashboard's own address (ORIGIN)"],
+    ["Only accept connections from", i.trusted_proxy || "anyone (TRUSTED_PROXY not set)"],
+    ["NPM folder", i.npm_dir],
+    ["Saving", V.writable ? "data folder is writable ✓" : "data folder NOT writable ✗"],
+    ["Root collector", V.collector ? "running ✓ (configure in /etc/homelab-dash/collector.toml)" : "not installed (drives, GPU and security panels need it)"],
+  ].map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("");
+}
+
+// ---------- load / save ----------
+function showErr(m) { $("banner").hidden = false; $("banner").textContent = m; $("banner").scrollIntoView({behavior: "smooth", block: "center"}); }
+function render() {
+  S = structuredClone(V.settings); SEC = {};
+  document.title = "Settings · " + S.site.title; $("site-title").textContent = S.site.title; $("demo-tag").hidden = !V.demo;
+  renderInteg(); bindFields(); renderMascot(); renderServices(); renderExtras(); renderInfra();
+  $("banner").hidden = true; setDirty(false);
+}
+async function load() { V = await api("/api/settings"); render(); }
+$("reload").onclick = () => { if (!dirty || confirm("Discard your unsaved changes?")) render(); };
+$("save").onclick = async () => {
+  $("save").disabled = true; $("msg").textContent = "Saving…";
+  try {
+    S.services = S.services.filter(x => x.name || x.url);
+    V = await post("/api/settings", {settings: S, secrets: SEC});
+    render(); $("msg").innerHTML = V.demo_not_saved ? '<span class="ok-t">✓ Looks valid! (Demo: nothing is really saved, so the next visitor sees the original.)</span>'
+      : '<span class="ok-t">✓ Saved. The dashboard uses the new settings right away.</span>';
+  } catch (e) { showErr("Not saved: " + e.message); setDirty(true); }
+};
+(function bubbles() {
+  const box = $("bubbles"); if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (let i = 0; i < 12; i++) { const b = document.createElement("i"), s = 14 + Math.random() * 40;
+    Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%", animationDuration: 16 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"}); box.appendChild(b); }
+})();
+load().catch(e => showErr("Couldn't load settings: " + e.message));
+</script>
+</body>
+</html>

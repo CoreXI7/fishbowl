@@ -1,0 +1,11 @@
+# your settings and secrets stay local
+.env
+data/
+config.toml
+collector.toml
+# your own mascot / icons (add them yourself)
+app/static/*
+!app/static/favicon.svg
+__pycache__/
+*.pyc
+*.bak*

@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>homelab dash</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1 id="title" title="click me"><svg class="cutie" viewBox="0 0 40 40" aria-hidden="true">
+    <defs><radialGradient id="bub" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#fff"/><stop offset=".45" stop-color="#cfeeff"/><stop offset="1" stop-color="#8fcdf5"/></radialGradient></defs>
+    <circle cx="14" cy="24" r="10" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/><circle cx="28" cy="13" r="7" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/>
+    <circle cx="30" cy="30" r="4.5" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/><circle cx="10.5" cy="20" r="2.4" fill="#fff" opacity=".9"/><circle cx="25.8" cy="10.6" r="1.6" fill="#fff" opacity=".9"/></svg>
+    <span id="site-title">homelab</span> <span class="tag" id="quote">loading…</span></h1>
+  <span class="pill mute" id="p-time" style="margin-left:auto"></span>
+  <a class="pill" id="demo-pill" href="https://github.com/" target="_blank" rel="noopener" hidden style="text-decoration:none;color:inherit">demo · fake data</a>
+  <button class="pill" id="wall-btn" title="Wall mode for a TV or spare screen (W)" aria-pressed="false"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="12.5" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/></svg></button>
+  <a class="pill gear" id="gear" href="/settings" title="Settings" hidden>⚙</a>
+</header>
+<div id="bubbles" aria-hidden="true"></div>
+<div class="layout">
+<nav class="kpis" aria-label="summary">
+  <a class="kpi" id="k-svc" href="#s-svc"><span class="kl">🫧 Services</span><span class="kv2">…</span><span class="ks"></span></a>
+  <a class="kpi" id="k-plex" href="#s-plex" data-feature="plex"><span class="kl">🎬 Plex</span><span class="kv2">…</span><span class="ks"></span></a>
+  <a class="kpi" id="k-req" href="#s-req" data-feature="seerr"><span class="kl">📮 Requests</span><span class="kv2">…</span><span class="ks"></span></a>
+  <a class="kpi" id="k-net" href="#s-tor" data-feature="qbit"><span class="kl">🛡 VPN · torrents</span><span class="kv2">…</span><span class="ks"></span></a>
+  <a class="kpi" id="k-sys" href="#left"><span class="kl">⚡ CPU · RAM</span><span class="kv2">…</span><span class="ks"></span></a>
+  <a class="kpi" id="k-disk" href="#s-drv"><span class="kl">💾 Storage</span><span class="kv2">…</span><span class="ks"></span></a>
+  <a class="kpi" id="k-sec" href="#s-sec"><span class="kl">🔒 Security</span><span class="kv2">…</span><span class="ks"></span></a>
+</nav>
+<aside id="left">
+  <section><h2>System <small id="sys-up"></small></h2><div id="sys"><div class="empty">loading…</div></div></section>
+  <section><h2>Temperatures <small id="tmp-n"></small></h2><div class="temps" id="tmp"></div></section>
+  <section id="s-gpu" hidden><h2>GPU <small id="gpu-n"></small></h2><div id="gpu"></div></section>
+  <div class="mascot" id="mascot" hidden><div class="say" id="say"></div>
+    <img src="data:," alt="mascot" id="mascot-img" title="click me!"><small id="mascot-credit"></small></div>
+</aside>
+<main>
+  <div class="banner" id="banner" hidden></div>
+  <section class="wide" id="s-svc"><h2>Services <small id="svc-n"></small></h2><div class="groups" id="svc"><div class="empty">checking…</div></div></section>
+  <div class="duo">
+    <section id="s-plex" data-feature="plex"><h2>Plex · Now Playing <small id="plex-n"></small></h2><div class="streams" id="plex"><div class="empty">loading…</div></div></section>
+    <section id="s-req" data-feature="seerr"><h2>Requests <small id="req-n"></small></h2><div id="req"></div></section>
+  </div>
+  <section class="wide" id="s-tor" data-feature="qbit"><h2><span>Torrents <small class="mute" id="tor-n" style="font-weight:400"></small></span>
+      <span class="tabs"><button class="on" id="t-dl" onclick="torTab('dl')">Downloading</button><button id="t-seed" onclick="torTab('seed')">Seeding</button></span></h2>
+    <div id="dl" class="scroll"></div><div id="seed" class="scroll" hidden></div></section>
+</main>
+<aside id="right">
+  <section id="s-sec"><h2>Security &amp; backups <small id="sec-n"></small></h2><div class="sec" id="sec"><div class="empty">loading…</div></div></section>
+  <section id="s-drv"><h2>Drives <small id="drv-n"></small></h2><div id="drv"><div class="empty">loading…</div></div></section>
+</aside>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const size = b => { if (b == null) return "–"; const u = ["B","KB","MB","GB","TB","PB"]; let i = 0; while (b >= 1024 && i < 5) { b /= 1024; i++; } return (i ? b.toFixed(b < 10 ? 2 : 1) : b) + " " + u[i]; };
+const speed = b => b ? size(b) + "/s" : "0";
+const eta = s => { if (!s || s >= 8640000) return "∞"; const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; };
+const ago = iso => { const s = (Date.now() - new Date(iso)) / 1000; return s < 3600 ? Math.round(s/60) + "m ago" : s < 86400 ? Math.round(s/3600) + "h ago" : Math.round(s/86400) + "d ago"; };
+const ago2 = ts => ago(ts * 1000);
+const shortTime = iso => new Date(iso).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
+const kpi = (id, state, value, sub) => { const k = $(id); k.className = "kpi " + (state || ""); k.querySelector(".kv2").innerHTML = value; k.querySelector(".ks").innerHTML = sub || "&nbsp;"; };
+function torTab(which) {
+  ["dl", "seed"].forEach(w => { $(w).hidden = w !== which; $("t-" + w).classList.toggle("on", w === which); });
+}
+const STATE = {downloading:"downloading",stalledDL:"stalled",metaDL:"fetching metadata",forcedDL:"forced",queuedDL:"queued",checkingDL:"checking",pausedDL:"paused",stoppedDL:"stopped"};
+
+async function getJSON(url) {
+  const r = await fetch(url, {credentials: "same-origin"});
+  // An auth proxy (Authelia etc.) answering instead of us means the login expired: reload to log in again.
+  if (r.redirected || (r.headers.get("content-type") || "").indexOf("json") < 0) { location.reload(); throw new Error("session expired"); }
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+
+// ---------- config (from config.toml via /api/config) ----------
+let CFG = {groups: [], apps: {}, features: {}, quotes: []};
+const CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/png/";
+
+function applyConfig() {
+  document.title = CFG.title;
+  $("site-title").textContent = CFG.title;
+  $("quote").textContent = CFG.tagline;
+  $("gear").hidden = !CFG.settings_ui;
+  if (CFG.demo) { $("demo-pill").hidden = false; if (CFG.repo) $("demo-pill").href = CFG.repo; else $("demo-pill").removeAttribute("href"); }
+  document.querySelectorAll("[data-feature]").forEach(el => el.hidden = !CFG.features[el.dataset.feature]);
+  if (!CFG.features.plex && !CFG.features.seerr) document.querySelector(".duo").hidden = true;
+  else if (!CFG.features.plex || !CFG.features.seerr) document.querySelector(".duo").style.gridTemplateColumns = "minmax(0,1fr)";
+  if (CFG.mascot) {
+    $("mascot").hidden = false;
+    $("mascot-img").src = CFG.mascot;
+    $("mascot-credit").textContent = CFG.mascot_credit || "";
+    $("say").textContent = CFG.greeting || CFG.quotes[0] || "Hi!";
+  }
+}
+
+// ---------- services ----------
+function iconFail(img) {
+  const step = +(img.dataset.step || 0);
+  img.dataset.step = step + 1;
+  if (step === 0 && img.dataset.fav) { img.src = img.dataset.fav; return; }
+  const d = document.createElement("div"); d.className = "lt"; d.textContent = img.dataset.letter; img.replaceWith(d);
+}
+
+async function loadServices() {
+  try {
+    const d = await getJSON("/api/services");
+    const down = d.services.filter(s => !s.up);
+    const tile = s => {
+      const app = CFG.apps[s.name] || {}, label = app.label || s.name.split(".")[0], icon = app.icon || "";
+      const fav = CFG.demo ? "" : "/api/icon?host=" + encodeURIComponent(s.name);
+      const src = icon ? (/^(\/|https?:|data:)/.test(icon) ? icon : CDN + icon + ".png") : fav;
+      const tip = `${s.name}\n${s.up ? "online · " + s.ms + " ms" + (s.code ? " · HTTP " + s.code : "") : "OFFLINE (" + (s.err || "HTTP " + s.code) + ")"}${s.auth ? "\nbehind SSO" : ""}`;
+      const href = app.url || "https://" + s.name;
+      return `<a class="app ${s.up ? "" : "down"}" href="${esc(href)}" target="_blank" rel="noopener" title="${esc(tip)}">
+        <span class="ic">${src ? `<img src="${esc(src)}" alt="" loading="lazy" data-fav="${icon ? esc(fav) : ""}" data-letter="${esc(label[0].toUpperCase())}" onerror="iconFail(this)">` : `<span class="lt">${esc(label[0].toUpperCase())}</span>`}<span class="st ${s.up ? "up" : "down"}"></span></span>
+        <span class="nm">${esc(label)}</span><span class="lk">${s.auth ? "🔒" : "&nbsp;"}</span></a>`;
+    };
+    const byName = Object.fromEntries(d.services.map(s => [s.name, s])), used = new Set();
+    const groups = CFG.groups.map(g => [g.name, (g.hosts || []).filter(h => byName[h]).map(h => (used.add(h), byName[h]))]);
+    const other = d.services.filter(s => !used.has(s.name));
+    if (other.length) groups.push([CFG.groups.length ? "✨ New / other" : "All services", other]);
+    $("svc").innerHTML = groups.filter(([, l]) => l.length).map(([g, list]) => {
+      const dn = list.filter(s => !s.up).length;
+      return `<div class="grp"><h3><span>${esc(g)}</span><span class="${dn ? "crit-t" : "ok-t"}">${dn ? dn + " down" : list.length + " ✓"}</span></h3><div class="apps">${list.map(tile).join("")}</div></div>`;
+    }).join("") || `<div class="empty">No services found. Mount NPM's proxy_host folder or add [[services]] to config.toml.</div>`;
+    $("svc-n").textContent = `${d.services.length - down.length}/${d.services.length} up · checked ${new Date(d.checked*1000).toLocaleTimeString()}`;
+    setMood(down.length);
+    kpi("k-svc", down.length ? "bad" : "ok", `${d.services.length - down.length}/${d.services.length}`, down.length ? "down: " + down.slice(0, 3).map(s => esc(s.name.split(".")[0])).join(", ") : "all online");
+  } catch (e) { $("svc").innerHTML = `<div class="err">${esc(e.message)}</div>`; kpi("k-svc", "warn", "?", esc(e.message)); }
+}
+
+// ---------- qBittorrent ----------
+function torRow(t, dl) {
+  const st = dl ? (STATE[t.state] || t.state) : "";
+  return `<div class="tor"><div class="t" title="${esc(t.name)}">${esc(t.name)}</div>
+    ${dl ? `<div class="bar"><i style="width:${(t.progress*100).toFixed(1)}%"></i></div>` : ""}
+    <div class="s">${dl ? `<span>${(t.progress*100).toFixed(1)}% of ${size(t.size)}</span><span>↓ ${speed(t.dlspeed)}</span><span>ETA ${eta(t.eta)}</span><span>${esc(st)}</span><span>${t.num_seeds} seeds</span>`
+      : `<span>↑ ${speed(t.upspeed)}</span><span>${t.num_leechs} peers</span><span>ratio ${t.ratio.toFixed(2)}</span><span>${size(t.size)}</span>`}
+    ${t.category ? `<span>${esc(t.category)}</span>` : ""}</div></div>`;
+}
+
+async function loadQbit() {
+  if (!CFG.features.qbit) return;
+  try {
+    const q = await getJSON("/api/qbit");
+    $("dl").innerHTML = q.downloading.length ? q.downloading.map(t => torRow(t, true)).join("") : `<div class="empty">Nothing downloading.</div>`;
+    $("t-dl").textContent = `Downloading (${q.downloading.length})`; $("t-seed").textContent = `Seeding (${q.seeding_active})`;
+    $("seed").innerHTML = q.seeding.length ? q.seeding.map(t => torRow(t, false)).join("") : `<div class="empty">No active uploads right now.</div>`;
+    $("tor-n").textContent = `· ${q.total} torrents · lifetime ↑ ${size(q.up_total)} ↓ ${size(q.dl_total)}`;
+    const connOk = q.connection !== "disconnected" && !q.vpn_leak && q.external_ip;
+    const mbs = b => (b / 1048576).toFixed(b >= 10485760 ? 0 : 1);
+    kpi("k-net", q.vpn_leak ? "bad" : connOk ? "ok" : "warn", `↓ ${mbs(q.dl_speed)} ↑ ${mbs(q.up_speed)} <small style="font-size:.55em">MB/s</small>`,
+        q.vpn_leak ? "<b>VPN LEAK: home IP!</b>" : `${q.vpn_check ? "VPN" : "IP"} ${esc(q.external_ip || "?")} · ${esc(q.connection)}`);
+    $("banner").hidden = !q.vpn_leak;
+    if (q.vpn_leak) $("banner").textContent = "qBittorrent is using your home IP. The VPN is not protecting it!";
+  } catch (e) { $("dl").innerHTML = `<div class="err">qBittorrent: ${esc(e.message)}</div>`; kpi("k-net", "warn", "qbit ?", "unreachable"); }
+}
+
+// ---------- Seerr requests ----------
+async function loadRequests() {
+  if (!CFG.features.seerr) return;
+  try {
+    const d = await getJSON("/api/requests");
+    const poster = p => p && p.startsWith("data:") ? p : "https://image.tmdb.org/t/p/w154" + p;
+    $("req").innerHTML = d.pending.length ? d.pending.map(r => `<div class="req" id="r${r.id}">
+      ${r.poster ? `<img loading="lazy" src="${esc(poster(r.poster))}" alt="">` : `<div class="ph"></div>`}
+      <div class="b"><div><b>${esc(r.title)}</b> ${r.year ? `<span class="mute">(${esc(r.year)})</span>` : ""}<span class="tag">${r.type === "tv" ? "TV" : "Movie"}</span>${r.is4k ? '<span class="tag">4K</span>' : ""}</div>
+        <div class="mute" style="font-size:12px">${esc(r.user)} · ${ago(r.created)}${r.seasons.length ? " · season " + r.seasons.join(", ") : ""}</div>
+        <div class="ov">${esc(r.overview)}</div>
+        <button class="ok" onclick="act(${r.id},'approve',this)">Approve</button> <button class="no" onclick="act(${r.id},'decline',this)">Decline</button>
+        <span class="err" id="e${r.id}"></span></div></div>`).join("") : `<div class="empty">No pending requests. 🎉</div>`;
+    $("req-n").textContent = d.pending.length || "";
+    kpi("k-req", d.pending.length ? "warn" : "ok", d.pending.length ? `${d.pending.length} waiting` : "none", d.pending.length ? esc(d.pending.slice(0, 2).map(r => r.title).join(", ")) : "all caught up 🎉");
+  } catch (e) { $("req").innerHTML = `<div class="err">Seerr: ${esc(e.message)}</div>`; kpi("k-req", "warn", "?", "Seerr unreachable"); }
+}
+
+async function act(id, action, btn) {
+  if (action === "decline" && !confirm("Decline this request?")) return;
+  btn.parentElement.querySelectorAll("button").forEach(b => b.disabled = true);
+  try {
+    const r = await fetch(`/api/requests/${id}/${action}`, {method: "POST", credentials: "same-origin"});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.status);
+    $("r" + id).style.opacity = .4;
+    setTimeout(loadRequests, 600);
+  } catch (e) { $("e" + id).textContent = " " + e.message; btn.parentElement.querySelectorAll("button").forEach(b => b.disabled = false); }
+}
+
+// ---------- system, temps, GPU, drives ----------
+const lvl = (v, w, c) => v == null ? "" : v >= c ? "crit" : v >= w ? "warn" : "";
+const tcls = (v, w, c) => v == null ? "" : v >= c ? "crit-t" : v >= w ? "warn-t" : "ok-t";
+const meter = (pct, w = 80, c = 90) => `<div class="meter"><i class="${lvl(pct, w, c)}" style="width:${Math.min(100, pct || 0).toFixed(1)}%"></i></div>`;
+const tcell = (label, v, w, c, tip) => `<div class="tc" title="${esc(tip || label)}"><small>${esc(label)}</small><b class="${tcls(v, w, c)}">${v == null ? "–" : Math.round(v) + "°"}</b></div>`;
+const dur = s => { const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60); return d ? `${d}d ${h}h` : `${h}h ${m}m`; };
+const bits = b => { if (b == null) return "–"; let v = b * 8, u = ["b/s","Kb/s","Mb/s","Gb/s"], i = 0; while (v >= 1000 && i < 3) { v /= 1000; i++; } return v.toFixed(v < 10 && i ? 1 : 0) + " " + u[i]; };
+
+async function loadSystem() {
+  try {
+    const s = await getJSON("/api/system"), hw = s.hw, memUsed = s.mem_total - s.mem_avail, memPct = 100 * memUsed / s.mem_total;
+    const swapUsed = s.swap_total - s.swap_free, cpuT = s.temps.cpu;
+    $("sys-up").textContent = "up " + dur(s.uptime);
+    $("sys").innerHTML = `
+      <div class="kv"><span>CPU${s.cpu_model ? " · " + esc(s.cpu_model) : ""}</span><span>load ${s.load.map(x => x.toFixed(2)).join(" ")}</span></div>
+      <div class="big">${s.cpu.toFixed(0)}%</div>${meter(s.cpu, 70, 90)}
+      <div class="cores" title="per-thread load (${s.cores.length} threads)" style="grid-template-columns:repeat(${Math.min(16, s.cores.length)},1fr)">${s.cores.map(c => `<i title="${c.toFixed(0)}%"><b style="height:${c}%"></b></i>`).join("")}</div>
+      <div class="kv"><span>Memory</span><span>${size(memUsed)} / ${size(s.mem_total)}</span></div>${meter(memPct, 80, 92)}
+      ${s.swap_total ? `<div class="kv"><span>Swap</span><span>${size(swapUsed)} / ${size(s.swap_total)}</span></div>` : ""}
+      ${hw && hw.net ? `<div class="kv"><span>Network (${esc(hw.net.if)})</span><span>↓ ${bits(hw.net.rx_bps)} &nbsp;↑ ${bits(hw.net.tx_bps)}</span></div>` : ""}
+      ${hw && hw.containers ? `<div class="kv"><span>Containers</span><span>${hw.containers.running} running / ${hw.containers.total}</span></div>` : ""}
+      ${!hw ? `<div class="kv"><span class="mute">Install the collector for drives, GPU and security</span><span></span></div>` : hw.stale ? `<div class="kv"><span class="err">Collector data is stale</span><span></span></div>` : ""}`;
+    kpi("k-sys", s.cpu >= 90 || memPct >= 92 || cpuT >= 90 ? "bad" : s.cpu >= 70 || memPct >= 80 || cpuT >= 80 ? "warn" : "ok",
+        `${s.cpu.toFixed(0)}% · ${memPct.toFixed(0)}%`, `${cpuT != null ? "CPU " + Math.round(cpuT) + "° · " : ""}RAM ${size(memUsed)} · up ${dur(s.uptime)}`);
+    renderSecurity(hw);
+    const g = hw && hw.gpu, sm = (hw && hw.smart) || {};
+    const hdd = (hw ? hw.disks : []).filter(d => d.dev && !/nvme|mmcblk/.test(d.dev)).map(d => sm[d.dev] && sm[d.dev].temp).filter(v => v != null);
+    const cells = s.temps.cells.map(t => tcell(t.label, t.c, t.warn, t.crit));
+    if (g && g.temp != null) cells.push(tcell("GPU", g.temp, 75, 85));
+    if (hdd.length) cells.push(tcell("HDD max", Math.max(...hdd), 45, 50, "hottest hard drive"), tcell("HDD avg", hdd.reduce((a, b) => a + b, 0) / hdd.length, 45, 50));
+    $("tmp").innerHTML = cells.join("") || `<div class="empty">No temperature sensors visible.</div>`;
+    $("s-gpu").hidden = !g;
+    if (g) {
+      $("gpu-n").textContent = g.name;
+      $("gpu").innerHTML = `
+      <div class="kv"><span>Load</span><span>${g.util}%</span></div>${meter(g.util, 80, 95)}
+      <div class="kv"><span>NVENC / NVDEC</span><span>${g.enc}% / ${g.dec}%</span></div>
+      <div class="kv"><span>Encode sessions</span><span>${g.sessions ?? 0}</span></div>
+      <div class="kv"><span>VRAM</span><span>${(g.mem_used/1024).toFixed(1)} / ${(g.mem_total/1024).toFixed(0)} GB</span></div>${meter(100 * g.mem_used / g.mem_total, 85, 95)}
+      <div class="kv"><span>Power · Fan</span><span>${g.power != null ? g.power.toFixed(0) + " W" : "–"} · ${g.fan ?? "–"}%</span></div>`;
+    }
+    if (hw && hw.disks && hw.disks.length) {
+      const data = hw.disks.filter(d => !d.system && d.total);
+      const pool = data.length ? data : hw.disks.filter(d => d.total);
+      const tot = pool.reduce((a, d) => a + d.total, 0), used = pool.reduce((a, d) => a + d.used, 0);
+      $("drv-n").textContent = `${size(used)} / ${size(tot)}`;
+      const smartBad = hw.disks.some(d => d.missing || (sm[d.dev] || {}).passed === false), full = hw.disks.some(d => d.total && d.used / (d.used + d.free) > .95);
+      const sectors = hw.disks.filter(d => { const x = sm[d.dev] || {}; return x.realloc > 0 || x.pending > 0; }).length;
+      kpi("k-disk", smartBad ? "bad" : full || sectors ? "warn" : "ok", `${size(tot - used)} free`,
+          `${(100 * used / tot).toFixed(0)}% of ${size(tot)}${smartBad ? " · <b>drive problem!</b>" : sectors ? ` · ${sectors} drive${sectors > 1 ? "s" : ""} with bad sectors` : ""}`);
+      $("drv").innerHTML = `<div class="kv"><span>${data.length ? "All data drives" : "Total"}</span><span>${size(tot - used)} free</span></div>${meter(100 * used / tot, 90, 95)}` +
+        hw.disks.map(d => {
+          if (d.missing) return `<div class="drv"><div class="h"><b class="crit-t">${esc(d.name)}</b><span class="chip crit-t">NOT MOUNTED</span></div></div>`;
+          const x = sm[d.dev] || {}, pct = 100 * d.used / (d.used + d.free);  // same as df
+          const bad = x.passed === false || x.realloc > 0 || x.pending > 0 || x.uncorrect > 0;
+          const health = x.standby ? `<span class="chip">asleep</span>` : x.passed === false ? `<span class="chip crit-t">SMART FAIL</span>` :
+            bad ? `<span class="chip warn-t" title="reallocated ${x.realloc ?? 0} · pending ${x.pending ?? 0} · uncorrectable ${x.uncorrect ?? 0}">⚠ sectors</span>` : "";
+          const warm = /nvme/.test(d.dev) ? [65, 75] : [45, 50];
+          const tip = [x.model || d.model, d.dev, d.mount, x.hours != null ? `${Math.round(x.hours/24/365*10)/10} years powered on` : "", x.wear != null ? `wear ${x.wear}%` : "",
+                       x.realloc != null ? `realloc ${x.realloc} · pending ${x.pending ?? 0}` : ""].filter(Boolean).join("\n");
+          return `<div class="drv" title="${esc(tip)}"><div class="h"><b>${esc(d.name)}</b><span>${health} <span class="chip ${tcls(x.temp, ...warm)}">${x.temp != null ? x.temp + "°C" : "–"}</span></span></div>
+            <div class="md">${esc(x.model || d.model)} · ${esc(d.dev)}</div>${meter(pct, 90, 95)}
+            <div class="s"><span>${size(d.used)} / ${size(d.total)}</span><span>${pct.toFixed(0)}% · ${size(d.free)} free</span></div></div>`;
+        }).join("");
+    } else {
+      $("drv").innerHTML = `<div class="empty">Drive stats need the collector service.</div>`;
+      kpi("k-disk", "", "–", "needs the collector");
+    }
+  } catch (e) { $("sys").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+// ---------- Plex (via Tautulli) ----------
+async function loadPlex() {
+  if (!CFG.features.plex) return;
+  try {
+    const d = await getJSON("/api/plex");
+    // Only a VIDEO transcode can use the GPU; audio-only transcodes (e.g. AC3 -> AAC) are always CPU and cheap.
+    kpi("k-plex", d.sessions.some(s => s.video_decision === "transcode" && !s.transcode_hw_encoding) ? "warn" : "ok",
+        d.stream_count ? `${d.stream_count} watching` : "idle", d.stream_count ? `${(d.bandwidth/1000).toFixed(1)} Mbps · ${d.transcodes} transcoding` : "nobody streaming");
+    $("plex-n").textContent = d.stream_count ? `${d.stream_count} stream${d.stream_count > 1 ? "s" : ""} · ${(d.bandwidth/1000).toFixed(1)} Mbps · ${d.transcodes} transcoding` : "";
+    $("plex").innerHTML = d.sessions.length ? d.sessions.map(s => {
+      const ep = s.media_type === "episode", tc = s.transcode_decision === "transcode";
+      const title = ep ? s.grandparent_title : s.title, sub = ep ? `S${s.parent_media_index}·E${s.media_index} — ${s.title}` : (s.year || "");
+      const icon = s.state === "paused" ? "⏸" : s.state === "buffering" ? "⏳" : "▶";
+      const mode = tc && s.video_decision !== "transcode" ? `<span class="chip good">Audio transcode</span>` :
+        tc ? `<span class="chip mid">Transcode${s.transcode_hw_encoding ? " (HW)" : " (CPU!)"}</span>` :
+        s.transcode_decision === "copy" ? `<span class="chip good">Direct Stream</span>` : `<span class="chip good">Direct Play</span>`;
+      const res = s.stream_video_full_resolution || s.video_full_resolution;
+      return `<div class="stream">${s.art ? `<img src="${esc(s.art)}" alt="" loading="lazy">` : `<div class="ph"></div>`}
+        <div class="b"><div class="t" title="${esc(s.full_title)}">${esc(title)}</div><div class="sub">${esc(sub)}</div>
+          <div class="sub">👤 ${esc(s.friendly_name)} · ${esc(s.product)} on ${esc(s.player)}</div>
+          <div class="bar"><i style="width:${+s.progress_percent || 0}%"></i></div>
+          <div class="sub">${icon} ${esc(s.state)} · ${+s.progress_percent || 0}%${s.duration ? " · " + eta(Math.max(0, (s.duration - s.view_offset)/1000)) + " left" : ""}</div>
+          <div class="chips">${mode}${res ? `<span class="chip">${esc(res)}</span>` : ""}<span class="chip">${(s.bandwidth/1000).toFixed(1)} Mbps</span>
+            <span class="chip ${s.location === "wan" ? "" : "good"}">${s.location === "wan" ? "remote" : "home"}</span></div></div></div>`;
+    }).join("") : `<div class="empty">Nobody's watching right now. 🍿</div>`;
+  } catch (e) { $("plex").innerHTML = `<div class="err">Tautulli: ${esc(e.message)}</div>`; kpi("k-plex", "warn", "?", "Tautulli unreachable"); }
+}
+
+// ---------- security & backups (every box is optional: it only shows if the collector reports it) ----------
+// "known" is decided on the server (config known_ips), so your list of trusted IPs never reaches the browser.
+const known = item => !!item.known;
+
+function renderSecurity(hw) {
+  const s = hw && hw.security, b = hw && hw.backups;
+  if (!s || s.error) {
+    $("sec").innerHTML = `<div class="empty">${s && s.error ? esc(s.error) : "Security checks need the collector service."}</div>`;
+    kpi("k-sec", "", "–", s && s.error ? "collector error" : "needs the collector");
+    return;
+  }
+  const ok = (good, txt, badTxt) => `<span class="${good ? "ok-t" : "crit-t"}">${good ? "✓ " + txt : "✗ " + badTxt}</span>`;
+  const unknownLogins = s.ssh ? s.ssh.logins.filter(l => !known(l)) : [];
+  const locksOk = !s.locks || s.locks.every(l => l.locked), cronBad = s.cron && s.cron.ok === false;
+  const fwOk = !s.firewall || /^(active|running)/i.test(s.firewall.status);
+  const issues = [!locksOk && "lock missing", s.procs && s.procs.found.length && "bad process", unknownLogins.length && "unknown SSH login",
+                  b && b.ok === false && "backup problem", !fwOk && "firewall off", cronBad && "cron changed"].filter(Boolean);
+  $("sec-n").innerHTML = issues.length ? `<span class="crit-t">⚠ ${esc(issues.join(" · "))}</span>` : `<span class="ok-t">all clear ✓</span>`;
+  const summary = [s.f2b && `${s.f2b.banned_now} banned`, b && `backup ${b.ok ? "ok" : b.ok === false ? "!" : "?"}`, s.locks && "locks ok"].filter(Boolean).join(" · ");
+  kpi("k-sec", issues.length ? "bad" : "ok", issues.length ? `${issues.length} issue${issues.length > 1 ? "s" : ""}` : "all clear",
+      issues.length ? esc(issues.join(" · ")) : summary || "no issues");
+  const boxes = [];
+  if (s.f2b || s.firewall) boxes.push(`<div class="box"><h3>${s.firewall ? "Firewall" : ""}${s.firewall && s.f2b ? " &amp; " : ""}${s.f2b ? "fail2ban" : ""}
+      <span>${s.firewall ? ok(fwOk, esc(s.firewall.name + " " + s.firewall.status), esc(s.firewall.name + " " + s.firewall.status)) : ""}</span></h3>
+      ${s.f2b ? `<div class="row"><span>Banned right now (${esc(s.f2b.jail)})</span><span>${s.f2b.banned_now}</span></div>
+      <div class="row"><span>Banned total (since restart)</span><span>${s.f2b.banned_total}</span></div>` : ""}
+      ${s.ssh ? `<div class="row"><span>SSH failures, 24h</span><span>${s.ssh.failed_24h}</span></div>` : ""}
+      ${s.f2b && s.f2b.ips.length ? `<details><summary>banned IPs</summary><div class="mono">${s.f2b.ips.map(esc).join("<br>")}</div></details>` : ""}</div>`);
+  if (s.ssh) boxes.push(`<div class="box"><h3>SSH logins <span>${unknownLogins.length ? `<span class="crit-t">${unknownLogins.length} unknown</span>` : '<span class="ok-t">all known ✓</span>'}</span></h3>
+      ${s.ssh.logins.slice(0, 5).map(l => `<div class="row"><span>${esc(shortTime(l.time))} · ${esc(l.user)}</span><span class="mono ${known(l) ? "" : "unk"}" title="${known(l) ? "known IP" : "NOT on your known_ips list"}">${esc(l.ip)}</span></div>`).join("") || '<div class="row"><span>none in 7 days</span></div>'}</div>`);
+  if (s.authelia) boxes.push(`<div class="box"><h3>Authelia <span>${s.authelia.failed_24h ? `<span class="warn-t">${s.authelia.failed_24h} failed</span>` : '<span class="ok-t">no failures ✓</span>'}</span></h3>
+      ${s.authelia.recent.slice(0, 4).map(f => `<div class="row"><span>${esc(shortTime(f.time))} · ${esc(f.factor)} ${esc(f.user || "?")}</span><span class="mono ${known(f) ? "" : "unk"}">${esc(f.ip)}</span></div>`).join("") || '<div class="row"><span>failed logins, last 24h</span><span>0</span></div>'}</div>`);
+  if (s.procs) boxes.push(`<div class="box"><h3>Process watch <span>${ok(!s.procs.found.length, "clean", "FOUND: " + esc(s.procs.found.join(", ")))}</span></h3>
+      ${s.procs.top.map(p => `<div class="row" title="PID ${p.pid}"><span>${esc(p.name)}</span><span>${p.cpu.toFixed(0)}%</span></div>`).join("")}</div>`);
+  if (s.cron) boxes.push(`<div class="box"><h3>Cron jobs <span>${ok(!cronBad, "as approved", "CHANGED")}</span></h3>
+      ${cronBad ? s.cron.changes.map(c => `<div class="row"><span class="mono" style="white-space:normal">${esc(c.file)}${c.new_file ? " (new file)" : c.deleted ? " (deleted)" : ""}</span></div>
+          ${c.added.map(l => `<div class="mono" style="color:var(--down);word-break:break-all">+ ${esc(l)}</div>`).join("")}
+          ${c.removed.map(l => `<div class="mono" style="color:var(--mute);word-break:break-all">− ${esc(l)}</div>`).join("")}`).join("") +
+        `<div class="row" style="margin-top:8px"><span>If you made this change:</span><button class="ok" onclick="approveCron('${esc(s.cron.hash)}', this)">Looks good ✓</button></div>
+         <div class="mute" style="font-size:11px">Didn't make it? Don't approve. Check it (possible malware persistence).</div>`
+      : `<div class="row"><span>${s.cron.files ?? "–"} cron files watched</span><span>${s.cron.approved_at ? "approved " + ago2(s.cron.approved_at) : ""}</span></div>`}</div>`);
+  if (s.locks) boxes.push(`<div class="box"><h3>Immutable files <span>${ok(locksOk, "intact", "MISSING")}</span></h3>
+      ${s.locks.map(l => `<div class="row"><span>${esc(l.file)}</span><span>${l.locked ? "🔒" : '<span class="crit-t">unlocked</span>'}</span></div>`).join("")}</div>`);
+  if (b) boxes.push(`<div class="box"><h3>Backups <span>${b.ok == null ? "" : ok(b.ok, "ok", "PROBLEM")}</span></h3>
+      ${b.last_run ? `<div class="row"><span>Last run</span><span>${esc(b.last_run)}</span></div>` : ""}
+      ${(b.artifacts || []).map(a => `<div class="row"><span>${esc(a.label)}${a.count ? ` (${a.count})` : ""}</span><span class="${a.fresh ? "" : "crit-t"}">${a.count ? ago2(a.newest) + " · " + size(a.size) : "none found"}</span></div>`).join("")}
+      ${b.log && b.log.length ? `<details><summary>log</summary><div class="mono">${b.log.map(esc).join("<br>")}</div></details>` : ""}</div>`);
+  $("sec").innerHTML = boxes.join("") || `<div class="empty">All security checks are switched off in collector.toml.</div>`;
+}
+
+async function approveCron(hash, btn) {
+  btn.disabled = true; btn.textContent = "approving…";
+  try {
+    const r = await fetch("/api/cron/approve", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({hash})});
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+    setTimeout(loadSystem, 6000); setTimeout(loadSystem, 11000);
+  } catch (e) { btn.disabled = false; btn.textContent = "failed: " + e.message; }
+}
+
+// ---------- mascot, bubbles, confetti ----------
+let lastDown = 0;
+function setMood(down) {
+  lastDown = down;
+  $("quote").textContent = down ? CFG.tagline_down : CFG.tagline;
+  $("mascot").classList.toggle("sad", !!down);
+  if (down) $("say").textContent = `${CFG.tagline_down} (${down} down)`;
+  else if ($("say").dataset.sad) $("say").textContent = CFG.greeting || CFG.quotes[0] || "All good!";
+  $("say").dataset.sad = down ? "1" : "";
+}
+function mascotSay() {
+  if (lastDown || !CFG.mascot) return;
+  const plex = $("plex-n").textContent, req = parseInt($("req-n").textContent) || 0;
+  const extra = [plex && `Now playing: ${plex}`, req && `${req} request${req > 1 ? "s" : ""} waiting for you!`].filter(Boolean);
+  const pool = CFG.quotes.concat(extra, extra);
+  if (pool.length) $("say").textContent = pool[Math.floor(Math.random() * pool.length)];
+}
+function bubbles() {
+  const box = $("bubbles"); if (!box || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (let i = 0; i < 18; i++) {
+    const b = document.createElement("i"), s = 14 + Math.random() * 46;
+    Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%", animationDuration: 14 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"});
+    box.appendChild(b);
+  }
+}
+function confetti() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (let i = 0; i < 16; i++) setTimeout(() => {
+    const m = document.createElement("div"); m.className = "confetti"; m.textContent = CFG.click_emoji;
+    m.style.left = Math.random() * 96 + "vw"; m.style.animationDuration = 2.2 + Math.random() * 1.8 + "s";
+    document.body.appendChild(m); setTimeout(() => m.remove(), 4500);
+  }, i * 90);
+}
+$("title").addEventListener("click", confetti);
+$("mascot-img").addEventListener("click", () => { confetti(); mascotSay(); });
+setInterval(mascotSay, 20000);
+
+// ---------- wall mode: ?wall in the URL, the 🖥 button, or the W key ----------
+let idleTimer, reloadTimer;
+const isWall = () => document.body.classList.contains("wall");
+function wake() {   // in wall mode, show the cursor (and the button) while the mouse moves; hide them after 3 s of stillness
+  document.body.classList.remove("idle"); clearTimeout(idleTimer);
+  if (isWall()) idleTimer = setTimeout(() => document.body.classList.add("idle"), 3000);
+}
+function setWall(on) {
+  document.body.classList.toggle("wall", on);
+  $("wall-btn").title = on ? "Leave wall mode (W)" : "Wall mode for a TV or spare screen (W)";
+  $("wall-btn").setAttribute("aria-pressed", on);
+  const url = new URL(location.href);
+  if (on) url.searchParams.set("wall", ""); else url.searchParams.delete("wall");
+  history.replaceState(null, "", url.pathname + url.search.replace("wall=", "wall").replace(/\?$/, "") + url.hash);
+  clearTimeout(reloadTimer);
+  if (on) reloadTimer = setTimeout(() => location.reload(), 6 * 3600 * 1000);   // wall display: fresh page every 6 h clears browser memory
+  wake(); tick();
+}
+["mousemove", "mousedown", "touchstart", "keydown"].forEach(e => addEventListener(e, wake, {passive: true}));
+$("wall-btn").addEventListener("click", () => setWall(!isWall()));
+addEventListener("keydown", e => { if (e.key.toLowerCase() === "w" && !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) setWall(!isWall()); });
+if (/[?&#]wall\b/.test(location.search + location.hash)) setWall(true);
+function tick() { $("p-time").textContent = document.body.classList.contains("wall")
+  ? new Date().toLocaleString([], {weekday: "short", hour: "numeric", minute: "2-digit"}) : new Date().toLocaleTimeString(); }
+
+const loadAll = () => { loadServices(); loadQbit(); loadRequests(); loadSystem(); loadPlex(); };
+(async () => {
+  try { CFG = await getJSON("/api/config"); } catch (e) { $("svc").innerHTML = `<div class="err">config: ${esc(e.message)}</div>`; }
+  applyConfig(); bubbles(); loadAll(); tick();
+  setInterval(loadPlex, 10000); setInterval(loadSystem, 3000); setInterval(loadQbit, 5000);
+  setInterval(loadRequests, 30000); setInterval(loadServices, 30000); setInterval(tick, 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadAll(); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+# homelab-dash. Put it behind your reverse proxy + SSO (Authelia, Authentik, ...); it publishes no ports.
+# Setup: see README.md. Everything else is set on the dashboard's /settings page.
+services:
+  dash:
+    container_name: dash
+    # Pinned by digest so `docker compose up` never silently upgrades. To update: docker pull python:3.12-alpine, swap the digest.
+    image: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
+    command: ["python", "-u", "/app/app.py"]
+    restart: unless-stopped
+    mem_limit: 256m                 # a bug can never eat the host's RAM (it restarts instead)
+    pids_limit: 128
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    env_file: .env                  # create it even if empty (cp .env.example .env); keys can go on the settings page instead
+    environment:
+      # Security-critical settings live here, never on the settings page:
+      ORIGIN: ""                          # e.g. https://dash.example.com (CSRF guard); empty = the address it's opened on
+      TRUSTED_PROXY: nginx                # your reverse proxy's container name; empty = accept anyone (LAN-only use)
+      NPM_DIR: /npm
+      # SETTINGS_UI: "0"                  # make the settings page read-only
+    volumes:
+      - ./app:/app:ro
+      - ./data:/data                  # settings + saved keys + uploads (must be writable by uid 1000)
+      # Nginx Proxy Manager's proxy host configs (adjust the left side to your NPM data folder):
+      - ../nginx/data/nginx/proxy_host:/npm:ro
+      # Written by the optional root collector (see collector/). Remove both lines if you don't install it.
+      - /var/lib/homelab-dash:/hw:ro
+      - /var/lib/homelab-dash/req:/req
+    # LAN-only use without a reverse proxy: uncomment, and set trusted_proxy = "" in config.toml.
+    # ports: ["8000:8000"]
+    networks:
+      - reverse_proxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3)"]
+      interval: 60s
+      timeout: 5s
+
+networks:
+  reverse_proxy:
+    # The Docker network your reverse proxy is on.
+    name: reverse_proxy
+    external: true

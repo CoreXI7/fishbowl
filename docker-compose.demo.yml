@@ -1,0 +1,45 @@
+# Public live demo of homelab-dash: fake data only, safe to leave open to the internet.
+#   docker compose -f docker-compose.demo.yml up -d     then point your reverse proxy at homelab-demo:8000
+# What a visitor can and can't do:
+#   - Everything is fake (DEMO=1). No secrets, no host folders, no Docker socket, no outbound connections.
+#   - The settings page checks what they type but never saves it; uploads are off. Nothing persists between visitors.
+# Hardening below: unprivileged user, read-only filesystem, no capabilities, CPU/RAM/process caps, rotated logs,
+# and a network with no internet access that only your reverse proxy shares.
+services:
+  homelab-demo:
+    container_name: homelab-demo
+    image: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
+    command: ["python", "-u", "/app/app.py"]
+    restart: unless-stopped
+    environment:
+      DEMO: "1"
+      DATA_DIR: /tmp/demo
+      # REPO_URL: https://github.com/CoreXI7/homelab-dash   # the "demo · fake data" label links here
+    volumes:
+      - ./app:/app:ro
+      - ./config.example.toml:/config.example.toml:ro
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+    runtime: runc
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 64
+    cpu_period: 100000
+    cpu_quota: 50000
+    logging:
+      driver: json-file
+      options: {max-size: "1m", max-file: "2"}
+    networks: [demo]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3)"]
+      interval: 60s
+      timeout: 5s
+
+networks:
+  demo:
+    name: homelab_demo
+    internal: true      # no internet in or out; connect only your reverse proxy:  docker network connect homelab_demo <proxy-container>
