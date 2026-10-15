@@ -4,6 +4,8 @@ A glanceable dashboard for a self-hosted server: service status, Plex streams, m
 torrents + VPN-leak check, CPU/RAM/temps/GPU, drive health, and a security & backups panel.
 One small stdlib-Python app (no pip, no Node, no database), ~25 MB RAM.
 
+**▶ Live demo: [demo.vicy.us](https://demo.vicy.us)** (fake data; try the ⚙ settings page and the wall-mode button)
+
 ![wall mode, dark](docs/screenshot-wall-dark.png)
 
 | Light | Full page |
