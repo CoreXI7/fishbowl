@@ -85,6 +85,7 @@ const CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/png/";
 
 function applyConfig() {
   document.title = CFG.title;
+  if (CFG.favicon) document.querySelector("link[rel=icon]").href = CFG.favicon;
   $("site-title").textContent = CFG.title;
   $("quote").textContent = CFG.tagline;
   $("gear").hidden = !CFG.settings_ui;
@@ -337,6 +338,7 @@ function renderSecurity(hw) {
       ${s.locks.map(l => `<div class="row"><span>${esc(l.file)}</span><span>${l.locked ? "🔒" : '<span class="crit-t">unlocked</span>'}</span></div>`).join("")}</div>`);
   if (b) boxes.push(`<div class="box"><h3>Backups <span>${b.ok == null ? "" : ok(b.ok, "ok", "PROBLEM")}</span></h3>
       ${b.last_run ? `<div class="row"><span>Last run</span><span>${esc(b.last_run)}</span></div>` : ""}
+      ${(b.checks || []).map(c => `<div class="row"><span>${esc(c.label)}</span><span>${ok(c.ok, c.count + " ✓", c.count + " found")}</span></div>`).join("")}
       ${(b.artifacts || []).map(a => `<div class="row"><span>${esc(a.label)}${a.count ? ` (${a.count})` : ""}</span><span class="${a.fresh ? "" : "crit-t"}">${a.count ? ago2(a.newest) + " · " + size(a.size) : "none found"}</span></div>`).join("")}
       ${b.log && b.log.length ? `<details><summary>log</summary><div class="mono">${b.log.map(esc).join("<br>")}</div></details>` : ""}</div>`);
   $("sec").innerHTML = boxes.join("") || `<div class="empty">All security checks are switched off in collector.toml.</div>`;

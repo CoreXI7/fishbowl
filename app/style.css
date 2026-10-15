@@ -288,7 +288,7 @@ body.wall .kpi .kv2{font-size:25px}
 body.wall .mascot{position:fixed;right:44px;bottom:30px;z-index:3;flex:none;pointer-events:auto}
 body.wall .mascot img{max-height:150px;max-width:none;width:auto}
 /* optional panels: the hidden attribute must beat the display rules above */
-.kpi[hidden],section[hidden],.duo[hidden],.mascot[hidden],.gear[hidden]{display:none!important}
+[hidden]:not(#seed){display:none!important}   /* hidden must beat .pill/.kpi/section display rules (#seed: wall mode shows it) */
 .gear{text-decoration:none;color:inherit;font-size:16px;line-height:1}
 .gear:hover{background:color-mix(in srgb,var(--acc) 25%,var(--card))}
 body.wall .gear{display:none}

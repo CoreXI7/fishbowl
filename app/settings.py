@@ -37,7 +37,7 @@ INTEGRATIONS = {   # name -> url env var, [(secret field, env var)]
 SECRET_ENV = {field: env for _, (_, fields) in INTEGRATIONS.items() for field, env in fields}
 
 DEFAULT_SITE = {"title": "my homelab", "tagline": "everything's running ✨", "tagline_down": "uh oh, something's down!",
-                "click_emoji": "🫧", "greeting": "", "quotes": [], "mascot": "", "mascot_credit": ""}
+                "click_emoji": "🫧", "greeting": "", "quotes": [], "mascot": "", "mascot_credit": "", "favicon": ""}
 
 
 def _read_toml():
@@ -169,6 +169,7 @@ def validate(d, _old):
         "quotes": [q for q in (_s(q, 200, "quote") for q in _list(site_in.get("quotes"), 50, "quotes")) if q],
         "mascot": _s(site_in.get("mascot"), 200, "mascot", r"/(static|uploads)/[\w.-]{1,120}"),
         "mascot_credit": _s(site_in.get("mascot_credit"), 80, "mascot credit"),
+        "favicon": _s(site_in.get("favicon"), 200, "tab icon", r"/(static|uploads)/[\w.-]{1,120}"),
     }
     groups = []
     for g in _list(d.get("groups"), 30, "groups"):

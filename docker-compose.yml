@@ -20,6 +20,7 @@ services:
       TRUSTED_PROXY: nginx                # your reverse proxy's container name; empty = accept anyone (LAN-only use)
       NPM_DIR: /npm
       # SETTINGS_UI: "0"                  # make the settings page read-only
+      # CHECK_VIA_PROXY: demo.example.com # hosts on networks the dash can't reach: health-check them through the proxy
     volumes:
       - ./app:/app:ro
       - ./data:/data                  # settings + saved keys + uploads (must be writable by uid 1000)

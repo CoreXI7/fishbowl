@@ -47,6 +47,12 @@ firewall = true
 # Backups older than this many hours count as stale.
 # max_age_hours = 26
 
+# Extra rows checked against the last run's log lines: OK when the regex matches at least min_count lines.
+# [[backup.checks]]
+# label = "Offsite copies"
+# regex = "offsite copy .* ok"
+# min_count = 2
+
 # Check that fresh backup files exist (newest file age, count, size).
 # [[backup.artifacts]]
 # label = "Nightly snapshot"

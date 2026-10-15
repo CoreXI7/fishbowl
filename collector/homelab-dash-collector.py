@@ -333,6 +333,12 @@ def backups():
         txt = "\n".join(run_lines)
         ok_re, bad_re = BAK.get("success_regex", ""), BAK.get("failure_regex", r"(?i)\berror|failed\b")
         b["ok"] = (not ok_re or bool(re.search(ok_re, txt))) and not (bad_re and re.search(bad_re, txt))
+        b["checks"] = []
+        for c in BAK.get("checks", []):       # e.g. "offsite copies": count matching lines in the last run
+            n = len(re.findall(c.get("regex", "^$"), txt, flags=re.M))
+            b["checks"].append({"label": c.get("label", "check"), "count": n, "ok": n >= int(c.get("min_count", 1))})
+        if any(not c["ok"] for c in b["checks"]):
+            b["ok"] = False
     max_age = float(BAK.get("max_age_hours", 26)) * 3600
     for a in arts:
         files = [f for f in glob.glob(a.get("glob", "")) if os.path.isfile(f)]

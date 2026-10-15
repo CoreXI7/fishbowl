@@ -29,6 +29,11 @@
       <label class="field"><span>Tagline (all good)</span><input type="text" data-k="site.tagline" maxlength="120"></label>
       <label class="field"><span>Tagline (something down)</span><input type="text" data-k="site.tagline_down" maxlength="120"></label>
       <label class="field"><span>Click emoji</span><input type="text" data-k="site.click_emoji" maxlength="16"><small>Rains down when you click the title or mascot.</small></label>
+      <div class="field"><span>Browser tab icon</span>
+        <span style="display:flex;gap:8px;align-items:center"><img id="fav-prev" alt="" style="width:28px;height:28px;border-radius:6px" hidden>
+          <label class="pill" style="cursor:pointer">Upload… <input type="file" id="fav-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
+          <button class="ibtn danger" id="fav-rm" hidden>Default</button></span>
+        <small>A square PNG works best. Default: the bubbles.</small></div>
     </div>
     <h3 style="font:600 14px Fredoka,sans-serif;margin:16px 0 8px">Mascot <small class="mute" style="font-weight:400">(optional, left column)</small></h3>
     <div class="mascot-ed">
@@ -138,6 +143,14 @@ $("mascot-file").onchange = async e => {
   e.target.value = "";
 };
 $("mascot-rm").onclick = () => { S.site.mascot = ""; renderMascot(); setDirty(); };
+function renderFav() { $("fav-prev").hidden = !S.site.favicon; if (S.site.favicon) $("fav-prev").src = S.site.favicon; $("fav-rm").hidden = !S.site.favicon; }
+$("fav-file").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { const r = await api("/api/upload", {method: "POST", headers: {"Content-Type": "application/octet-stream"}, body: f}); S.site.favicon = r.url; renderFav(); setDirty(); }
+  catch (err) { showErr("Upload failed: " + err.message); }
+  e.target.value = "";
+};
+$("fav-rm").onclick = () => { S.site.favicon = ""; renderFav(); setDirty(); };
 
 // ---------- services: groups, labels, icons, hidden ----------
 const iconSrc = (host) => {
@@ -294,8 +307,9 @@ function renderInfra() {
 function showErr(m) { $("banner").hidden = false; $("banner").textContent = m; $("banner").scrollIntoView({behavior: "smooth", block: "center"}); }
 function render() {
   S = structuredClone(V.settings); SEC = {};
+  if (V.settings.site.favicon) document.querySelector("link[rel=icon]").href = V.settings.site.favicon;
   document.title = "Settings · " + S.site.title; $("site-title").textContent = S.site.title; $("demo-tag").hidden = !V.demo;
-  renderInteg(); bindFields(); renderMascot(); renderServices(); renderExtras(); renderInfra();
+  renderInteg(); bindFields(); renderMascot(); renderFav(); renderServices(); renderExtras(); renderInfra();
   $("banner").hidden = true; setDirty(false);
 }
 async function load() { V = await api("/api/settings"); render(); }

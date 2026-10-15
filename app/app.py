@@ -8,6 +8,7 @@ hosts show up automatically. Hardware/security stats come from the optional root
 """
 import glob
 import hashlib
+import http.client
 import http.cookiejar
 import json
 import os
@@ -125,7 +126,39 @@ def check(host):
     return r
 
 
+# Hosts the dashboard can't reach directly (e.g. on a network only the proxy shares): check them through the
+# proxy instead, the way visitors reach them. Env CHECK_VIA_PROXY="demo.example.com other.example.com".
+VIA_PROXY = set(os.environ.get("CHECK_VIA_PROXY", "").split())
+
+
+class _SNIConnection(http.client.HTTPSConnection):
+    """HTTPS to the proxy container while presenting the site's own name (proxies refuse unknown names)."""
+    def __init__(self, host, sni, **kw):
+        super().__init__(host, **kw)
+        self.sni = sni
+
+    def connect(self):
+        sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.sni)
+
+
+def check_via_proxy(host, timeout):
+    t0 = time.monotonic()
+    conn = _SNIConnection(TRUSTED_PROXY or "nginx", host["name"], port=443, timeout=timeout, context=INSECURE)
+    try:
+        conn.request("GET", "/", headers={"Host": host["name"], "User-Agent": UA})
+        code = conn.getresponse().status
+    except Exception as e:
+        return {"name": host["name"], "auth": host["auth"], "up": False, "code": None, "ms": None, "err": type(e).__name__}
+    finally:
+        conn.close()
+    return {"name": host["name"], "auth": host["auth"], "up": code < 500, "code": code,
+            "ms": round((time.monotonic() - t0) * 1000), "err": None}
+
+
 def check_once(host, timeout=5):
+    if host["name"] in VIA_PROXY:
+        return check_via_proxy(host, timeout)
     t0 = time.monotonic()
     req = urllib.request.Request(host["upstream"] + "/", method="GET", headers={"User-Agent": UA, "Host": host["name"]})
     try:
@@ -229,7 +262,8 @@ def cpu_model():
         for line in open("/proc/cpuinfo"):
             if line.startswith("model name"):
                 name = line.split(":", 1)[1].strip()
-                return re.sub(r"\s+\d+-Core Processor|\(R\)|\(TM\)|CPU @.*", "", name).strip()
+                name = re.sub(r"\s+\d+-Core Processor|\(R\)|\(TM\)|CPU @.*", "", name)
+                return re.sub(r"^(AMD|Intel)\s+", "", name.strip())
     except OSError:
         pass
     return ""
@@ -441,7 +475,7 @@ def requests_pending():
 def page_config():
     return {
         "title": SITE["title"], "tagline": SITE["tagline"], "tagline_down": SITE["tagline_down"] or "something's down!",
-        "mascot": SITE["mascot"], "mascot_credit": SITE["mascot_credit"],
+        "mascot": SITE["mascot"], "mascot_credit": SITE["mascot_credit"], "favicon": SITE["favicon"],
         "greeting": SITE["greeting"], "quotes": SITE["quotes"], "click_emoji": SITE["click_emoji"],
         "groups": ED["groups"], "apps": ED["apps"],
         "features": {"qbit": QBIT["on"], "seerr": SEERR["on"], "plex": TAUTULLI["on"]},
@@ -680,7 +714,9 @@ class Handler(BaseHTTPRequestHandler):
         elif m := re.fullmatch(r"/(static|uploads)/([\w.-]+\.(png|svg|webp|ico|jpg|gif))", p):
             folder = os.path.join(HERE, "static") if m[1] == "static" else cfgstore.UPLOAD_DIR
             f = os.path.join(folder, m[2])
-            if not os.path.isfile(f) or (m[1] == "uploads" and m[3] in ("svg", "ico")):
+            # Web uploads are raster-only (save_upload); an SVG in uploads/ was put there by the admin on disk.
+            # Either way it's served with scripts blocked (CSP below), so even a hostile SVG can't run anything.
+            if not os.path.isfile(f) or (m[1] == "uploads" and m[3] == "ico"):
                 return self.send(404, {"error": "not found"})
             ctype = {"png": "image/png", "svg": "image/svg+xml", "webp": "image/webp", "ico": "image/x-icon",
                      "jpg": "image/jpeg", "gif": "image/gif"}[m[3]]
