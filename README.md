@@ -1,10 +1,10 @@
 # homelab-dash 🫧
 
 A glanceable dashboard for a self-hosted server: service status, Plex streams, media requests,
-torrents + VPN-leak check, CPU/RAM/temps/GPU, drive health, and a security & backups panel.
+torrents + VPN-leak check, a live **"what's eating my CPU" breakdown**, temps/GPU, drive health, and a security & backups panel.
 One small stdlib-Python app (no pip, no Node, no database), ~25 MB RAM.
 
-**▶ Live demo: [demo.vicy.us](https://demo.vicy.us)** (fake data; try the ⚙ settings page and the wall-mode button)
+**▶ Live demo: [demo.vicy.us](https://demo.vicy.us)** (fake data; try **⚡ breakdown**, the ⚙ settings page and the wall-mode button)
 
 ![wall mode, dark](docs/screenshot-wall-dark.png)
 
@@ -13,6 +13,23 @@ One small stdlib-Python app (no pip, no Node, no database), ~25 MB RAM.
 | ![](docs/screenshot-wall-light.png) | ![](docs/screenshot-full.png) |
 
 *(Screenshots are demo mode: fake data, Blender open-movie titles.)*
+
+## ⚡ Spotlight: what's eating my CPU?
+
+![CPU breakdown](docs/screenshot-breakdown.png)
+
+Ever wondered why your fans spun up? Click **⚡ breakdown** (or the CPU tile) and get a **live, animated treemap of
+everything using your machine**, grouped the way you think about it:
+
+- **One tile per container** (Plex, qBittorrent, Immich…) and per program on the host (dockerd, your desktop, that
+  rogue script). Bigger tile = more CPU. Tiles glide and resize as the load moves, every few seconds.
+- **Flip to Memory** to see who's hoarding RAM instead.
+- **Click a tile** for its CPU in cores, memory, process count, a live sparkline, and the **busiest processes inside it**:
+  watch "Plex Transcoder" light up the moment someone starts a transcode.
+- Counts *every* process on the box, not just containers, so nothing hides. Costs about 15 ms every 5 seconds.
+- Deep-link it: `https://your-dash/?breakdown`. [Try it on the demo](https://demo.vicy.us/?breakdown).
+
+Needs the (optional) root collector; see Install.
 
 ## Features
 
@@ -24,6 +41,7 @@ One small stdlib-Python app (no pip, no Node, no database), ~25 MB RAM.
 - **Requests** (Seerr / Overseerr / Jellyseerr): approve or decline right from the dashboard.
 - **qBittorrent**: downloads, seeding, speeds, and a big red banner if it ever shows your real home IP (VPN leak).
 - **System**: CPU per thread, RAM, network, temperatures (AMD, Intel, DDR5, NVMe), NVIDIA GPU incl. NVENC/NVDEC.
+- **⚡ CPU / memory breakdown**: a live treemap of every container and host program, with per-process detail (see above).
 - **Drives**: usage + SMART health/temps for every disk, without waking sleeping drives.
 - **Security & backups**: fail2ban, SSH logins from unknown IPs, Authelia failures, crypto-miner watch,
   crontab change detection with a one-click "Looks good" approval, `chattr +i` lock checks, backup freshness.
