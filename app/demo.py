@@ -97,6 +97,27 @@ def plex():
     return {"stream_count": 2, "transcodes": 1, "bandwidth": 29700, "sessions": sessions}
 
 
+def usage():
+    """Fake 'what is using the CPU' data that moves a little each time."""
+    G = [("plex", "container", 9, 1.9e9, [("Plex Transcoder", 7), ("Plex Media Serv", 1.6)]),
+         ("qbittorrent", "container", 2.2, 3.1e9, [("qbittorrent-nox", 2.1)]),
+         ("jellyfin", "container", 1.1, 1.2e9, [("jellyfin", 1)]), ("immich", "container", 1.6, 2.4e9, [("immich", 1.2), ("node", .3)]),
+         ("sonarr", "container", .4, 4.1e8, [("Sonarr", .4)]), ("radarr", "container", .3, 3.8e8, [("Radarr", .3)]),
+         ("homeassistant", "container", .8, 6.2e8, [("python3", .7)]), ("nextcloud", "container", .5, 7.4e8, [("php-fpm", .4)]),
+         ("nginx-proxy-manager", "container", .2, 2.1e8, [("nginx", .2)]), ("authelia", "container", .05, 6e7, [("authelia", .05)]),
+         ("paperless", "container", .3, 9.8e8, [("celery", .2)]), ("vaultwarden", "container", .02, 4e7, [("vaultwarden", .02)]),
+         ("dockerd", "process", .6, 1.5e8, []), ("containerd", "process", .3, 9e7, []), ("sshd", "process", .01, 1.2e7, []),
+         ("kernel threads", "kernel", .7, 0, [])]
+    out = []
+    for name, kind, cpu, mem, top in G:
+        f = max(0.15, 1 + random.uniform(-.35, .35))
+        out.append({"name": name, "kind": kind, "cpu": round(cpu * f * (1.4 if name == "plex" and int(time.time() / 20) % 2 else 1), 2),
+                    "mem": int(mem * (1 + random.uniform(-.02, .02))), "procs": random.randint(1, 40) if kind != "kernel" else 310,
+                    "top": [{"name": n, "cpu": round(c * f, 2)} for n, c in top]})
+    out.sort(key=lambda g: -g["cpu"])
+    return {"ncpu": 16, "idle": round(100 - sum(g["cpu"] for g in out), 2), "groups": out}
+
+
 def system():
     cores = [round(wobble(12, 10, 20 + i), 1) for i in range(16)]
     cpu = round(sum(cores) / len(cores), 1)
@@ -118,6 +139,7 @@ def system():
         "gpu": {"name": "NVIDIA GeForce GTX 1660", "temp": 52, "util": round(wobble(18, 8)), "enc": round(wobble(14, 6)),
                 "dec": round(wobble(10, 5)), "mem_used": 640, "mem_total": 6144, "power": 38, "fan": 35, "sessions": 1},
         "containers": {"running": 31, "total": 33},
+        "usage": usage(),
         "net": {"if": "eth0", "rx_bps": wobble(3.5e6, 1.5e6), "tx_bps": wobble(1.4e6, 6e5)},
         "security": {
             "f2b": {"ok": True, "jail": "sshd", "banned_now": 3, "banned_total": 57, "ips": ["198.51.100.23", "198.51.100.77", "192.0.2.199"]},

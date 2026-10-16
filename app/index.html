@@ -33,7 +33,7 @@
   <a class="kpi" id="k-sec" href="#s-sec"><span class="kl">🔒 Security</span><span class="kv2">…</span><span class="ks"></span></a>
 </nav>
 <aside id="left">
-  <section><h2>System <small id="sys-up"></small></h2><div id="sys"><div class="empty">loading…</div></div></section>
+  <section><h2>System <span class="h2r"><small id="sys-up"></small><button class="mini" id="usage-btn" hidden title="What's using the CPU and memory">⚡ breakdown</button></span></h2><div id="sys"><div class="empty">loading…</div></div></section>
   <section><h2>Temperatures <small id="tmp-n"></small></h2><div class="temps" id="tmp"></div></section>
   <section id="s-gpu" hidden><h2>GPU <small id="gpu-n"></small></h2><div id="gpu"></div></section>
   <div class="mascot" id="mascot" hidden><div class="say" id="say"></div>
@@ -54,6 +54,25 @@
   <section id="s-sec"><h2>Security &amp; backups <small id="sec-n"></small></h2><div class="sec" id="sec"><div class="empty">loading…</div></div></section>
   <section id="s-drv"><h2>Drives <small id="drv-n"></small></h2><div id="drv"><div class="empty">loading…</div></div></section>
 </aside>
+</div>
+
+<div class="usage-ov" id="usage-ov" hidden role="dialog" aria-modal="true" aria-labelledby="usage-title">
+  <div class="usage-box">
+    <div class="usage-head">
+      <h2 id="usage-title">What's using the <span id="u-what">CPU</span></h2>
+      <span class="mute" id="u-sum"></span>
+      <span class="tabs" style="margin-left:auto"><button class="on" data-um="cpu">CPU</button><button data-um="mem">Memory</button></span>
+      <button class="mini" id="usage-close" aria-label="Close">✕</button>
+    </div>
+    <div class="usage-body">
+      <div class="usage-map" id="u-map"></div>
+      <aside class="usage-side">
+        <div id="u-detail" class="u-detail"><div class="mute">Click a tile for details.</div></div>
+        <div id="u-list" class="u-list"></div>
+      </aside>
+    </div>
+    <div class="u-legend"><span><i class="k-container"></i>container</span><span><i class="k-process"></i>program on the host</span><span><i class="k-kernel"></i>kernel</span><span class="mute">live · updates every few seconds · Esc to close</span></div>
+  </div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -219,6 +238,8 @@ async function loadSystem() {
     kpi("k-sys", s.cpu >= 90 || memPct >= 92 || cpuT >= 90 ? "bad" : s.cpu >= 70 || memPct >= 80 || cpuT >= 80 ? "warn" : "ok",
         `${s.cpu.toFixed(0)}% · ${memPct.toFixed(0)}%`, `${cpuT != null ? "CPU " + Math.round(cpuT) + "° · " : ""}RAM ${size(memUsed)} · up ${dur(s.uptime)}`);
     renderSecurity(hw);
+    $("usage-btn").hidden = !(hw && hw.usage && hw.usage.groups);
+    if (hw && hw.usage && hw.usage.groups) usageData(hw.usage);
     const g = hw && hw.gpu, sm = (hw && hw.smart) || {};
     const hdd = (hw ? hw.disks : []).filter(d => d.dev && !/nvme|mmcblk/.test(d.dev)).map(d => sm[d.dev] && sm[d.dev].temp).filter(v => v != null);
     const cells = s.temps.cells.map(t => tcell(t.label, t.c, t.warn, t.crit));
@@ -414,6 +435,112 @@ addEventListener("keydown", e => { if (e.key.toLowerCase() === "w" && !e.ctrlKey
 if (/[?&#]wall\b/.test(location.search + location.hash)) setWall(true);
 function tick() { $("p-time").textContent = document.body.classList.contains("wall")
   ? new Date().toLocaleString([], {weekday: "short", hour: "numeric", minute: "2-digit"}) : new Date().toLocaleTimeString(); }
+
+// ---------- CPU / memory breakdown: live treemap ----------
+const U = {mode: "cpu", sel: null, data: null, hist: {}, open: false};
+const ukey = g => g.kind + ":" + g.name;
+function hue(str) { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
+const UPAL = ["#6366f1", "#8b5cf6", "#ec4899", "#e11d48", "#ea580c", "#0d9488", "#0284c7", "#16a34a", "#a21caf", "#2563eb", "#c026d3", "#0891b2", "#7c3aed", "#db2777"];
+const UHOST = ["#64748b", "#6b7c95", "#57708a", "#7a7f9e", "#5f7a7a"];
+function ucolor(g) {
+  if (g.kind === "kernel" || g.kind === "other") return "#6b7080";
+  const h = hue(g.name);
+  return g.kind === "container" ? UPAL[h % UPAL.length] : UHOST[h % UHOST.length];
+}
+function usageData(u) {
+  const first = !U.data;
+  U.data = u;
+  if (first && /[?&]breakdown\b/.test(location.search)) setTimeout(openUsage, 0);   // deep link: /?breakdown
+  for (const g of u.groups) { const k = ukey(g), a = U.hist[k] || (U.hist[k] = []); a.push(U.mode === "mem" ? g.mem : g.cpu); if (a.length > 60) a.shift(); }
+  if (U.open) renderUsage();
+}
+// squarified treemap: lay rects out in rows that keep tiles as square as possible
+function squarify(items, x, y, w, h) {
+  const out = [], total = items.reduce((a, b) => a + b.v, 0);
+  if (!total || w <= 0 || h <= 0) return out;
+  const scale = w * h / total, rest = items.map(i => ({...i, a: i.v * scale}));
+  while (rest.length) {
+    const side = Math.min(w, h), row = [];
+    let worst = Infinity;
+    while (rest.length) {
+      const next = [...row, rest[0]], sum = next.reduce((a, b) => a + b.a, 0);
+      const mx = Math.max(...next.map(r => r.a)), mn = Math.min(...next.map(r => r.a));
+      const wr = Math.max(side * side * mx / (sum * sum), sum * sum / (side * side * mn));
+      if (row.length && wr > worst) break;
+      row.push(rest.shift()); worst = wr;
+    }
+    const sum = row.reduce((a, b) => a + b.a, 0), thick = sum / side;
+    let off = 0;
+    for (const r of row) {
+      const len = r.a / thick;
+      out.push(w >= h ? {...r, x: x, y: y + off, w: thick, h: len} : {...r, x: x + off, y: y, w: len, h: thick});
+      off += len;
+    }
+    if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+  }
+  return out;
+}
+const fmtCpu = (pct, n) => `${pct.toFixed(pct < 10 ? 1 : 0)}%` + (n ? ` · ${(pct * n / 100).toFixed(2)} cores` : "");
+function spark(vals) {
+  if (!vals || vals.length < 2) return "";
+  const mx = Math.max(...vals, 0.0001), W = 260, H = 46;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1) * W).toFixed(1)},${(H - v / mx * (H - 4) - 2).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 ${W} ${H}" class="spark" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+}
+function renderUsage() {
+  const u = U.data; if (!u) return;
+  const mem = U.mode === "mem", val = g => mem ? g.mem : g.cpu;
+  const groups = u.groups.filter(g => val(g) > (mem ? 1024 * 1024 : 0.005));
+  const busy = u.groups.reduce((a, g) => a + g.cpu, 0), memSum = u.groups.reduce((a, g) => a + g.mem, 0);
+  $("u-what").textContent = mem ? "memory" : "CPU";
+  $("u-sum").textContent = mem ? `${size(memSum)} in programs` : `${busy.toFixed(1)}% busy · ${(busy * u.ncpu / 100).toFixed(1)} of ${u.ncpu} threads`;
+  const box = $("u-map"), W = box.clientWidth, H = box.clientHeight;
+  const rects = squarify(groups.map(g => ({g, v: val(g)})).sort((a, b) => b.v - a.v), 0, 0, W, H);
+  const seen = new Set();
+  for (const r of rects) {
+    const k = ukey(r.g); seen.add(k);
+    let el = box.querySelector(`[data-k="${CSS.escape(k)}"]`);
+    if (!el) { el = document.createElement("button"); el.className = "u-tile"; el.dataset.k = k; el.style.left = r.x + r.w / 2 + "px"; el.style.top = r.y + r.h / 2 + "px"; box.appendChild(el); }
+    Object.assign(el.style, {left: r.x + "px", top: r.y + "px", width: Math.max(r.w - 3, 0) + "px", height: Math.max(r.h - 3, 0) + "px", background: ucolor(r.g)});
+    el.classList.toggle("sel", U.sel === k); el.classList.toggle("tiny", r.w < 70 || r.h < 34);
+    const v = mem ? size(r.g.mem) : fmtCpu(r.g.cpu);
+    el.title = `${r.g.name} (${r.g.kind})\n${mem ? size(r.g.mem) : fmtCpu(r.g.cpu, u.ncpu)}`;
+    el.innerHTML = `<b>${esc(r.g.name)}</b><span>${v}</span>` + (r.h > 70 && r.g.top && r.g.top[0] ? `<small>${esc(r.g.top[0].name)}</small>` : "");
+  }
+  box.querySelectorAll(".u-tile").forEach(el => { if (!seen.has(el.dataset.k)) el.remove(); });
+  if (!rects.length) box.innerHTML = `<div class="empty" style="padding:20px">Nothing measurable right now.</div>`;
+  const list = [...u.groups].sort((a, b) => val(b) - val(a)).slice(0, 25), top = val(list[0] || {cpu: 1, mem: 1}) || 1;
+  $("u-list").innerHTML = list.map(g => `<button class="u-row ${U.sel === ukey(g) ? "sel" : ""}" data-k="${esc(ukey(g))}">
+      <i style="background:${ucolor(g)}"></i><span class="n">${esc(g.name)}</span><span class="v">${mem ? size(g.mem) : fmtCpu(g.cpu)}</span>
+      <span class="b"><i style="width:${(100 * val(g) / top).toFixed(1)}%;background:${ucolor(g)}"></i></span></button>`).join("");
+  const g = u.groups.find(x => ukey(x) === U.sel);
+  $("u-detail").innerHTML = g ? `<h3><i style="background:${ucolor(g)}"></i>${esc(g.name)} <small class="mute">${esc(g.kind === "process" ? "host program" : g.kind)}</small></h3>
+      <div class="kv"><span>CPU</span><span>${fmtCpu(g.cpu, u.ncpu)}</span></div>
+      <div class="kv"><span>Memory</span><span>${size(g.mem)}</span></div>
+      <div class="kv"><span>Processes</span><span>${g.procs}</span></div>
+      <div class="u-spark" style="color:${ucolor(g)}">${spark(U.hist[ukey(g)])}<small class="mute">${mem ? "memory" : "CPU"}, last few minutes</small></div>
+      ${g.top && g.top.length ? `<div class="mute" style="font-size:12px;margin-top:8px">busiest inside</div>` + g.top.map(t => `<div class="kv"><span>${esc(t.name)}</span><span>${fmtCpu(t.cpu)}</span></div>`).join("") : ""}`
+    : `<div class="mute">Click a tile or a row for details. Bigger tile = more ${mem ? "memory" : "CPU"}.</div>`;
+}
+function openUsage() {
+  U.open = true; $("usage-ov").hidden = false; document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => requestAnimationFrame(renderUsage));   // measure the map after the window has laid out
+  loadSystem();
+}
+function closeUsage() { U.open = false; $("usage-ov").hidden = true; document.body.style.overflow = ""; }
+$("usage-btn").addEventListener("click", openUsage);
+$("k-sys").addEventListener("click", e => { if (U.data) { e.preventDefault(); openUsage(); } });
+$("usage-close").addEventListener("click", closeUsage);
+$("usage-ov").addEventListener("click", e => {
+  if (e.target === $("usage-ov")) return closeUsage();
+  const t = e.target.closest("[data-k]"); if (t) { U.sel = U.sel === t.dataset.k ? null : t.dataset.k; renderUsage(); }
+  const m = e.target.closest("[data-um]");
+  if (m) { U.mode = m.dataset.um; U.hist = {}; document.querySelectorAll("[data-um]").forEach(b => b.classList.toggle("on", b === m)); $("u-map").innerHTML = ""; renderUsage(); }
+});
+addEventListener("keydown", e => { if (e.key === "Escape" && U.open) closeUsage(); });
+// redraw whenever the map's real size changes (window resize, fonts/scrollbar settling after it opens)
+if ("ResizeObserver" in window) new ResizeObserver(() => { if (U.open) renderUsage(); }).observe($("u-map"));
+else addEventListener("resize", () => { if (U.open) renderUsage(); });
 
 const loadAll = () => { loadServices(); loadQbit(); loadRequests(); loadSystem(); loadPlex(); };
 (async () => {

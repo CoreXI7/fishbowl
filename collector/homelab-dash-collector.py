@@ -150,11 +150,90 @@ def gpu():
             "sessions": num(v[9])}
 
 
+CONTAINER_NAMES = {}          # full container id -> name, refreshed with containers()
+
+
 def containers():
     if not have("docker"):
         return None
-    states = run(["docker", "ps", "-a", "--format", "{{.State}}"]).split()
+    rows = run(["docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}} {{.Names}} {{.State}}"]).split("\n")
+    rows = [r.split() for r in rows if r.strip()]
+    CONTAINER_NAMES.clear()
+    CONTAINER_NAMES.update({r[0]: r[1] for r in rows if len(r) >= 2})
+    states = [r[2] for r in rows if len(r) >= 3]
     return {"running": states.count("running"), "total": len(states)}
+
+
+# ---------- what is using the CPU / memory: every process, grouped by container (or program name) ----------
+
+PAGE = os.sysconf("SC_PAGE_SIZE")
+CONTAINER_RE = re.compile(r"(?:/docker/|docker-)([0-9a-f]{64})")
+
+
+class Usage:
+    """Samples /proc every round; CPU % = share of the whole machine between two samples."""
+    def __init__(self):
+        self.prev, self.prev_total = {}, None
+        self.ncpu = os.cpu_count() or 1
+
+    @staticmethod
+    def total_jiffies():
+        f = open("/proc/stat").readline().split()[1:]
+        return sum(int(x) for x in f[:8])
+
+    def sample(self):
+        total = self.total_jiffies()
+        cur, groups = {}, {}
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                raw = open(f"/proc/{pid}/stat").read()
+                comm = raw[raw.index("(") + 1:raw.rindex(")")]
+                f = raw[raw.rindex(")") + 2:].split()
+                jiff, ppid, rss = int(f[11]) + int(f[12]), int(f[1]), int(f[21]) * PAGE
+                cg = open(f"/proc/{pid}/cgroup").read()
+            except (OSError, ValueError, IndexError):
+                continue                  # process exited mid-read
+            cur[pid] = (jiff, comm)
+            m = CONTAINER_RE.search(cg)
+            if m:
+                key, kind, name = "c:" + m[1], "container", CONTAINER_NAMES.get(m[1], m[1][:12])
+            elif ppid == 2 or pid == "2":
+                key, kind, name = "kernel", "kernel", "kernel threads"
+            else:
+                key, kind, name = "p:" + comm, "process", comm
+            prev = self.prev.get(pid)
+            d = jiff - prev[0] if prev and prev[1] == comm else 0
+            g = groups.setdefault(key, {"name": name, "kind": kind, "jiffies": 0, "mem": 0, "procs": 0, "top": {}})
+            g["jiffies"] += max(d, 0)
+            g["mem"] += rss if kind != "kernel" else 0
+            g["procs"] += 1
+            if d > 0 and kind == "container":
+                g["top"][comm] = g["top"].get(comm, 0) + d
+        dt = total - self.prev_total if self.prev_total else 0
+        self.prev, self.prev_total = cur, total
+        if dt <= 0:
+            return None                   # first round: no delta yet
+        out = []
+        for g in groups.values():
+            pct = 100 * g["jiffies"] / dt
+            top = sorted(g.pop("top").items(), key=lambda kv: -kv[1])[:5]
+            g.pop("jiffies")
+            out.append({**g, "cpu": round(pct, 2), "top": [{"name": n, "cpu": round(100 * j / dt, 2)} for n, j in top]})
+        out.sort(key=lambda g: -(g["cpu"] * 1e12 + g["mem"]))
+        # keep the 45 biggest by CPU plus the 45 biggest by memory; fold the rest into "other"
+        keep = {id(g) for g in out[:45]} | {id(g) for g in sorted(out, key=lambda g: -g["mem"])[:45]}
+        rest = [g for g in out if id(g) not in keep]
+        out = [g for g in out if id(g) in keep]
+        if rest:
+            out.append({"name": f"{len(rest)} other programs", "kind": "other", "cpu": round(sum(g["cpu"] for g in rest), 2),
+                        "mem": sum(g["mem"] for g in rest), "procs": sum(g["procs"] for g in rest), "top": []})
+        idle = 100 - sum(g["cpu"] for g in out)
+        return {"ncpu": self.ncpu, "idle": round(max(idle, 0), 2), "groups": out}
+
+
+USAGE = Usage()
 
 
 def net_bytes():
@@ -385,6 +464,11 @@ def main():
             last["security"] = now
         if now - last["containers"] >= 30:
             data["containers"], last["containers"] = containers(), now
+        if CFG.get("usage", True):
+            try:
+                data["usage"] = USAGE.sample() or data.get("usage")
+            except Exception as e:
+                data["usage"] = {"error": str(e)}
         try:
             if handle_cron_approval() and isinstance(data.get("security"), dict) and "cron" in data["security"]:
                 data["security"]["cron"] = cron_state()
