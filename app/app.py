@@ -312,6 +312,20 @@ def is_known(ip):
     return any(ip == k or (k.endswith(".") and ip.startswith(k)) for k in KNOWN_IPS)
 
 
+ACKS_FILE = os.path.join(cfgstore.DATA_DIR, "acks.json")   # logins you marked "looks fine" on the dashboard
+
+
+def login_key(item):
+    return hashlib.sha256(f"{item.get('time')}|{item.get('user')}|{item.get('ip')}".encode()).hexdigest()[:20]
+
+
+def load_acks():
+    try:
+        return set(json.load(open(ACKS_FILE)))
+    except Exception:
+        return set()
+
+
 def read_hw():
     try:
         hw = json.load(open(HW_FILE))
@@ -319,9 +333,28 @@ def read_hw():
         return None
     hw["stale"] = time.time() - hw.get("updated", 0) > 60
     sec = hw.get("security") or {}
+    acks = load_acks()
     for item in (sec.get("ssh") or {}).get("logins", []) + (sec.get("authelia") or {}).get("recent", []):
         item["known"] = is_known(item.get("ip", ""))
+        item["acked"] = login_key(item) in acks
     return hw
+
+
+def ack_logins():
+    """Mark every SSH login currently flagged as unknown as reviewed. Keys come from the server's own data,
+    never from the browser, so a request can only acknowledge logins that really happened."""
+    hw = read_hw() or {}
+    logins = ((hw.get("security") or {}).get("ssh") or {}).get("logins", [])
+    new = {login_key(l) for l in logins if not l.get("known")}
+    if DEMO:
+        return {"ok": True, "acked": len(new)}
+    acks = load_acks() | new
+    keep = sorted(acks)[-500:]                     # bounded: plenty for 7 days of logins
+    tmp = ACKS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(keep, f)
+    os.replace(tmp, ACKS_FILE)
+    return {"ok": True, "acked": len(new)}
 
 
 def system():
@@ -757,6 +790,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, save_upload(self.body(2 * 1024 * 1024)))
             except PermissionError:
                 raise cfgstore.Invalid("can't write to the data folder (make it writable by uid 1000)")
+        if path == "/api/security/ack":
+            try:
+                result = ack_logins()
+            except PermissionError:
+                raise cfgstore.Invalid("can't write to the data folder")
+            print(f"SSH logins marked as reviewed by {who}", flush=True)
+            return self.send(200, result)
         if path == "/api/cron/approve":
             try:
                 want = self.json_body(200).get("hash", "")

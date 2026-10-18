@@ -317,6 +317,15 @@ async function loadPlex() {
 // ---------- security & backups (every box is optional: it only shows if the collector reports it) ----------
 // "known" is decided on the server (config known_ips), so your list of trusted IPs never reaches the browser.
 const known = item => !!item.known;
+const flagged = item => !item.known && !item.acked;   // unknown and not yet marked "looks fine"
+async function ackLogins(btn) {
+  btn.disabled = true; btn.textContent = "…";
+  try {
+    const r = await fetch("/api/security/ack", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: "{}"});
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+    loadSystem();
+  } catch (e) { btn.disabled = false; btn.textContent = "failed: " + e.message; }
+}
 
 function renderSecurity(hw) {
   const s = hw && hw.security, b = hw && hw.backups;
@@ -326,7 +335,7 @@ function renderSecurity(hw) {
     return;
   }
   const ok = (good, txt, badTxt) => `<span class="${good ? "ok-t" : "crit-t"}">${good ? "✓ " + txt : "✗ " + badTxt}</span>`;
-  const unknownLogins = s.ssh ? s.ssh.logins.filter(l => !known(l)) : [];
+  const unknownLogins = s.ssh ? s.ssh.logins.filter(flagged) : [];
   const locksOk = !s.locks || s.locks.every(l => l.locked), cronBad = s.cron && s.cron.ok === false;
   const fwOk = !s.firewall || /^(active|running)/i.test(s.firewall.status);
   const issues = [!locksOk && "lock missing", s.procs && s.procs.found.length && "bad process", unknownLogins.length && "unknown SSH login",
@@ -343,7 +352,8 @@ function renderSecurity(hw) {
       ${s.ssh ? `<div class="row"><span>SSH failures, 24h</span><span>${s.ssh.failed_24h}</span></div>` : ""}
       ${s.f2b && s.f2b.ips.length ? `<details><summary>banned IPs</summary><div class="mono">${s.f2b.ips.map(esc).join("<br>")}</div></details>` : ""}</div>`);
   if (s.ssh) boxes.push(`<div class="box"><h3>SSH logins <span>${unknownLogins.length ? `<span class="crit-t">${unknownLogins.length} unknown</span>` : '<span class="ok-t">all known ✓</span>'}</span></h3>
-      ${s.ssh.logins.slice(0, 5).map(l => `<div class="row"><span>${esc(shortTime(l.time))} · ${esc(l.user)}</span><span class="mono ${known(l) ? "" : "unk"}" title="${known(l) ? "known IP" : "NOT on your known_ips list"}">${esc(l.ip)}</span></div>`).join("") || '<div class="row"><span>none in 7 days</span></div>'}</div>`);
+      ${s.ssh.logins.slice(0, 5).map(l => `<div class="row"><span>${esc(shortTime(l.time))} · ${esc(l.user)}</span><span class="mono ${flagged(l) ? "unk" : ""}" title="${known(l) ? "known IP" : l.acked ? "not on your known_ips list, but you marked it as fine" : "NOT on your known_ips list"}">${esc(l.ip)}${!known(l) && l.acked ? " ✓" : ""}</span></div>`).join("") || '<div class="row"><span>none in 7 days</span></div>'}
+      ${unknownLogins.length ? `<div class="row" style="margin-top:6px"><span>That was you?</span><button class="ok" onclick="ackLogins(this)" title="Clears this alert. A new login from somewhere unfamiliar will flag again.">Looks fine ✓</button></div>` : ""}</div>`);
   if (s.authelia) boxes.push(`<div class="box"><h3>Authelia <span>${s.authelia.failed_24h ? `<span class="warn-t">${s.authelia.failed_24h} failed</span>` : '<span class="ok-t">no failures ✓</span>'}</span></h3>
       ${s.authelia.recent.slice(0, 4).map(f => `<div class="row"><span>${esc(shortTime(f.time))} · ${esc(f.factor)} ${esc(f.user || "?")}</span><span class="mono ${known(f) ? "" : "unk"}">${esc(f.ip)}</span></div>`).join("") || '<div class="row"><span>failed logins, last 24h</span><span>0</span></div>'}</div>`);
   if (s.procs) boxes.push(`<div class="box"><h3>Process watch <span>${ok(!s.procs.found.length, "clean", "FOUND: " + esc(s.procs.found.join(", ")))}</span></h3>
