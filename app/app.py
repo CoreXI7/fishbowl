@@ -505,8 +505,23 @@ def requests_pending():
 
 # ---------- public (non-secret) config for the dashboard page ----------
 
+def theme_view(tid):
+    """A theme's personality: what you set for it > the theme's own defaults > (for some fields) the site's.
+    Mascot, quotes, greeting and click emoji never fall back to another theme's, so Bubbles' mascot stays in Bubbles."""
+    t = cfgstore.THEMES[tid]
+    if tid == "bubbles":
+        return {"label": t["label"], **{k: SITE[k] for k in cfgstore.THEME_FIELDS}}
+    o = SITE["themes"].get(tid, {})
+    own = {k: o.get(k) or t.get(k) or ("" if k != "quotes" else []) for k in cfgstore.THEME_FIELDS}
+    for k in ("tagline", "tagline_down", "favicon"):
+        own[k] = own[k] or SITE[k]
+    own["click_emoji"] = own["click_emoji"] or SITE["click_emoji"]
+    return {"label": t["label"], **own}
+
+
 def page_config():
     return {
+        "theme": SITE["theme"], "themes": {tid: theme_view(tid) for tid in cfgstore.THEMES},
         "title": SITE["title"], "tagline": SITE["tagline"], "tagline_down": SITE["tagline_down"] or "something's down!",
         "mascot": SITE["mascot"], "mascot_credit": SITE["mascot_credit"], "favicon": SITE["favicon"],
         "greeting": SITE["greeting"], "quotes": SITE["quotes"], "click_emoji": SITE["click_emoji"],
@@ -533,6 +548,7 @@ def settings_view():
         "infra": {"origins": sorted(ALLOWED_ORIGINS), "trusted_proxy": TRUSTED_PROXY, "npm_dir": NPM_DIR},
         "ui_enabled": cfgstore.UI_ENABLED, "writable": os.access(cfgstore.DATA_DIR, os.W_OK),
         "discovered": sorted(set(names) | set(ED["skip_hosts"])), "collector": read_hw() is not None, "demo": DEMO,
+        "themes": cfgstore.THEMES,   # built-in themes and their defaults (shown as placeholders in the editor)
     }
 
 
@@ -717,9 +733,12 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed():
             return
         if p in PAGES:
-            self.send(200, open(os.path.join(HERE, PAGES[p]), "rb").read(), "text/html; charset=utf-8")
-        elif p == "/style.css":
-            self.send(200, open(os.path.join(HERE, "style.css"), "rb").read(), "text/css; charset=utf-8", "no-cache")
+            # default theme baked into <html> so the page paints in the right colours before any script runs
+            page = open(os.path.join(HERE, PAGES[p]), "rb").read().replace(
+                b'<html lang="en">', f'<html lang="en" data-theme="{SITE["theme"]}">'.encode(), 1)
+            self.send(200, page, "text/html; charset=utf-8")
+        elif p in ("/style.css", "/themes.css"):
+            self.send(200, open(os.path.join(HERE, p[1:]), "rb").read(), "text/css; charset=utf-8", "no-cache")
         elif p in API:
             ttl, fn = API[p]
             if p in FEATURE and not FEATURE[p]()["on"]:

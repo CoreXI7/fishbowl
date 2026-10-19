@@ -8,16 +8,19 @@
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/themes.css">
+<script>try { var t = localStorage.getItem("theme"); if (t && /^[a-z0-9-]{1,24}$/.test(t)) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
 <body>
 <header>
-  <h1 id="title" title="click me"><svg class="cutie" viewBox="0 0 40 40" aria-hidden="true">
+  <h1 id="title" title="click me"><svg class="cutie logo-bubbles" viewBox="0 0 40 40" aria-hidden="true">
     <defs><radialGradient id="bub" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#fff"/><stop offset=".45" stop-color="#cfeeff"/><stop offset="1" stop-color="#8fcdf5"/></radialGradient></defs>
     <circle cx="14" cy="24" r="10" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/><circle cx="28" cy="13" r="7" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/>
     <circle cx="30" cy="30" r="4.5" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/><circle cx="10.5" cy="20" r="2.4" fill="#fff" opacity=".9"/><circle cx="25.8" cy="10.6" r="1.6" fill="#fff" opacity=".9"/></svg>
     <span id="site-title">homelab</span> <span class="tag" id="quote">loading…</span></h1>
   <span class="pill mute" id="p-time" style="margin-left:auto"></span>
   <a class="pill" id="demo-pill" href="https://github.com/" target="_blank" rel="noopener" hidden style="text-decoration:none;color:inherit">demo · fake data</a>
+  <button class="pill" id="theme-btn" title="Theme (T)" aria-label="Switch theme">🎨</button>
   <button class="pill" id="wall-btn" title="Wall mode for a TV or spare screen (W)" aria-pressed="false"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="12.5" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/></svg></button>
   <a class="pill gear" id="gear" href="/settings" title="Settings" hidden>⚙</a>
 </header>
@@ -104,21 +107,40 @@ const CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/png/";
 
 function applyConfig() {
   document.title = CFG.title;
-  if (CFG.favicon) document.querySelector("link[rel=icon]").href = CFG.favicon;
   $("site-title").textContent = CFG.title;
-  $("quote").textContent = CFG.tagline;
   $("gear").hidden = !CFG.settings_ui;
   if (CFG.demo) { $("demo-pill").hidden = false; if (CFG.repo) $("demo-pill").href = CFG.repo; else $("demo-pill").removeAttribute("href"); }
   document.querySelectorAll("[data-feature]").forEach(el => el.hidden = !CFG.features[el.dataset.feature]);
   if (!CFG.features.plex && !CFG.features.seerr) document.querySelector(".duo").hidden = true;
   else if (!CFG.features.plex || !CFG.features.seerr) document.querySelector(".duo").style.gridTemplateColumns = "minmax(0,1fr)";
-  if (CFG.mascot) {
-    $("mascot").hidden = false;
-    $("mascot-img").src = CFG.mascot;
-    $("mascot-credit").textContent = CFG.mascot_credit || "";
-    $("say").textContent = CFG.greeting || CFG.quotes[0] || "Hi!";
-  }
+  let saved = ""; try { saved = localStorage.getItem("theme") || ""; } catch (e) {}
+  setTheme(CFG.themes && CFG.themes[saved] ? saved : CFG.theme);
 }
+
+// ---------- themes: the look is CSS (html[data-theme]); each theme also brings its own mascot, quotes, click emoji,
+// taglines and tab icon (CFG.themes, merged on the server). The 🎨 button or T cycles; the choice is per browser. ----------
+let THEME = "";
+function setTheme(id, save) {
+  if (!CFG.themes || !CFG.themes[id]) id = CFG.theme || "bubbles";
+  THEME = id;
+  document.documentElement.dataset.theme = id;
+  Object.assign(CFG, CFG.themes ? CFG.themes[id] : {});
+  if (save) try { localStorage.setItem("theme", id); } catch (e) {}
+  const icon = document.querySelector("link[rel=icon]");
+  icon.dataset.default = icon.dataset.default || icon.getAttribute("href");
+  icon.href = CFG.favicon || icon.dataset.default;
+  $("mascot").hidden = !CFG.mascot;
+  if (CFG.mascot) { $("mascot-img").src = CFG.mascot; $("mascot-credit").textContent = CFG.mascot_credit || ""; }
+  $("say").textContent = CFG.greeting || CFG.quotes[0] || "Hi!";
+  $("say").dataset.sad = "";
+  setMood(lastDown);
+  const ids = Object.keys(CFG.themes || {}), next = CFG.themes && CFG.themes[ids[(ids.indexOf(id) + 1) % ids.length]];
+  $("theme-btn").hidden = ids.length < 2;
+  $("theme-btn").title = `Theme: ${CFG.label || id}${next ? ` (click for ${next.label})` : ""} · T`;
+}
+function nextTheme() { const ids = Object.keys(CFG.themes || {}); if (ids.length > 1) setTheme(ids[(ids.indexOf(THEME) + 1) % ids.length], true); }
+$("theme-btn").addEventListener("click", nextTheme);
+addEventListener("keydown", e => { if (e.key.toLowerCase() === "t" && !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) nextTheme(); });
 
 // ---------- services ----------
 function iconFail(img) {
@@ -434,10 +456,15 @@ function bubbles() {
     box.appendChild(b);
   }
 }
+// "🎵🥬💙" rains a random one of them per drop (graphemes, so flags and skin tones stay whole)
+function pickEmoji(str) {
+  const parts = "Segmenter" in Intl ? [...new Intl.Segmenter().segment(str || "")].map(x => x.segment).filter(x => x.trim()) : Array.from(str || "");
+  return parts.length ? parts[Math.floor(Math.random() * parts.length)] : "🫧";
+}
 function confetti() {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   for (let i = 0; i < 16; i++) setTimeout(() => {
-    const m = document.createElement("div"); m.className = "confetti"; m.textContent = CFG.click_emoji;
+    const m = document.createElement("div"); m.className = "confetti"; m.textContent = pickEmoji(CFG.click_emoji);
     m.style.left = Math.random() * 96 + "vw"; m.style.animationDuration = 2.2 + Math.random() * 1.8 + "s";
     document.body.appendChild(m); setTimeout(() => m.remove(), 4500);
   }, i * 90);

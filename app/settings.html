@@ -8,10 +8,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/themes.css">
+<script>try { var t = localStorage.getItem("theme"); if (t && /^[a-z0-9-]{1,24}$/.test(t)) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
 <body>
 <header>
-  <h1><a href="/" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:8px"><svg class="cutie" viewBox="0 0 40 40" aria-hidden="true">
+  <h1><a href="/" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:8px"><svg class="cutie logo-bubbles" viewBox="0 0 40 40" aria-hidden="true">
     <defs><radialGradient id="bub" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#fff"/><stop offset=".45" stop-color="#cfeeff"/><stop offset="1" stop-color="#8fcdf5"/></radialGradient></defs>
     <circle cx="14" cy="24" r="10" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/><circle cx="28" cy="13" r="7" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/>
     <circle cx="30" cy="30" r="4.5" fill="url(#bub)" stroke="#7cc0ec" stroke-width="1.2"/></svg>
@@ -35,7 +37,7 @@
           <button class="ibtn danger" id="fav-rm" hidden>Default</button></span>
         <small>A square PNG works best. Default: the bubbles.</small></div>
     </div>
-    <h3 style="font:600 14px Fredoka,sans-serif;margin:16px 0 8px">Mascot <small class="mute" style="font-weight:400">(optional, left column)</small></h3>
+    <h3 style="font:600 14px Fredoka,sans-serif;margin:16px 0 8px">Mascot <small class="mute" style="font-weight:400">(optional, left column · Bubbles theme; other themes have their own below)</small></h3>
     <div class="mascot-ed">
       <img id="mascot-prev" alt="" hidden>
       <div style="display:flex;flex-direction:column;gap:6px">
@@ -49,6 +51,18 @@
       <label class="field"><span>Greeting</span><input type="text" data-k="site.greeting" maxlength="200" placeholder="Hi! Everything's up."></label>
     </div>
     <label class="field" style="margin-top:10px"><span>Things the mascot says (one per line)</span><textarea data-k="site.quotes" data-list></textarea></label>
+  </section>
+
+  <section>
+    <h2>Themes <small>🎨 on the dashboard (or T) switches; each browser remembers its own pick</small></h2>
+    <div class="fgrid">
+      <label class="field"><span>Default theme</span><select id="theme-default"></select>
+        <small>What every browser shows until someone picks another one with 🎨.</small></label>
+    </div>
+    <p class="hint" style="margin-top:12px">Each theme can have its own mascot and lines. Leave a field empty to use the theme's built-in default
+      (shown faded). Picking a tab previews that theme on this page.</p>
+    <div class="tabs" id="theme-tabs"></div>
+    <div id="theme-ed"></div>
   </section>
 
   <section>
@@ -151,6 +165,58 @@ $("fav-file").onchange = async e => {
   e.target.value = "";
 };
 $("fav-rm").onclick = () => { S.site.favicon = ""; renderFav(); setDirty(); };
+
+// ---------- themes: default theme + each theme's own mascot and lines (bubbles = the Look & feel fields above) ----------
+let edTheme = "";
+const tf = (k, label, max, ph) => `<label class="field"><span>${esc(label)}</span><input type="text" data-tk="${k}" maxlength="${max}" placeholder="${esc(ph || "")}"></label>`;
+function renderThemes() {
+  S.site.themes = S.site.themes || {};
+  const ids = Object.keys(V.themes);
+  $("theme-default").innerHTML = ids.map(id => `<option value="${esc(id)}">${esc(V.themes[id].label)}</option>`).join("");
+  $("theme-default").value = S.site.theme || "bubbles";
+  $("theme-default").disabled = !V.ui_enabled;
+  $("theme-default").onchange = () => { S.site.theme = $("theme-default").value; setDirty(); };
+  if (!V.themes[edTheme]) edTheme = ids.find(id => id !== "bubbles") || ids[0];
+  $("theme-tabs").innerHTML = ids.map(id => `<button class="${id === edTheme ? "on" : ""}" data-t="${esc(id)}">${esc(V.themes[id].label)}</button>`).join("");
+  $("theme-tabs").querySelectorAll("button").forEach(b => b.onclick = () => { edTheme = b.dataset.t; renderThemes(); });
+  document.documentElement.dataset.theme = edTheme;   // live preview of the theme being edited
+  renderThemeEd();
+}
+function renderThemeEd() {
+  const id = edTheme, def = V.themes[id];
+  if (id === "bubbles") { $("theme-ed").innerHTML = '<p class="hint" style="margin-top:10px">Bubbles is the default look: its mascot, lines and click emoji are the <b>Look &amp; feel</b> settings above.</p>'; return; }
+  const t = S.site.themes[id] || {};
+  $("theme-ed").innerHTML = `
+    <div class="mascot-ed" style="margin:12px 0 10px">
+      <img id="tm-prev" alt="" ${t.mascot ? `src="${esc(t.mascot)}"` : "hidden"}>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span><label class="pill" style="cursor:pointer">Upload ${esc(def.label)} mascot… <input type="file" id="tm-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
+          <button class="ibtn danger" id="tm-rm" ${t.mascot ? "" : "hidden"}>Remove</button></span>
+        <small class="mute">Optional, only shown in this theme. PNG, JPEG, WebP or GIF up to 2 MB; a transparent PNG looks best.</small></div></div>
+    <div class="fgrid">
+      ${tf("mascot_credit", "Art credit", 80, "art: …")}
+      ${tf("greeting", "Greeting", 200, def.greeting)}
+      ${tf("click_emoji", "Click emoji (several = a random one per drop)", 16, def.click_emoji || S.site.click_emoji)}
+      ${tf("tagline", "Tagline (all good)", 120, S.site.tagline)}
+      ${tf("tagline_down", "Tagline (something down)", 120, S.site.tagline_down)}
+    </div>
+    <label class="field" style="margin-top:10px"><span>Things the mascot says in this theme (one per line)</span>
+      <textarea data-tk="quotes" placeholder="${esc((def.quotes || []).join("\n"))}"></textarea></label>`;
+  const set = (k, v) => { S.site.themes[id] = {...(S.site.themes[id] || {}), [k]: v}; setDirty(); };
+  $("theme-ed").querySelectorAll("[data-tk]").forEach(el => {
+    const k = el.dataset.tk, v = t[k];
+    el.value = k === "quotes" ? (v || []).join("\n") : (v || "");
+    el.disabled = !V.ui_enabled;
+    el.oninput = () => set(k, k === "quotes" ? el.value.split("\n").map(x => x.trim()).filter(Boolean) : el.value);
+  });
+  $("tm-file").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    if (f.size > 2 * 1024 * 1024) return showErr("That image is over 2 MB.");
+    try { const r = await api("/api/upload", {method: "POST", headers: {"Content-Type": "application/octet-stream"}, body: f}); set("mascot", r.url); renderThemeEd(); }
+    catch (err) { showErr("Upload failed: " + err.message); }
+  };
+  $("tm-rm").onclick = () => { set("mascot", ""); renderThemeEd(); };
+}
 
 // ---------- services: groups, labels, icons, hidden ----------
 const iconSrc = (host) => {
@@ -309,7 +375,7 @@ function render() {
   S = structuredClone(V.settings); SEC = {};
   if (V.settings.site.favicon) document.querySelector("link[rel=icon]").href = V.settings.site.favicon;
   document.title = "Settings · " + S.site.title; $("site-title").textContent = S.site.title; $("demo-tag").hidden = !V.demo;
-  renderInteg(); bindFields(); renderMascot(); renderFav(); renderServices(); renderExtras(); renderInfra();
+  renderInteg(); bindFields(); renderMascot(); renderFav(); renderThemes(); renderServices(); renderExtras(); renderInfra();
   $("banner").hidden = true; setDirty(false);
 }
 async function load() { V = await api("/api/settings"); render(); }

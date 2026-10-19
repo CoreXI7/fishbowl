@@ -37,7 +37,16 @@ INTEGRATIONS = {   # name -> url env var, [(secret field, env var)]
 SECRET_ENV = {field: env for _, (_, fields) in INTEGRATIONS.items() for field, env in fields}
 
 DEFAULT_SITE = {"title": "my homelab", "tagline": "everything's running ✨", "tagline_down": "uh oh, something's down!",
-                "click_emoji": "🫧", "greeting": "", "quotes": [], "mascot": "", "mascot_credit": "", "favicon": ""}
+                "click_emoji": "🫧", "greeting": "", "quotes": [], "mascot": "", "mascot_credit": "", "favicon": "",
+                "theme": "bubbles", "themes": {}}
+
+# Built-in themes. The look is CSS: style.css is "bubbles" (the default), every other theme lives in themes.css under
+# html[data-theme="<id>"]. A theme can bring its own personality (quotes, click emoji, tab icon); what you set for it
+# on the settings page wins. "bubbles" keeps using the top-level site fields, so older settings files work unchanged.
+THEMES = {
+    "bubbles": {"label": "Bubbles"},
+}
+THEME_FIELDS = ("mascot", "mascot_credit", "greeting", "quotes", "click_emoji", "tagline", "tagline_down", "favicon")
 
 
 def _read_toml():
@@ -156,21 +165,36 @@ def _ip_or_prefix(v):
     return v
 
 
+def _personality(src, where):
+    """The fields a theme can override: mascot, what it says, click emoji, taglines, tab icon."""
+    return {
+        "tagline": _s(src.get("tagline"), 120, where + "tagline"),
+        "tagline_down": _s(src.get("tagline_down"), 120, where + "tagline when down"),
+        "click_emoji": _s(src.get("click_emoji"), 16, where + "click emoji"),
+        "greeting": _s(src.get("greeting"), 200, where + "greeting"),
+        "quotes": [q for q in (_s(q, 200, where + "quote") for q in _list(src.get("quotes"), 50, where + "quotes")) if q],
+        "mascot": _s(src.get("mascot"), 200, where + "mascot", r"/(static|uploads)/[\w.-]{1,120}"),
+        "mascot_credit": _s(src.get("mascot_credit"), 80, where + "mascot credit"),
+        "favicon": _s(src.get("favicon"), 200, where + "tab icon", r"/(static|uploads)/[\w.-]{1,120}"),
+    }
+
+
 def validate(d, _old):
     if not isinstance(d, dict):
         raise Invalid("settings must be an object")
     site_in = d.get("site") or {}
-    site = {
-        "title": _s(site_in.get("title"), 60, "title") or DEFAULT_SITE["title"],
-        "tagline": _s(site_in.get("tagline"), 120, "tagline"),
-        "tagline_down": _s(site_in.get("tagline_down"), 120, "tagline when down"),
-        "click_emoji": _s(site_in.get("click_emoji"), 16, "click emoji") or "🫧",
-        "greeting": _s(site_in.get("greeting"), 200, "greeting"),
-        "quotes": [q for q in (_s(q, 200, "quote") for q in _list(site_in.get("quotes"), 50, "quotes")) if q],
-        "mascot": _s(site_in.get("mascot"), 200, "mascot", r"/(static|uploads)/[\w.-]{1,120}"),
-        "mascot_credit": _s(site_in.get("mascot_credit"), 80, "mascot credit"),
-        "favicon": _s(site_in.get("favicon"), 200, "tab icon", r"/(static|uploads)/[\w.-]{1,120}"),
-    }
+    site = {"title": _s(site_in.get("title"), 60, "title") or DEFAULT_SITE["title"], **_personality(site_in, "")}
+    site["click_emoji"] = site["click_emoji"] or "🫧"
+    site["theme"] = site_in.get("theme") if site_in.get("theme") in THEMES else "bubbles"
+    themes_in = site_in.get("themes") or {}
+    if not isinstance(themes_in, dict):
+        raise Invalid("themes: invalid")
+    site["themes"] = {}
+    for tid, t in themes_in.items():
+        if tid in THEMES and tid != "bubbles" and isinstance(t, dict):   # bubbles = the top-level fields above
+            t = {k: v for k, v in _personality(t, THEMES[tid]["label"] + " theme: ").items() if v}
+            if t:
+                site["themes"][tid] = t
     groups = []
     for g in _list(d.get("groups"), 30, "groups"):
         name = _s((g or {}).get("name"), 60, "group name")

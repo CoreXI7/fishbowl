@@ -295,6 +295,9 @@ body.wall .gear{display:none}
 #wall-btn{cursor:pointer;line-height:0;padding:6px 10px;color:var(--fg);transition:opacity .3s}
 #wall-btn[aria-pressed=true]{background:linear-gradient(135deg,var(--acc),var(--eye));border-color:transparent}
 body.wall.idle #wall-btn{opacity:0}
+#theme-btn{cursor:pointer;line-height:1;padding:5px 9px;font-size:15px;transition:opacity .3s,transform .3s}
+#theme-btn:hover{transform:rotate(-12deg) scale(1.08)}
+body.wall.idle #theme-btn{opacity:0}
 
 /* ===== settings page ===== */
 .set-wrap{max-width:1050px;margin:0 auto;padding:16px 16px 110px;display:grid;gap:16px;position:relative;z-index:1}

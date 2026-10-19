@@ -1,0 +1,4 @@
+/* ===== themes =====
+   style.css is the default theme ("bubbles"). Every other theme lives here, scoped by html[data-theme="<id>"], so a
+   switch is instant (no reload) and an unknown id just falls back to bubbles. To add one: register it in THEMES in
+   settings.py (label + optional quotes / click emoji / tab icon), then restyle the variables and pieces below. */
