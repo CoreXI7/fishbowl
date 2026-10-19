@@ -37,7 +37,8 @@ Needs the (optional) root collector; see Install.
   shows up on its own, health-checked every 30 s, with icons from [dashboard-icons](https://github.com/homarr-labs/dashboard-icons).
   Hosts behind Authelia/Authentik get a 🔒. Not using NPM? List services in `config.toml`.
 - **Plex Now Playing** (via Tautulli): who's watching what, direct play vs transcode, HW vs CPU, home vs remote.
-  Poster art is proxied, so your Plex token never reaches the browser.
+  Poster art is proxied, so your Plex token never reaches the browser. More viewers than fit? **"+N more"** gives
+  Now Playing the whole row (Requests steps aside until you click "show requests"), and on the wall the list scrolls.
 - **Requests** (Seerr / Overseerr / Jellyseerr): approve or decline right from the dashboard.
 - **qBittorrent**: downloads, seeding, speeds, and a big red banner if it ever shows your real home IP (VPN leak).
 - **System**: CPU per thread, RAM, network, temperatures (AMD, Intel, DDR5, NVMe), NVIDIA GPU incl. NVENC/NVDEC.
@@ -46,6 +47,7 @@ Needs the (optional) root collector; see Install.
 - **Security & backups**: fail2ban, SSH logins from unknown IPs, Authelia failures, crypto-miner watch,
   crontab change detection with a one-click "Looks good" approval, `chattr +i` lock checks, backup freshness.
 - **Wall mode**: `https://your-dash/?wall` fits a 1920×1080 screen with no scrolling and hides the cursor.
+  Click the Plex tile there to expand or collapse Now Playing; the stream list scrolls inside its own box.
 - Light/dark automatic, floating bubbles, optional mascot. Every panel is optional and hides itself if not configured.
 
 ## How it fits together
