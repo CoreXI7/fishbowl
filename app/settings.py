@@ -45,6 +45,11 @@ DEFAULT_SITE = {"title": "my homelab", "tagline": "everything's running ✨", "t
 # on the settings page wins. "bubbles" keeps using the top-level site fields, so older settings files work unchanged.
 THEMES = {
     "bubbles": {"label": "Bubbles"},
+    "miku": {"label": "Miku", "click_emoji": "🎵🥬💙🎶", "favicon": "/static/favicon-miku.svg",
+             "greeting": "Miku-mode on ♪ everything's in tune!",
+             "quotes": ["All services in tune 🎵", "Encore! Everything's still up 🎤", "39! Thanks for keeping me running 💙",
+                        "Leek break? The servers are fine 🥬", "Turning the volume up on uptime ♪", "Mic check… 1, 2… 01!",
+                        "Singing in harmony: nothing down 🎶", "Twin-tails spinning, disks spinning 💫"]},
 }
 THEME_FIELDS = ("mascot", "mascot_credit", "greeting", "quotes", "click_emoji", "tagline", "tagline_down", "favicon")
 

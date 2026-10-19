@@ -2,3 +2,95 @@
    style.css is the default theme ("bubbles"). Every other theme lives here, scoped by html[data-theme="<id>"], so a
    switch is instant (no reload) and an unknown id just falls back to bubbles. To add one: register it in THEMES in
    settings.py (label + optional quotes / click emoji / tab icon), then restyle the variables and pieces below. */
+
+/* theme-specific logo in the header: each theme shows its own .logo-<id> svg, bubbles is the fallback */
+.cutie.logo-miku{display:none}
+html[data-theme="miku"] .cutie.logo-bubbles{display:none}
+html[data-theme="miku"] .cutie.logo-miku{display:block}
+
+/* ===== Miku: teal #39c5bb twin-tails, a pink accent, charcoal stage, floating notes, VU-meter bars =====
+   Fan-made and unofficial; colours inspired by Hatsune Miku (Crypton Future Media). No artwork included:
+   add your own mascot per theme on the settings page. */
+html[data-theme="miku"]{--bg:#e5f3f2;--card:rgba(255,255,255,.62);--fg:#1d3136;--mute:#5d7a7f;--line:#c9e2df;--up:#1fa98e;--down:#e12885;
+  --warn:#e39800;--acc:#39c5bb;--acc2:#9fe1db;--ink:#11776f;--bar:#d3e8e5;--coat:#e12885;--eye:#1eb4c8;--glow:rgba(57,197,187,.38);
+  --shadow:0 8px 24px -12px rgba(16,92,90,.38)}
+@media (prefers-color-scheme:dark){html[data-theme="miku"]{--bg:#0a1113;--card:rgba(17,29,32,.64);--fg:#e1f5f3;--mute:#86abab;--line:#1d3437;
+  --up:#3fd9b1;--down:#ff4f9a;--warn:#ffc233;--acc:#39c5bb;--acc2:#1b6a65;--ink:#6fe4da;--bar:#17292c;--coat:#ff3d96;--eye:#4ad7e8;
+  --glow:rgba(57,197,187,.30);--shadow:0 10px 28px -14px rgba(0,0,0,.75)}}
+
+/* the stage: teal spotlight, pink rim light, and a faint grid like a concert floor */
+html[data-theme="miku"] body{background:
+  radial-gradient(1100px 620px at 8% -12%,color-mix(in srgb,var(--acc) 30%,transparent),transparent 62%),
+  radial-gradient(800px 520px at 108% 8%,color-mix(in srgb,var(--coat) 16%,transparent),transparent 60%),
+  radial-gradient(1200px 500px at 50% 118%,color-mix(in srgb,var(--eye) 16%,transparent),transparent 65%),
+  repeating-linear-gradient(0deg,transparent 0 39px,color-mix(in srgb,var(--acc) 7%,transparent) 39px 40px),
+  repeating-linear-gradient(90deg,transparent 0 39px,color-mix(in srgb,var(--acc) 7%,transparent) 39px 40px),var(--bg);background-attachment:fixed}
+
+/* header: twin-tail ribbon underneath, an "01" badge on the title, a little equalizer by the clock */
+html[data-theme="miku"] header::after{height:4px;background:linear-gradient(90deg,var(--acc),var(--acc2),var(--coat),var(--acc2),var(--acc),var(--eye),var(--acc));
+  background-size:200% 100%;box-shadow:0 2px 12px var(--glow)}
+html[data-theme="miku"] #site-title{font-family:Orbitron,Fredoka,sans-serif;font-weight:800;letter-spacing:.02em;
+  background:linear-gradient(90deg,var(--ink),var(--acc) 60%,var(--eye));-webkit-background-clip:text;background-clip:text;color:transparent}
+html[data-theme="miku"] #site-title::after{content:"01";display:inline-block;margin-left:7px;padding:1px 5px 0;border-radius:5px;transform:rotate(-8deg) translateY(-2px);
+  font:800 10px/1.4 Orbitron,sans-serif;color:#fff;background:var(--coat);-webkit-text-fill-color:#fff;box-shadow:0 2px 8px -2px var(--coat)}
+html[data-theme="miku"] #p-time::before{content:"";display:inline-block;width:23px;height:13px;margin-right:9px;vertical-align:-1px;
+  background:linear-gradient(var(--eye),var(--acc)) 0 100%/3px 40% no-repeat,linear-gradient(var(--eye),var(--acc)) 5px 100%/3px 80% no-repeat,
+  linear-gradient(var(--coat),var(--acc)) 10px 100%/3px 55% no-repeat,linear-gradient(var(--eye),var(--acc)) 15px 100%/3px 95% no-repeat,
+  linear-gradient(var(--eye),var(--acc)) 20px 100%/3px 30% no-repeat;animation:miku-eq 1.6s ease-in-out infinite alternate}
+@keyframes miku-eq{
+  0%{background-size:3px 40%,3px 80%,3px 55%,3px 95%,3px 30%}
+  25%{background-size:3px 85%,3px 35%,3px 100%,3px 50%,3px 70%}
+  50%{background-size:3px 55%,3px 100%,3px 40%,3px 75%,3px 95%}
+  75%{background-size:3px 95%,3px 60%,3px 80%,3px 30%,3px 50%}
+  100%{background-size:3px 30%,3px 90%,3px 65%,3px 100%,3px 40%}}
+html[data-theme="miku"] body.wall #p-time{font-family:Orbitron,Fredoka,sans-serif;font-weight:700;color:var(--ink);letter-spacing:.03em}
+
+/* cards: glassy panels with a teal → pink top ribbon and a soft teal rim */
+html[data-theme="miku"] section{border-color:color-mix(in srgb,var(--acc) 22%,var(--line));
+  box-shadow:var(--shadow),inset 0 1px 0 color-mix(in srgb,#fff 35%,transparent)}
+html[data-theme="miku"] section::before{height:3px;background:linear-gradient(90deg,var(--acc) 0 28%,var(--eye) 58%,color-mix(in srgb,var(--coat) 75%,transparent) 86%,transparent)}
+html[data-theme="miku"] h2::before{content:"♪";background:none;border-radius:0;width:auto;height:auto;top:-2px;left:1px;
+  font:700 16px/1 "M PLUS Rounded 1c",sans-serif;color:var(--acc);text-shadow:0 0 10px var(--glow)}
+html[data-theme="miku"] section:nth-of-type(3n) h2::before{content:"♫";color:var(--coat);text-shadow:0 0 10px color-mix(in srgb,var(--coat) 35%,transparent)}
+html[data-theme="miku"] .kpi{border-color:color-mix(in srgb,var(--acc) 22%,var(--line))}
+html[data-theme="miku"] .kpi:hover{box-shadow:var(--shadow),0 0 0 1px color-mix(in srgb,var(--acc) 45%,transparent),0 0 18px -4px var(--glow)}
+html[data-theme="miku"] .kpi.ok::before{background:linear-gradient(180deg,var(--acc),var(--eye))}
+html[data-theme="miku"] .box,html[data-theme="miku"] .stream{border-color:color-mix(in srgb,var(--acc) 18%,var(--line))}
+
+/* meters: VU-meter segments in teal → cyan; Plex progress runs teal → pink */
+html[data-theme="miku"] .meter{border-radius:4px}
+html[data-theme="miku"] .meter i{border-radius:3px;background:
+  repeating-linear-gradient(90deg,transparent 0 7px,color-mix(in srgb,var(--bg) 65%,transparent) 7px 9px),linear-gradient(90deg,var(--acc),var(--eye));
+  box-shadow:0 0 10px -2px var(--glow)}
+html[data-theme="miku"] .bar i{background:linear-gradient(90deg,var(--acc),var(--eye) 60%,var(--coat))}
+html[data-theme="miku"] .cores i b{background:repeating-linear-gradient(0deg,transparent 0 3px,color-mix(in srgb,var(--bg) 55%,transparent) 3px 4px),
+  linear-gradient(0deg,var(--acc),var(--eye) 70%,var(--coat))}
+
+/* services, buttons, chips, tabs */
+html[data-theme="miku"] .app:hover{background:color-mix(in srgb,var(--acc) 13%,transparent);border-color:color-mix(in srgb,var(--acc) 55%,transparent);
+  box-shadow:0 0 16px -6px var(--glow)}
+html[data-theme="miku"] .app .ic .lt{background:linear-gradient(135deg,var(--acc),var(--coat))}
+html[data-theme="miku"] button.ok{background:linear-gradient(135deg,var(--acc),var(--eye));color:#06312e}
+html[data-theme="miku"] .tabs button.on,html[data-theme="miku"] #wall-btn[aria-pressed=true]{background:linear-gradient(135deg,var(--acc),var(--eye));color:#06312e}
+html[data-theme="miku"] button.mini:hover,html[data-theme="miku"] .gear:hover,html[data-theme="miku"] #theme-btn:hover{
+  border-color:var(--acc);background:color-mix(in srgb,var(--acc) 20%,var(--card))}
+
+/* scrollbars: teal twin-tail, pink when you grab it */
+html[data-theme="miku"] ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--acc),var(--eye));background-clip:padding-box}
+html[data-theme="miku"] ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--coat),var(--acc));background-clip:padding-box}
+
+/* mascot: teal speech bubble with a pink note */
+html[data-theme="miku"] .mascot .say{border-color:color-mix(in srgb,var(--acc) 75%,var(--line));box-shadow:var(--shadow),0 0 18px -8px var(--glow)}
+html[data-theme="miku"] .mascot .say::before{content:"♪ ";color:var(--coat)}
+html[data-theme="miku"] .mascot img{filter:drop-shadow(0 10px 14px rgba(20,110,105,.32))}
+
+/* the floating bubbles become music notes (and the odd leek) */
+html[data-theme="miku"] #bubbles i{background:none;border-radius:0;opacity:.5;container-type:size;animation-name:miku-note}
+html[data-theme="miku"] #bubbles i::before{content:"♪";display:block;font:700 32px/1 "M PLUS Rounded 1c",sans-serif;font-size:100cqh;
+  color:var(--acc);text-shadow:0 0 14px var(--glow)}
+html[data-theme="miku"] #bubbles i:nth-child(3n)::before{content:"♫";color:var(--coat);text-shadow:0 0 14px color-mix(in srgb,var(--coat) 40%,transparent)}
+html[data-theme="miku"] #bubbles i:nth-child(3n+1)::before{content:"♬";color:var(--eye)}
+html[data-theme="miku"] #bubbles i:nth-child(9n)::before{content:"🥬";font-size:70cqh}
+@keyframes miku-note{0%{transform:translate(0,0) rotate(-12deg)}50%{transform:translate(24px,-55vh) rotate(10deg)}100%{transform:translate(-16px,-115vh) rotate(-8deg);opacity:0}}
+
+@media (prefers-reduced-motion:reduce){html[data-theme="miku"] #p-time::before{animation:none}}

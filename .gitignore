@@ -6,6 +6,7 @@ collector.toml
 # your own mascot / icons (add them yourself)
 app/static/*
 !app/static/favicon.svg
+!app/static/favicon-miku.svg
 __pycache__/
 *.pyc
 *.bak*
