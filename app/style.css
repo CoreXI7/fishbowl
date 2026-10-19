@@ -193,7 +193,7 @@ details summary{cursor:pointer;color:var(--mute);font-size:12px}
 ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--acc),var(--eye));border-radius:999px;border:3px solid transparent;background-clip:padding-box}
 ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--eye),#e0a000);background-clip:padding-box;border:2px solid transparent}
 ::-webkit-scrollbar-corner{background:transparent}
-@supports (-moz-appearance:none){html,.scroll{scrollbar-color:var(--acc) color-mix(in srgb,var(--bar) 70%,transparent);scrollbar-width:thin}}
+@supports (-moz-appearance:none){html,.scroll,#plex{scrollbar-color:var(--acc) color-mix(in srgb,var(--bar) 70%,transparent);scrollbar-width:thin}}
 
 /* ===== wall mode (?wall): fits 1920x1080 with no scrolling, glanceable from across the room ===== */
 body.wall{height:100vh;overflow:hidden;font-size:15px}
@@ -385,3 +385,6 @@ button.mini:hover{border-color:var(--acc);background:color-mix(in srgb,var(--acc
 .duo.plex-wide,body.wall .duo.plex-wide{grid-template-columns:minmax(0,1fr)}
 .duo.plex-wide #s-req{display:none}
 body.wall .duo.plex-wide .streams{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+/* the stream list scrolls inside its box on the wall (mouse wheel / touch) */
+body.wall #s-plex{display:flex;flex-direction:column}
+body.wall #plex{flex:1;min-height:0;overflow-y:auto;align-content:start;overscroll-behavior:contain}

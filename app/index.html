@@ -326,13 +326,14 @@ function setPlexWide(on) {
   plexHint();
 }
 function plexHint() {
-  const bottom = $("s-plex").getBoundingClientRect().bottom;
+  const bottom = $("plex").getBoundingClientRect().bottom;   // the list's own box (it scrolls on the wall)
   const cut = [...$("plex").querySelectorAll(".stream")].filter(el => el.getBoundingClientRect().bottom > bottom + 1).length;
   $("plex-more").hidden = !cut && !plexWide;
   $("plex-more").textContent = plexWide ? `${cut ? `+${cut} more · ` : ""}show requests` : `+${cut} more ▸`;
 }
 setPlexWide(plexWide);
 $("plex-more").addEventListener("click", () => setPlexWide(!plexWide));
+$("plex").addEventListener("scroll", plexHint, {passive: true});
 $("k-plex").addEventListener("click", e => { if (isWall()) { e.preventDefault(); setPlexWide(!plexWide); } });
 // recount whenever the box or the list changes size (window resize, posters and fonts settling after a refresh)
 if ("ResizeObserver" in window) { const ro = new ResizeObserver(() => plexHint()); ro.observe($("s-plex")); ro.observe($("plex")); }
