@@ -43,7 +43,7 @@
   <div class="banner" id="banner" hidden></div>
   <section class="wide" id="s-svc"><h2>Services <small id="svc-n"></small></h2><div class="groups" id="svc"><div class="empty">checking…</div></div></section>
   <div class="duo">
-    <section id="s-plex" data-feature="plex"><h2>Plex · Now Playing <small id="plex-n"></small></h2><div class="streams" id="plex"><div class="empty">loading…</div></div></section>
+    <section id="s-plex" data-feature="plex"><h2>Plex · Now Playing <span class="h2r"><small id="plex-n"></small><button class="mini" id="plex-more" hidden title="Give Now Playing the whole row (click the Plex tile works too)"></button></span></h2><div class="streams" id="plex"><div class="empty">loading…</div></div></section>
     <section id="s-req" data-feature="seerr"><h2>Requests <small id="req-n"></small></h2><div id="req"></div></section>
   </div>
   <section class="wide" id="s-tor" data-feature="qbit"><h2><span>Torrents <small class="mute" id="tor-n" style="font-weight:400"></small></span>
@@ -311,8 +311,32 @@ async function loadPlex() {
           <div class="chips">${mode}${res ? `<span class="chip">${esc(res)}</span>` : ""}<span class="chip">${(s.bandwidth/1000).toFixed(1)} Mbps</span>
             <span class="chip ${s.location === "wan" ? "" : "good"}">${s.location === "wan" ? "remote" : "home"}</span></div></div></div>`;
     }).join("") : `<div class="empty">Nobody's watching right now. 🍿</div>`;
+    requestAnimationFrame(plexHint);
   } catch (e) { $("plex").innerHTML = `<div class="err">Tautulli: ${esc(e.message)}</div>`; kpi("k-plex", "warn", "?", "Tautulli unreachable"); }
 }
+
+// More streams than fit (wall mode)? "+N more" gives Now Playing the whole row and moves Requests aside;
+// clicking it again (or the Plex tile, in wall mode) brings Requests back. Remembered per browser.
+let plexWide = false;
+try { plexWide = localStorage.getItem("plexWide") === "1"; } catch (e) {}
+function setPlexWide(on) {
+  plexWide = on;
+  document.querySelector(".duo").classList.toggle("plex-wide", on);
+  try { localStorage.setItem("plexWide", on ? "1" : "0"); } catch (e) {}
+  plexHint();
+}
+function plexHint() {
+  const bottom = $("s-plex").getBoundingClientRect().bottom;
+  const cut = [...$("plex").querySelectorAll(".stream")].filter(el => el.getBoundingClientRect().bottom > bottom + 1).length;
+  $("plex-more").hidden = !cut && !plexWide;
+  $("plex-more").textContent = plexWide ? `${cut ? `+${cut} more · ` : ""}show requests` : `+${cut} more ▸`;
+}
+setPlexWide(plexWide);
+$("plex-more").addEventListener("click", () => setPlexWide(!plexWide));
+$("k-plex").addEventListener("click", e => { if (isWall()) { e.preventDefault(); setPlexWide(!plexWide); } });
+// recount whenever the box or the list changes size (window resize, posters and fonts settling after a refresh)
+if ("ResizeObserver" in window) { const ro = new ResizeObserver(() => plexHint()); ro.observe($("s-plex")); ro.observe($("plex")); }
+else addEventListener("resize", () => requestAnimationFrame(plexHint));
 
 // ---------- security & backups (every box is optional: it only shows if the collector reports it) ----------
 // "known" is decided on the server (config known_ips), so your list of trusted IPs never reaches the browser.

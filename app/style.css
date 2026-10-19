@@ -380,3 +380,8 @@ button.mini:hover{border-color:var(--acc);background:color-mix(in srgb,var(--acc
 .usage-ov[hidden],button.mini[hidden]{display:none!important}
 @media (max-width:820px){.usage-body{grid-template-columns:1fr;grid-template-rows:minmax(260px,1fr) auto}.usage-side{max-height:40vh}.usage-ov{padding:8px}.usage-box{padding:12px}}
 @media (prefers-reduced-motion:reduce){.u-tile{transition:none}}
+
+/* Now Playing takes the whole row ("+N more" / the Plex tile in wall mode); Requests steps aside */
+.duo.plex-wide,body.wall .duo.plex-wide{grid-template-columns:minmax(0,1fr)}
+.duo.plex-wide #s-req{display:none}
+body.wall .duo.plex-wide .streams{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
