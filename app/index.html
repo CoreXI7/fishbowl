@@ -401,7 +401,7 @@ function renderSecurity(hw) {
       ${s.f2b ? `<div class="row"><span>Banned right now (${esc(s.f2b.jail)})</span><span>${s.f2b.banned_now}</span></div>
       <div class="row"><span>Banned total (since restart)</span><span>${s.f2b.banned_total}</span></div>` : ""}
       ${s.ssh ? `<div class="row"><span>SSH failures, 24h</span><span>${s.ssh.failed_24h}</span></div>` : ""}
-      ${s.f2b && s.f2b.ips.length ? `<details><summary>banned IPs</summary><div class="mono">${s.f2b.ips.map(esc).join("<br>")}</div></details>` : ""}</div>`);
+      ${s.f2b && s.f2b.ips.length ? `<details data-k="f2b-ips"><summary>banned IPs</summary><div class="mono">${s.f2b.ips.map(esc).join("<br>")}</div></details>` : ""}</div>`);
   if (s.ssh) boxes.push(`<div class="box"><h3>SSH logins <span>${unknownLogins.length ? `<span class="crit-t">${unknownLogins.length} unknown</span>` : '<span class="ok-t">all known ✓</span>'}</span></h3>
       ${s.ssh.logins.slice(0, 5).map(l => `<div class="row"><span>${esc(shortTime(l.time))} · ${esc(l.user)}</span><span class="mono ${flagged(l) ? "unk" : ""}" title="${known(l) ? "known IP" : l.acked ? "not on your known_ips list, but you marked it as fine" : "NOT on your known_ips list"}">${esc(l.ip)}${!known(l) && l.acked ? " ✓" : ""}</span></div>`).join("") || '<div class="row"><span>none in 7 days</span></div>'}
       ${unknownLogins.length ? `<div class="row" style="margin-top:6px"><span>That was you?</span><button class="ok" onclick="ackLogins(this)" title="Clears this alert. A new login from somewhere unfamiliar will flag again.">Looks fine ✓</button></div>` : ""}</div>`);
@@ -422,8 +422,16 @@ function renderSecurity(hw) {
       ${b.last_run ? `<div class="row"><span>Last run</span><span>${esc(b.last_run)}</span></div>` : ""}
       ${(b.checks || []).map(c => `<div class="row"><span>${esc(c.label)}</span><span>${ok(c.ok, c.count + " ✓", c.count + " found")}</span></div>`).join("")}
       ${(b.artifacts || []).map(a => `<div class="row"><span>${esc(a.label)}${a.count ? ` (${a.count})` : ""}</span><span class="${a.fresh ? "" : "crit-t"}">${a.count ? ago2(a.newest) + " · " + size(a.size) : "none found"}</span></div>`).join("")}
-      ${b.log && b.log.length ? `<details><summary>log</summary><div class="mono">${b.log.map(esc).join("<br>")}</div></details>` : ""}</div>`);
+      ${b.log && b.log.length ? `<details data-k="backup-log"><summary>log</summary><div class="mono">${b.log.map(esc).join("<br>")}</div></details>` : ""}</div>`);
+  // the panel is rebuilt every few seconds: keep open dropdowns (log, banned IPs) open, and where you'd scrolled in them
+  const open = {};
+  $("sec").querySelectorAll("details[open]").forEach(d => open[d.dataset.k] = (d.querySelector(".mono") || {}).scrollTop || 0);
   $("sec").innerHTML = boxes.join("") || `<div class="empty">All security checks are switched off in collector.toml.</div>`;
+  $("sec").querySelectorAll("details").forEach(d => {
+    if (!(d.dataset.k in open)) return;
+    d.open = true;
+    const m = d.querySelector(".mono"); if (m) m.scrollTop = open[d.dataset.k];
+  });
 }
 
 async function approveCron(hash, btn) {
