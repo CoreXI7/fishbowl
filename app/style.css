@@ -123,7 +123,7 @@ button.ok{background:linear-gradient(135deg,var(--up),color-mix(in srgb,var(--up
   radial-gradient(circle,rgba(159,216,255,.18),rgba(245,200,66,.12));animation:rise linear infinite}
 @keyframes rise{0%{transform:translate(0,0) scale(.8)}50%{transform:translate(18px,-55vh) scale(1)}100%{transform:translate(-12px,-115vh) scale(1.05);opacity:0}}
 .layout,header{position:relative;z-index:1}
-header{position:sticky}
+header{position:sticky;z-index:10}   /* above .layout (same level 1 would let the content scroll over it), below overlays */
 .confetti{position:fixed;top:-40px;font-size:28px;z-index:50;pointer-events:none;animation:fall linear forwards}
 @keyframes fall{to{transform:translateY(110vh) rotate(540deg)}}
 @media (prefers-reduced-motion:reduce){#bubbles,header::after{animation:none;display:none}}
