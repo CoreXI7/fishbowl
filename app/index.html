@@ -259,7 +259,7 @@ async function loadSystem() {
       <div class="kv"><span>Memory</span><span>${size(memUsed)} / ${size(s.mem_total)}</span></div>${meter(memPct, 80, 92)}
       ${s.swap_total ? `<div class="kv"><span>Swap</span><span>${size(swapUsed)} / ${size(s.swap_total)}</span></div>` : ""}
       ${hw && hw.net ? `<div class="kv"><span>Network (${esc(hw.net.if)})</span><span>↓ ${bits(hw.net.rx_bps)} &nbsp;↑ ${bits(hw.net.tx_bps)}</span></div>` : ""}
-      ${hw && hw.containers ? `<div class="kv"><span>Containers</span><span>${hw.containers.running} running / ${hw.containers.total}</span></div>` : ""}
+      ${hw && hw.containers ? `<div class="kv"><span>Containers</span><span>${hw.containers.running} running${hw.containers.total > hw.containers.running ? ` · <span class="warn-t">${hw.containers.total - hw.containers.running} stopped</span>` : ""}</span></div>` : ""}
       ${!hw ? `<div class="kv"><span class="mute">Install the collector for drives, GPU and security</span><span></span></div>` : hw.stale ? `<div class="kv"><span class="err">Collector data is stale</span><span></span></div>` : ""}`;
     kpi("k-sys", s.cpu >= 90 || memPct >= 92 || cpuT >= 90 ? "bad" : s.cpu >= 70 || memPct >= 80 || cpuT >= 80 ? "warn" : "ok",
         `${s.cpu.toFixed(0)}% · ${memPct.toFixed(0)}%`, `${cpuT != null ? "CPU " + Math.round(cpuT) + "° · " : ""}RAM ${size(memUsed)} · up ${dur(s.uptime)}`);
