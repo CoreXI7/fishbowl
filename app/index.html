@@ -82,19 +82,81 @@
   </div>
 </div>
 <script>
+// =====================================================================================================
+// homelab-dash page script. No framework: each panel has a load*() that fetches its /api/... endpoint and
+// a render step that builds HTML strings. Polling is at the bottom (startPolling).
+//
+// Efficiency rules used throughout:
+//   - setHTML() only touches the DOM when the HTML actually changed, so a refresh with the same data costs
+//     no layout or repaint (the wall display refreshes every few seconds, all day).
+//   - poll() never lets a refresh overlap the previous one, and stops while the tab is hidden.
+// =====================================================================================================
+
+// ---------- small helpers ----------
 const $ = id => document.getElementById(id);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const size = b => { if (b == null) return "–"; const u = ["B","KB","MB","GB","TB","PB"]; let i = 0; while (b >= 1024 && i < 5) { b /= 1024; i++; } return (i ? b.toFixed(b < 10 ? 2 : 1) : b) + " " + u[i]; };
-const speed = b => b ? size(b) + "/s" : "0";
-const eta = s => { if (!s || s >= 8640000) return "∞"; const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; };
-const ago = iso => { const s = (Date.now() - new Date(iso)) / 1000; return s < 3600 ? Math.round(s/60) + "m ago" : s < 86400 ? Math.round(s/3600) + "h ago" : Math.round(s/86400) + "d ago"; };
-const ago2 = ts => ago(ts * 1000);
-const shortTime = iso => new Date(iso).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
-const kpi = (id, state, value, sub) => { const k = $(id); k.className = "kpi " + (state || ""); k.querySelector(".kv2").innerHTML = value; k.querySelector(".ks").innerHTML = sub || "&nbsp;"; };
-function torTab(which) {
-  ["dl", "seed"].forEach(w => { $(w).hidden = w !== which; $("t-" + w).classList.toggle("on", w === which); });
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const noTyping = e => !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Write HTML/text into an element only if it differs from what we wrote last time.
+function setHTML(el, html) {
+  if (typeof el === "string") el = $(el);
+  if (el._html === html) return false;
+  el._html = html;
+  el.innerHTML = html;
+  return true;
 }
-const STATE = {downloading:"downloading",stalledDL:"stalled",metaDL:"fetching metadata",forcedDL:"forced",queuedDL:"queued",checkingDL:"checking",pausedDL:"paused",stoppedDL:"stopped"};
+function setText(el, text) {
+  if (typeof el === "string") el = $(el);
+  if (el.textContent !== text) el.textContent = text;
+}
+
+// ---------- number / time formatting ----------
+const size = b => {                       // bytes -> "1.5 GB"
+  if (b == null) return "–";
+  const u = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let i = 0;
+  while (b >= 1024 && i < 5) { b /= 1024; i++; }
+  return (i ? b.toFixed(b < 10 ? 2 : 1) : b) + " " + u[i];
+};
+const speed = b => b ? size(b) + "/s" : "0";
+const bits = b => {                       // bytes/s -> "12 Mb/s"
+  if (b == null) return "–";
+  let v = b * 8, i = 0;
+  const u = ["b/s", "Kb/s", "Mb/s", "Gb/s"];
+  while (v >= 1000 && i < 3) { v /= 1000; i++; }
+  return v.toFixed(v < 10 && i ? 1 : 0) + " " + u[i];
+};
+const eta = s => {                        // seconds -> "2d 4h" / "3h 10m" / "5m"
+  if (!s || s >= 8640000) return "∞";
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+};
+const dur = s => {                        // uptime seconds -> "4d 2h" / "3h 5m"
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : `${h}h ${m}m`;
+};
+const ago = iso => {
+  const s = (Date.now() - new Date(iso)) / 1000;
+  return s < 3600 ? Math.round(s / 60) + "m ago" : s < 86400 ? Math.round(s / 3600) + "h ago" : Math.round(s / 86400) + "d ago";
+};
+const ago2 = ts => ago(ts * 1000);        // unix seconds
+const shortTime = iso => new Date(iso).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
+
+// ---------- shared UI bits ----------
+// warn/crit colouring: lvl() for meter bars, tcls() for text
+const lvl = (v, w, c) => v == null ? "" : v >= c ? "crit" : v >= w ? "warn" : "";
+const tcls = (v, w, c) => v == null ? "" : v >= c ? "crit-t" : v >= w ? "warn-t" : "ok-t";
+const meter = (pct, w = 80, c = 90) => `<div class="meter"><i class="${lvl(pct, w, c)}" style="width:${Math.min(100, pct || 0).toFixed(1)}%"></i></div>`;
+const kvRow = (left, right) => `<div class="kv"><span>${left}</span><span>${right}</span></div>`;
+
+// One of the summary tiles across the top. state: "ok" | "warn" | "bad" | "".
+function kpi(id, state, value, sub) {
+  const k = $(id), cls = "kpi " + (state || "");
+  if (k.className !== cls) k.className = cls;
+  setHTML(k.querySelector(".kv2"), value);
+  setHTML(k.querySelector(".ks"), sub || "&nbsp;");
+}
 
 async function getJSON(url) {
   const r = await fetch(url, {credentials: "same-origin"});
@@ -105,7 +167,14 @@ async function getJSON(url) {
   return j;
 }
 
-// ---------- config (from config.toml via /api/config) ----------
+async function postJSON(url, body) {
+  const r = await fetch(url, {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+
+// ---------- config (from /api/config: settings page + server-side theme merge) ----------
 let CFG = {groups: [], apps: {}, features: {}, quotes: []};
 const CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/png/";
 
@@ -113,16 +182,23 @@ function applyConfig() {
   document.title = CFG.title;
   $("site-title").textContent = CFG.title;
   $("gear").hidden = !CFG.settings_ui;
-  if (CFG.demo) { $("demo-pill").hidden = false; if (CFG.repo) $("demo-pill").href = CFG.repo; else $("demo-pill").removeAttribute("href"); }
+  if (CFG.demo) {
+    $("demo-pill").hidden = false;
+    if (CFG.repo) $("demo-pill").href = CFG.repo; else $("demo-pill").removeAttribute("href");
+  }
+  // hide panels for integrations that aren't set up; let a lone Plex/Requests panel take the full row
   document.querySelectorAll("[data-feature]").forEach(el => el.hidden = !CFG.features[el.dataset.feature]);
-  if (!CFG.features.plex && !CFG.features.seerr) document.querySelector(".duo").hidden = true;
-  else if (!CFG.features.plex || !CFG.features.seerr) document.querySelector(".duo").style.gridTemplateColumns = "minmax(0,1fr)";
-  let saved = ""; try { saved = localStorage.getItem("theme") || ""; } catch (e) {}
+  const duo = document.querySelector(".duo");
+  if (!CFG.features.plex && !CFG.features.seerr) duo.hidden = true;
+  else if (!CFG.features.plex || !CFG.features.seerr) duo.style.gridTemplateColumns = "minmax(0,1fr)";
+  let saved = "";
+  try { saved = localStorage.getItem("theme") || ""; } catch (e) {}
   setTheme(CFG.themes && CFG.themes[saved] ? saved : CFG.theme);
 }
 
-// ---------- themes: the look is CSS (html[data-theme]); each theme also brings its own mascot, quotes, click emoji,
-// taglines and tab icon (CFG.themes, merged on the server). The 🎨 button or T cycles; the choice is per browser. ----------
+// ---------- themes ----------
+// The look is CSS (html[data-theme]); each theme also brings its own mascot, quotes, click emoji, taglines and
+// tab icon (CFG.themes, merged on the server). The 🎨 button or T cycles; the choice is saved per browser.
 let THEME = "";
 function setTheme(id, save) {
   if (!CFG.themes || !CFG.themes[id]) id = CFG.theme || "bubbles";
@@ -142,203 +218,278 @@ function setTheme(id, save) {
   $("theme-btn").hidden = ids.length < 2;
   $("theme-btn").title = `Theme: ${CFG.label || id}${next ? ` (click for ${next.label})` : ""} · T`;
 }
-function nextTheme() { const ids = Object.keys(CFG.themes || {}); if (ids.length > 1) setTheme(ids[(ids.indexOf(THEME) + 1) % ids.length], true); }
+function nextTheme() {
+  const ids = Object.keys(CFG.themes || {});
+  if (ids.length > 1) setTheme(ids[(ids.indexOf(THEME) + 1) % ids.length], true);
+}
 $("theme-btn").addEventListener("click", nextTheme);
-addEventListener("keydown", e => { if (e.key.toLowerCase() === "t" && !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) nextTheme(); });
+addEventListener("keydown", e => { if (e.key.toLowerCase() === "t" && noTyping(e)) nextTheme(); });
 
-// ---------- services ----------
+// ---------- services (one tile per NPM proxy host, grouped as configured) ----------
+// Icon fallback chain: configured icon -> the service's own favicon (via /api/icon) -> first letter.
 function iconFail(img) {
   const step = +(img.dataset.step || 0);
   img.dataset.step = step + 1;
   if (step === 0 && img.dataset.fav) { img.src = img.dataset.fav; return; }
-  const d = document.createElement("div"); d.className = "lt"; d.textContent = img.dataset.letter; img.replaceWith(d);
+  const d = document.createElement("div");
+  d.className = "lt";
+  d.textContent = img.dataset.letter;
+  img.replaceWith(d);
+}
+
+function serviceTile(s) {
+  const app = CFG.apps[s.name] || {}, label = app.label || s.name.split(".")[0], icon = app.icon || "";
+  const letter = esc(label[0].toUpperCase());
+  const fav = CFG.demo ? "" : "/api/icon?host=" + encodeURIComponent(s.name);
+  const src = icon ? (/^(\/|https?:|data:)/.test(icon) ? icon : CDN + icon + ".png") : fav;
+  const status = s.up ? `online · ${s.ms} ms${s.code ? " · HTTP " + s.code : ""}` : `OFFLINE (${s.err || "HTTP " + s.code})`;
+  const tip = `${s.name}\n${status}${s.auth ? "\nbehind SSO" : ""}`;
+  const img = src
+    ? `<img src="${esc(src)}" alt="" loading="lazy" data-fav="${icon ? esc(fav) : ""}" data-letter="${letter}" onerror="iconFail(this)">`
+    : `<span class="lt">${letter}</span>`;
+  return `<a class="app ${s.up ? "" : "down"}" href="${esc(app.url || "https://" + s.name)}" target="_blank" rel="noopener" title="${esc(tip)}">
+    <span class="ic">${img}<span class="st ${s.up ? "up" : "down"}"></span></span>
+    <span class="nm">${esc(label)}</span><span class="lk">${s.auth ? "🔒" : "&nbsp;"}</span></a>`;
 }
 
 async function loadServices() {
   try {
     const d = await getJSON("/api/services");
     const down = d.services.filter(s => !s.up);
-    const tile = s => {
-      const app = CFG.apps[s.name] || {}, label = app.label || s.name.split(".")[0], icon = app.icon || "";
-      const fav = CFG.demo ? "" : "/api/icon?host=" + encodeURIComponent(s.name);
-      const src = icon ? (/^(\/|https?:|data:)/.test(icon) ? icon : CDN + icon + ".png") : fav;
-      const tip = `${s.name}\n${s.up ? "online · " + s.ms + " ms" + (s.code ? " · HTTP " + s.code : "") : "OFFLINE (" + (s.err || "HTTP " + s.code) + ")"}${s.auth ? "\nbehind SSO" : ""}`;
-      const href = app.url || "https://" + s.name;
-      return `<a class="app ${s.up ? "" : "down"}" href="${esc(href)}" target="_blank" rel="noopener" title="${esc(tip)}">
-        <span class="ic">${src ? `<img src="${esc(src)}" alt="" loading="lazy" data-fav="${icon ? esc(fav) : ""}" data-letter="${esc(label[0].toUpperCase())}" onerror="iconFail(this)">` : `<span class="lt">${esc(label[0].toUpperCase())}</span>`}<span class="st ${s.up ? "up" : "down"}"></span></span>
-        <span class="nm">${esc(label)}</span><span class="lk">${s.auth ? "🔒" : "&nbsp;"}</span></a>`;
-    };
+    // configured groups first, then anything not in a group under "New / other"
     const byName = Object.fromEntries(d.services.map(s => [s.name, s])), used = new Set();
     const groups = CFG.groups.map(g => [g.name, (g.hosts || []).filter(h => byName[h]).map(h => (used.add(h), byName[h]))]);
     const other = d.services.filter(s => !used.has(s.name));
     if (other.length) groups.push([CFG.groups.length ? "✨ New / other" : "All services", other]);
-    $("svc").innerHTML = groups.filter(([, l]) => l.length).map(([g, list]) => {
+    setHTML("svc", groups.filter(([, list]) => list.length).map(([name, list]) => {
       const dn = list.filter(s => !s.up).length;
-      return `<div class="grp"><h3><span>${esc(g)}</span><span class="${dn ? "crit-t" : "ok-t"}">${dn ? dn + " down" : list.length + " ✓"}</span></h3><div class="apps">${list.map(tile).join("")}</div></div>`;
-    }).join("") || `<div class="empty">No services found. Mount NPM's proxy_host folder or add [[services]] to config.toml.</div>`;
-    $("svc-n").textContent = `${d.services.length - down.length}/${d.services.length} up · checked ${new Date(d.checked*1000).toLocaleTimeString()}`;
+      return `<div class="grp"><h3><span>${esc(name)}</span><span class="${dn ? "crit-t" : "ok-t"}">${dn ? dn + " down" : list.length + " ✓"}</span></h3>
+        <div class="apps">${list.map(serviceTile).join("")}</div></div>`;
+    }).join("") || `<div class="empty">No services found. Mount NPM's proxy_host folder or add [[services]] to config.toml.</div>`);
+    setText("svc-n", `${d.services.length - down.length}/${d.services.length} up · checked ${new Date(d.checked * 1000).toLocaleTimeString()}`);
     setMood(down.length);
-    kpi("k-svc", down.length ? "bad" : "ok", `${d.services.length - down.length}/${d.services.length}`, down.length ? "down: " + down.slice(0, 3).map(s => esc(s.name.split(".")[0])).join(", ") : "all online");
-  } catch (e) { $("svc").innerHTML = `<div class="err">${esc(e.message)}</div>`; kpi("k-svc", "warn", "?", esc(e.message)); }
+    kpi("k-svc", down.length ? "bad" : "ok", `${d.services.length - down.length}/${d.services.length}`,
+        down.length ? "down: " + down.slice(0, 3).map(s => esc(s.name.split(".")[0])).join(", ") : "all online");
+  } catch (e) {
+    setHTML("svc", `<div class="err">${esc(e.message)}</div>`);
+    kpi("k-svc", "warn", "?", esc(e.message));
+  }
 }
 
 // ---------- qBittorrent ----------
+const TOR_STATE = {downloading: "downloading", stalledDL: "stalled", metaDL: "fetching metadata", forcedDL: "forced",
+                   queuedDL: "queued", checkingDL: "checking", pausedDL: "paused", stoppedDL: "stopped"};
+
+function torTab(which) {
+  ["dl", "seed"].forEach(w => { $(w).hidden = w !== which; $("t-" + w).classList.toggle("on", w === which); });
+}
+
 function torRow(t, dl) {
-  const st = dl ? (STATE[t.state] || t.state) : "";
+  const pct = (t.progress * 100).toFixed(1);
+  const stats = dl
+    ? `<span>${pct}% of ${size(t.size)}</span><span>↓ ${speed(t.dlspeed)}</span><span>ETA ${eta(t.eta)}</span><span>${esc(TOR_STATE[t.state] || t.state)}</span><span>${t.num_seeds} seeds</span>`
+    : `<span>↑ ${speed(t.upspeed)}</span><span>${t.num_leechs} peers</span><span>ratio ${t.ratio.toFixed(2)}</span><span>${size(t.size)}</span>`;
   return `<div class="tor"><div class="t" title="${esc(t.name)}">${esc(t.name)}</div>
-    ${dl ? `<div class="bar"><i style="width:${(t.progress*100).toFixed(1)}%"></i></div>` : ""}
-    <div class="s">${dl ? `<span>${(t.progress*100).toFixed(1)}% of ${size(t.size)}</span><span>↓ ${speed(t.dlspeed)}</span><span>ETA ${eta(t.eta)}</span><span>${esc(st)}</span><span>${t.num_seeds} seeds</span>`
-      : `<span>↑ ${speed(t.upspeed)}</span><span>${t.num_leechs} peers</span><span>ratio ${t.ratio.toFixed(2)}</span><span>${size(t.size)}</span>`}
-    ${t.category ? `<span>${esc(t.category)}</span>` : ""}</div></div>`;
+    ${dl ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
+    <div class="s">${stats}${t.category ? `<span>${esc(t.category)}</span>` : ""}</div></div>`;
 }
 
 async function loadQbit() {
   if (!CFG.features.qbit) return;
   try {
     const q = await getJSON("/api/qbit");
-    $("dl").innerHTML = q.downloading.length ? q.downloading.map(t => torRow(t, true)).join("") : `<div class="empty">Nothing downloading.</div>`;
-    $("t-dl").textContent = `Downloading (${q.downloading.length})`; $("t-seed").textContent = `Seeding (${q.seeding_active})`;
-    $("seed").innerHTML = q.seeding.length ? q.seeding.map(t => torRow(t, false)).join("") : `<div class="empty">No active uploads right now.</div>`;
-    $("tor-n").textContent = `· ${q.total} torrents · lifetime ↑ ${size(q.up_total)} ↓ ${size(q.dl_total)}`;
+    setHTML("dl", q.downloading.length ? q.downloading.map(t => torRow(t, true)).join("") : `<div class="empty">Nothing downloading.</div>`);
+    setHTML("seed", q.seeding.length ? q.seeding.map(t => torRow(t, false)).join("") : `<div class="empty">No active uploads right now.</div>`);
+    setText("t-dl", `Downloading (${q.downloading.length})`);
+    setText("t-seed", `Seeding (${q.seeding_active})`);
+    setText("tor-n", `· ${q.total} torrents · lifetime ↑ ${size(q.up_total)} ↓ ${size(q.dl_total)}`);
+    // VPN check: qbit's external IP equal to your home IP means it's NOT going through the VPN
     const connOk = q.connection !== "disconnected" && !q.vpn_leak && q.external_ip;
     const mbs = b => (b / 1048576).toFixed(b >= 10485760 ? 0 : 1);
     kpi("k-net", q.vpn_leak ? "bad" : connOk ? "ok" : "warn", `↓ ${mbs(q.dl_speed)} ↑ ${mbs(q.up_speed)} <small style="font-size:.55em">MB/s</small>`,
         q.vpn_leak ? "<b>VPN LEAK: home IP!</b>" : `${q.vpn_check ? "VPN" : "IP"} ${esc(q.external_ip || "?")} · ${esc(q.connection)}`);
     $("banner").hidden = !q.vpn_leak;
-    if (q.vpn_leak) $("banner").textContent = "qBittorrent is using your home IP. The VPN is not protecting it!";
-  } catch (e) { $("dl").innerHTML = `<div class="err">qBittorrent: ${esc(e.message)}</div>`; kpi("k-net", "warn", "qbit ?", "unreachable"); }
+    if (q.vpn_leak) setText("banner", "qBittorrent is using your home IP. The VPN is not protecting it!");
+  } catch (e) {
+    setHTML("dl", `<div class="err">qBittorrent: ${esc(e.message)}</div>`);
+    kpi("k-net", "warn", "qbit ?", "unreachable");
+  }
 }
 
-// ---------- Seerr requests ----------
+// ---------- Seerr requests (approve / decline right from the dashboard) ----------
+function requestCard(r) {
+  const poster = r.poster && r.poster.startsWith("data:") ? r.poster : "https://image.tmdb.org/t/p/w154" + r.poster;
+  return `<div class="req" id="r${r.id}">
+    ${r.poster ? `<img loading="lazy" src="${esc(poster)}" alt="">` : `<div class="ph"></div>`}
+    <div class="b"><div><b>${esc(r.title)}</b> ${r.year ? `<span class="mute">(${esc(r.year)})</span>` : ""}<span class="tag">${r.type === "tv" ? "TV" : "Movie"}</span>${r.is4k ? '<span class="tag">4K</span>' : ""}</div>
+      <div class="mute" style="font-size:12px">${esc(r.user)} · ${ago(r.created)}${r.seasons.length ? " · season " + r.seasons.join(", ") : ""}</div>
+      <div class="ov">${esc(r.overview)}</div>
+      <button class="ok" onclick="act(${r.id},'approve',this)">Approve</button> <button class="no" onclick="act(${r.id},'decline',this)">Decline</button>
+      <span class="err" id="e${r.id}"></span></div></div>`;
+}
+
 async function loadRequests() {
   if (!CFG.features.seerr) return;
   try {
-    const d = await getJSON("/api/requests");
-    const poster = p => p && p.startsWith("data:") ? p : "https://image.tmdb.org/t/p/w154" + p;
-    $("req").innerHTML = d.pending.length ? d.pending.map(r => `<div class="req" id="r${r.id}">
-      ${r.poster ? `<img loading="lazy" src="${esc(poster(r.poster))}" alt="">` : `<div class="ph"></div>`}
-      <div class="b"><div><b>${esc(r.title)}</b> ${r.year ? `<span class="mute">(${esc(r.year)})</span>` : ""}<span class="tag">${r.type === "tv" ? "TV" : "Movie"}</span>${r.is4k ? '<span class="tag">4K</span>' : ""}</div>
-        <div class="mute" style="font-size:12px">${esc(r.user)} · ${ago(r.created)}${r.seasons.length ? " · season " + r.seasons.join(", ") : ""}</div>
-        <div class="ov">${esc(r.overview)}</div>
-        <button class="ok" onclick="act(${r.id},'approve',this)">Approve</button> <button class="no" onclick="act(${r.id},'decline',this)">Decline</button>
-        <span class="err" id="e${r.id}"></span></div></div>`).join("") : `<div class="empty">No pending requests. 🎉</div>`;
-    $("req-n").textContent = d.pending.length || "";
-    kpi("k-req", d.pending.length ? "warn" : "ok", d.pending.length ? `${d.pending.length} waiting` : "none", d.pending.length ? esc(d.pending.slice(0, 2).map(r => r.title).join(", ")) : "all caught up 🎉");
-  } catch (e) { $("req").innerHTML = `<div class="err">Seerr: ${esc(e.message)}</div>`; kpi("k-req", "warn", "?", "Seerr unreachable"); }
+    const d = await getJSON("/api/requests"), n = d.pending.length;
+    setHTML("req", n ? d.pending.map(requestCard).join("") : `<div class="empty">No pending requests. 🎉</div>`);
+    setText("req-n", n ? String(n) : "");
+    kpi("k-req", n ? "warn" : "ok", n ? `${n} waiting` : "none", n ? esc(d.pending.slice(0, 2).map(r => r.title).join(", ")) : "all caught up 🎉");
+  } catch (e) {
+    setHTML("req", `<div class="err">Seerr: ${esc(e.message)}</div>`);
+    kpi("k-req", "warn", "?", "Seerr unreachable");
+  }
 }
 
 async function act(id, action, btn) {
   if (action === "decline" && !confirm("Decline this request?")) return;
-  btn.parentElement.querySelectorAll("button").forEach(b => b.disabled = true);
+  const buttons = btn.parentElement.querySelectorAll("button");
+  buttons.forEach(b => b.disabled = true);
   try {
-    const r = await fetch(`/api/requests/${id}/${action}`, {method: "POST", credentials: "same-origin"});
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || r.status);
+    await postJSON(`/api/requests/${id}/${action}`);
     $("r" + id).style.opacity = .4;
     setTimeout(loadRequests, 600);
-  } catch (e) { $("e" + id).textContent = " " + e.message; btn.parentElement.querySelectorAll("button").forEach(b => b.disabled = false); }
+  } catch (e) {
+    $("e" + id).textContent = " " + e.message;
+    buttons.forEach(b => b.disabled = false);
+  }
 }
 
-// ---------- system, temps, GPU, drives ----------
-const lvl = (v, w, c) => v == null ? "" : v >= c ? "crit" : v >= w ? "warn" : "";
-const tcls = (v, w, c) => v == null ? "" : v >= c ? "crit-t" : v >= w ? "warn-t" : "ok-t";
-const meter = (pct, w = 80, c = 90) => `<div class="meter"><i class="${lvl(pct, w, c)}" style="width:${Math.min(100, pct || 0).toFixed(1)}%"></i></div>`;
-const tcell = (label, v, w, c, tip) => `<div class="tc" title="${esc(tip || label)}"><small>${esc(label)}</small><b class="${tcls(v, w, c)}">${v == null ? "–" : Math.round(v) + "°"}</b></div>`;
-const dur = s => { const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60); return d ? `${d}d ${h}h` : `${h}h ${m}m`; };
-const bits = b => { if (b == null) return "–"; let v = b * 8, u = ["b/s","Kb/s","Mb/s","Gb/s"], i = 0; while (v >= 1000 && i < 3) { v /= 1000; i++; } return v.toFixed(v < 10 && i ? 1 : 0) + " " + u[i]; };
-
+// ---------- system: CPU/RAM, temperatures, GPU, drives (all from /api/system every few seconds) ----------
 async function loadSystem() {
   try {
-    const s = await getJSON("/api/system"), hw = s.hw, memUsed = s.mem_total - s.mem_avail, memPct = 100 * memUsed / s.mem_total;
-    const swapUsed = s.swap_total - s.swap_free, cpuT = s.temps.cpu;
-    $("sys-up").textContent = "up " + dur(s.uptime);
-    $("sys").innerHTML = `
-      <div class="kv"><span>CPU${s.cpu_model ? " · " + esc(s.cpu_model) : ""}</span><span>load ${s.load.map(x => x.toFixed(2)).join(" ")}</span></div>
-      <div class="big">${s.cpu.toFixed(0)}%</div>${meter(s.cpu, 70, 90)}
-      <div class="cores" title="per-thread load (${s.cores.length} threads)" style="grid-template-columns:repeat(${Math.min(16, s.cores.length)},1fr)">${s.cores.map(c => `<i title="${c.toFixed(0)}%"><b style="height:${c}%"></b></i>`).join("")}</div>
-      <div class="kv"><span>Memory</span><span>${size(memUsed)} / ${size(s.mem_total)}</span></div>${meter(memPct, 80, 92)}
-      ${s.swap_total ? `<div class="kv"><span>Swap</span><span>${size(swapUsed)} / ${size(s.swap_total)}</span></div>` : ""}
-      ${hw && hw.net ? `<div class="kv"><span>Network (${esc(hw.net.if)})</span><span>↓ ${bits(hw.net.rx_bps)} &nbsp;↑ ${bits(hw.net.tx_bps)}</span></div>` : ""}
-      ${hw && hw.containers ? `<div class="kv"><span>Containers</span><span>${hw.containers.running} running${hw.containers.total > hw.containers.running ? ` · <span class="warn-t">${hw.containers.total - hw.containers.running} stopped</span>` : ""}</span></div>` : ""}
-      ${!hw ? `<div class="kv"><span class="mute">Install the collector for drives, GPU and security</span><span></span></div>` : hw.stale ? `<div class="kv"><span class="err">Collector data is stale</span><span></span></div>` : ""}`;
-    kpi("k-sys", s.cpu >= 90 || memPct >= 92 || cpuT >= 90 ? "bad" : s.cpu >= 70 || memPct >= 80 || cpuT >= 80 ? "warn" : "ok",
-        `${s.cpu.toFixed(0)}% · ${memPct.toFixed(0)}%`, `${cpuT != null ? "CPU " + Math.round(cpuT) + "° · " : ""}RAM ${size(memUsed)} · up ${dur(s.uptime)}`);
+    const s = await getJSON("/api/system"), hw = s.hw;
+    renderSystem(s, hw);
+    renderTemps(s, hw);
+    renderGpu(hw && hw.gpu);
+    renderDrives(hw);
     renderSecurity(hw);
     $("usage-btn").hidden = !(hw && hw.usage && hw.usage.groups);
     if (hw && hw.usage && hw.usage.groups) usageData(hw.usage);
-    const g = hw && hw.gpu, sm = (hw && hw.smart) || {};
-    const hdd = (hw ? hw.disks : []).filter(d => d.dev && !/nvme|mmcblk/.test(d.dev)).map(d => sm[d.dev] && sm[d.dev].temp).filter(v => v != null);
-    const cells = s.temps.cells.map(t => tcell(t.label, t.c, t.warn, t.crit));
-    if (g && g.temp != null) cells.push(tcell("GPU", g.temp, 75, 85));
-    if (hdd.length) cells.push(tcell("HDD max", Math.max(...hdd), 45, 50, "hottest hard drive"), tcell("HDD avg", hdd.reduce((a, b) => a + b, 0) / hdd.length, 45, 50));
-    $("tmp").innerHTML = cells.join("") || `<div class="empty">No temperature sensors visible.</div>`;
-    $("s-gpu").hidden = !g;
-    if (g) {
-      $("gpu-n").textContent = g.name;
-      $("gpu").innerHTML = `
-      <div class="kv"><span>Load</span><span>${g.util}%</span></div>${meter(g.util, 80, 95)}
-      <div class="kv"><span>NVENC / NVDEC</span><span>${g.enc}% / ${g.dec}%</span></div>
-      <div class="kv"><span>Encode sessions</span><span>${g.sessions ?? 0}</span></div>
-      <div class="kv"><span>VRAM</span><span>${(g.mem_used/1024).toFixed(1)} / ${(g.mem_total/1024).toFixed(0)} GB</span></div>${meter(100 * g.mem_used / g.mem_total, 85, 95)}
-      <div class="kv"><span>Power · Fan</span><span>${g.power != null ? g.power.toFixed(0) + " W" : "–"} · ${g.fan ?? "–"}%</span></div>`;
-    }
-    if (hw && hw.disks && hw.disks.length) {
-      const data = hw.disks.filter(d => !d.system && d.total);
-      const pool = data.length ? data : hw.disks.filter(d => d.total);
-      const tot = pool.reduce((a, d) => a + d.total, 0), used = pool.reduce((a, d) => a + d.used, 0);
-      $("drv-n").textContent = `${size(used)} / ${size(tot)}`;
-      const smartBad = hw.disks.some(d => d.missing || (sm[d.dev] || {}).passed === false), full = hw.disks.some(d => d.total && d.used / (d.used + d.free) > .95);
-      const sectors = hw.disks.filter(d => { const x = sm[d.dev] || {}; return x.realloc > 0 || x.pending > 0; }).length;
-      kpi("k-disk", smartBad ? "bad" : full || sectors ? "warn" : "ok", `${size(tot - used)} free`,
-          `${(100 * used / tot).toFixed(0)}% of ${size(tot)}${smartBad ? " · <b>drive problem!</b>" : sectors ? ` · ${sectors} drive${sectors > 1 ? "s" : ""} with bad sectors` : ""}`);
-      $("drv").innerHTML = `<div class="kv"><span>${data.length ? "All data drives" : "Total"}</span><span>${size(tot - used)} free</span></div>${meter(100 * used / tot, 90, 95)}` +
-        hw.disks.map(d => {
-          if (d.missing) return `<div class="drv"><div class="h"><b class="crit-t">${esc(d.name)}</b><span class="chip crit-t">NOT MOUNTED</span></div></div>`;
-          const x = sm[d.dev] || {}, pct = 100 * d.used / (d.used + d.free);  // same as df
-          const bad = x.passed === false || x.realloc > 0 || x.pending > 0 || x.uncorrect > 0;
-          const health = x.standby ? `<span class="chip">asleep</span>` : x.passed === false ? `<span class="chip crit-t">SMART FAIL</span>` :
-            bad ? `<span class="chip warn-t" title="reallocated ${x.realloc ?? 0} · pending ${x.pending ?? 0} · uncorrectable ${x.uncorrect ?? 0}">⚠ sectors</span>` : "";
-          const warm = /nvme/.test(d.dev) ? [65, 75] : [45, 50];
-          const tip = [x.model || d.model, d.dev, d.mount, x.hours != null ? `${Math.round(x.hours/24/365*10)/10} years powered on` : "", x.wear != null ? `wear ${x.wear}%` : "",
-                       x.realloc != null ? `realloc ${x.realloc} · pending ${x.pending ?? 0}` : ""].filter(Boolean).join("\n");
-          return `<div class="drv" title="${esc(tip)}"><div class="h"><b>${esc(d.name)}</b><span>${health} <span class="chip ${tcls(x.temp, ...warm)}">${x.temp != null ? x.temp + "°C" : "–"}</span></span></div>
-            <div class="md">${esc(x.model || d.model)} · ${esc(d.dev)}</div>${meter(pct, 90, 95)}
-            <div class="s"><span>${size(d.used)} / ${size(d.total)}</span><span>${pct.toFixed(0)}% · ${size(d.free)} free</span></div></div>`;
-        }).join("");
-    } else {
-      $("drv").innerHTML = `<div class="empty">Drive stats need the collector service.</div>`;
-      kpi("k-disk", "", "–", "needs the collector");
-    }
-  } catch (e) { $("sys").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  } catch (e) {
+    setHTML("sys", `<div class="err">${esc(e.message)}</div>`);
+  }
 }
 
-// ---------- Plex (via Tautulli) ----------
+function renderSystem(s, hw) {
+  const memUsed = s.mem_total - s.mem_avail, memPct = 100 * memUsed / s.mem_total, cpuT = s.temps.cpu;
+  setText("sys-up", "up " + dur(s.uptime));
+  const cores = `<div class="cores" title="per-thread load (${s.cores.length} threads)" style="grid-template-columns:repeat(${Math.min(16, s.cores.length)},1fr)">`
+    + s.cores.map(c => `<i title="${c.toFixed(0)}%"><b style="height:${c}%"></b></i>`).join("") + `</div>`;
+  const stopped = hw && hw.containers ? hw.containers.total - hw.containers.running : 0;
+  setHTML("sys", [
+    kvRow(`CPU${s.cpu_model ? " · " + esc(s.cpu_model) : ""}`, `load ${s.load.map(x => x.toFixed(2)).join(" ")}`),
+    `<div class="big">${s.cpu.toFixed(0)}%</div>${meter(s.cpu, 70, 90)}`,
+    cores,
+    kvRow("Memory", `${size(memUsed)} / ${size(s.mem_total)}`) + meter(memPct, 80, 92),
+    s.swap_total ? kvRow("Swap", `${size(s.swap_total - s.swap_free)} / ${size(s.swap_total)}`) : "",
+    hw && hw.net ? kvRow(`Network (${esc(hw.net.if)})`, `↓ ${bits(hw.net.rx_bps)} &nbsp;↑ ${bits(hw.net.tx_bps)}`) : "",
+    hw && hw.containers ? kvRow("Containers", `${hw.containers.running} running${stopped > 0 ? ` · <span class="warn-t">${stopped} stopped</span>` : ""}`) : "",
+    !hw ? kvRow(`<span class="mute">Install the collector for drives, GPU and security</span>`, "")
+      : hw.stale ? kvRow(`<span class="err">Collector data is stale</span>`, "") : "",
+  ].join(""));
+  const state = s.cpu >= 90 || memPct >= 92 || cpuT >= 90 ? "bad" : s.cpu >= 70 || memPct >= 80 || cpuT >= 80 ? "warn" : "ok";
+  kpi("k-sys", state, `${s.cpu.toFixed(0)}% · ${memPct.toFixed(0)}%`,
+      `${cpuT != null ? "CPU " + Math.round(cpuT) + "° · " : ""}RAM ${size(memUsed)} · up ${dur(s.uptime)}`);
+}
+
+function renderTemps(s, hw) {
+  const cell = (label, v, w, c, tip) => `<div class="tc" title="${esc(tip || label)}"><small>${esc(label)}</small><b class="${tcls(v, w, c)}">${v == null ? "–" : Math.round(v) + "°"}</b></div>`;
+  const cells = s.temps.cells.map(t => cell(t.label, t.c, t.warn, t.crit));
+  const g = hw && hw.gpu, smart = (hw && hw.smart) || {};
+  if (g && g.temp != null) cells.push(cell("GPU", g.temp, 75, 85));
+  // hard drives (not NVMe) get one hottest + one average cell instead of eight separate ones
+  const hdd = (hw ? hw.disks : []).filter(d => d.dev && !/nvme|mmcblk/.test(d.dev)).map(d => smart[d.dev] && smart[d.dev].temp).filter(v => v != null);
+  if (hdd.length) cells.push(cell("HDD max", Math.max(...hdd), 45, 50, "hottest hard drive"),
+                             cell("HDD avg", hdd.reduce((a, b) => a + b, 0) / hdd.length, 45, 50));
+  setHTML("tmp", cells.join("") || `<div class="empty">No temperature sensors visible.</div>`);
+}
+
+function renderGpu(g) {
+  $("s-gpu").hidden = !g;
+  if (!g) return;
+  setText("gpu-n", g.name);
+  setHTML("gpu", [
+    kvRow("Load", `${g.util}%`) + meter(g.util, 80, 95),
+    kvRow("NVENC / NVDEC", `${g.enc}% / ${g.dec}%`),
+    kvRow("Encode sessions", `${g.sessions ?? 0}`),
+    kvRow("VRAM", `${(g.mem_used / 1024).toFixed(1)} / ${(g.mem_total / 1024).toFixed(0)} GB`) + meter(100 * g.mem_used / g.mem_total, 85, 95),
+    kvRow("Power · Fan", `${g.power != null ? g.power.toFixed(0) + " W" : "–"} · ${g.fan ?? "–"}%`),
+  ].join(""));
+}
+
+function renderDrives(hw) {
+  if (!(hw && hw.disks && hw.disks.length)) {
+    setHTML("drv", `<div class="empty">Drive stats need the collector service.</div>`);
+    kpi("k-disk", "", "–", "needs the collector");
+    return;
+  }
+  const smart = hw.smart || {};
+  // the totals count data drives only (the system disk would skew "free space"), unless that's all there is
+  const data = hw.disks.filter(d => !d.system && d.total);
+  const pool = data.length ? data : hw.disks.filter(d => d.total);
+  const tot = pool.reduce((a, d) => a + d.total, 0), used = pool.reduce((a, d) => a + d.used, 0);
+  setText("drv-n", `${size(used)} / ${size(tot)}`);
+
+  const smartBad = hw.disks.some(d => d.missing || (smart[d.dev] || {}).passed === false);
+  const full = hw.disks.some(d => d.total && d.used / (d.used + d.free) > .95);
+  const sectors = hw.disks.filter(d => { const x = smart[d.dev] || {}; return x.realloc > 0 || x.pending > 0; }).length;
+  kpi("k-disk", smartBad ? "bad" : full || sectors ? "warn" : "ok", `${size(tot - used)} free`,
+      `${(100 * used / tot).toFixed(0)}% of ${size(tot)}${smartBad ? " · <b>drive problem!</b>" : sectors ? ` · ${sectors} drive${sectors > 1 ? "s" : ""} with bad sectors` : ""}`);
+
+  const drive = d => {
+    if (d.missing) return `<div class="drv"><div class="h"><b class="crit-t">${esc(d.name)}</b><span class="chip crit-t">NOT MOUNTED</span></div></div>`;
+    const x = smart[d.dev] || {}, pct = 100 * d.used / (d.used + d.free);   // same % as df
+    const bad = x.passed === false || x.realloc > 0 || x.pending > 0 || x.uncorrect > 0;
+    const health = x.standby ? `<span class="chip">asleep</span>`
+      : x.passed === false ? `<span class="chip crit-t">SMART FAIL</span>`
+      : bad ? `<span class="chip warn-t" title="reallocated ${x.realloc ?? 0} · pending ${x.pending ?? 0} · uncorrectable ${x.uncorrect ?? 0}">⚠ sectors</span>` : "";
+    const warm = /nvme/.test(d.dev) ? [65, 75] : [45, 50];
+    const tip = [x.model || d.model, d.dev, d.mount,
+                 x.hours != null ? `${Math.round(x.hours / 24 / 365 * 10) / 10} years powered on` : "",
+                 x.wear != null ? `wear ${x.wear}%` : "",
+                 x.realloc != null ? `realloc ${x.realloc} · pending ${x.pending ?? 0}` : ""].filter(Boolean).join("\n");
+    return `<div class="drv" title="${esc(tip)}"><div class="h"><b>${esc(d.name)}</b><span>${health} <span class="chip ${tcls(x.temp, ...warm)}">${x.temp != null ? x.temp + "°C" : "–"}</span></span></div>
+      <div class="md">${esc(x.model || d.model)} · ${esc(d.dev)}</div>${meter(pct, 90, 95)}
+      <div class="s"><span>${size(d.used)} / ${size(d.total)}</span><span>${pct.toFixed(0)}% · ${size(d.free)} free</span></div></div>`;
+  };
+  setHTML("drv", kvRow(data.length ? "All data drives" : "Total", `${size(tot - used)} free`) + meter(100 * used / tot, 90, 95) + hw.disks.map(drive).join(""));
+}
+
+// ---------- Plex now playing (via Tautulli) ----------
+function streamCard(s) {
+  const ep = s.media_type === "episode", tc = s.transcode_decision === "transcode", pct = +s.progress_percent || 0;
+  const title = ep ? s.grandparent_title : s.title, sub = ep ? `S${s.parent_media_index}·E${s.media_index} — ${s.title}` : (s.year || "");
+  const icon = s.state === "paused" ? "⏸" : s.state === "buffering" ? "⏳" : "▶";
+  const mode = tc && s.video_decision !== "transcode" ? `<span class="chip good">Audio transcode</span>`
+    : tc ? `<span class="chip mid">Transcode${s.transcode_hw_encoding ? " (HW)" : " (CPU!)"}</span>`
+    : s.transcode_decision === "copy" ? `<span class="chip good">Direct Stream</span>` : `<span class="chip good">Direct Play</span>`;
+  const res = s.stream_video_full_resolution || s.video_full_resolution;
+  const left = s.duration ? " · " + eta(Math.max(0, (s.duration - s.view_offset) / 1000)) + " left" : "";
+  return `<div class="stream">${s.art ? `<img src="${esc(s.art)}" alt="" loading="lazy">` : `<div class="ph"></div>`}
+    <div class="b"><div class="t" title="${esc(s.full_title)}">${esc(title)}</div><div class="sub">${esc(sub)}</div>
+      <div class="sub">👤 ${esc(s.friendly_name)} · ${esc(s.product)} on ${esc(s.player)}</div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="sub">${icon} ${esc(s.state)} · ${pct}%${left}</div>
+      <div class="chips">${mode}${res ? `<span class="chip">${esc(res)}</span>` : ""}<span class="chip">${(s.bandwidth / 1000).toFixed(1)} Mbps</span>
+        <span class="chip ${s.location === "wan" ? "" : "good"}">${s.location === "wan" ? "remote" : "home"}</span></div></div></div>`;
+}
+
 async function loadPlex() {
   if (!CFG.features.plex) return;
   try {
     const d = await getJSON("/api/plex");
+    const summary = `${(d.bandwidth / 1000).toFixed(1)} Mbps · ${d.transcodes} transcoding`;
     // Only a VIDEO transcode can use the GPU; audio-only transcodes (e.g. AC3 -> AAC) are always CPU and cheap.
-    kpi("k-plex", d.sessions.some(s => s.video_decision === "transcode" && !s.transcode_hw_encoding) ? "warn" : "ok",
-        d.stream_count ? `${d.stream_count} watching` : "idle", d.stream_count ? `${(d.bandwidth/1000).toFixed(1)} Mbps · ${d.transcodes} transcoding` : "nobody streaming");
-    $("plex-n").textContent = d.stream_count ? `${d.stream_count} stream${d.stream_count > 1 ? "s" : ""} · ${(d.bandwidth/1000).toFixed(1)} Mbps · ${d.transcodes} transcoding` : "";
-    $("plex").innerHTML = d.sessions.length ? d.sessions.map(s => {
-      const ep = s.media_type === "episode", tc = s.transcode_decision === "transcode";
-      const title = ep ? s.grandparent_title : s.title, sub = ep ? `S${s.parent_media_index}·E${s.media_index} — ${s.title}` : (s.year || "");
-      const icon = s.state === "paused" ? "⏸" : s.state === "buffering" ? "⏳" : "▶";
-      const mode = tc && s.video_decision !== "transcode" ? `<span class="chip good">Audio transcode</span>` :
-        tc ? `<span class="chip mid">Transcode${s.transcode_hw_encoding ? " (HW)" : " (CPU!)"}</span>` :
-        s.transcode_decision === "copy" ? `<span class="chip good">Direct Stream</span>` : `<span class="chip good">Direct Play</span>`;
-      const res = s.stream_video_full_resolution || s.video_full_resolution;
-      return `<div class="stream">${s.art ? `<img src="${esc(s.art)}" alt="" loading="lazy">` : `<div class="ph"></div>`}
-        <div class="b"><div class="t" title="${esc(s.full_title)}">${esc(title)}</div><div class="sub">${esc(sub)}</div>
-          <div class="sub">👤 ${esc(s.friendly_name)} · ${esc(s.product)} on ${esc(s.player)}</div>
-          <div class="bar"><i style="width:${+s.progress_percent || 0}%"></i></div>
-          <div class="sub">${icon} ${esc(s.state)} · ${+s.progress_percent || 0}%${s.duration ? " · " + eta(Math.max(0, (s.duration - s.view_offset)/1000)) + " left" : ""}</div>
-          <div class="chips">${mode}${res ? `<span class="chip">${esc(res)}</span>` : ""}<span class="chip">${(s.bandwidth/1000).toFixed(1)} Mbps</span>
-            <span class="chip ${s.location === "wan" ? "" : "good"}">${s.location === "wan" ? "remote" : "home"}</span></div></div></div>`;
-    }).join("") : `<div class="empty">Nobody's watching right now. 🍿</div>`;
-    requestAnimationFrame(plexHint);
-  } catch (e) { $("plex").innerHTML = `<div class="err">Tautulli: ${esc(e.message)}</div>`; kpi("k-plex", "warn", "?", "Tautulli unreachable"); }
+    const cpuTranscode = d.sessions.some(s => s.video_decision === "transcode" && !s.transcode_hw_encoding);
+    kpi("k-plex", cpuTranscode ? "warn" : "ok", d.stream_count ? `${d.stream_count} watching` : "idle", d.stream_count ? summary : "nobody streaming");
+    setText("plex-n", d.stream_count ? `${d.stream_count} stream${d.stream_count > 1 ? "s" : ""} · ${summary}` : "");
+    if (setHTML("plex", d.sessions.length ? d.sessions.map(streamCard).join("") : `<div class="empty">Nobody's watching right now. 🍿</div>`))
+      requestAnimationFrame(plexHint);
+  } catch (e) {
+    setHTML("plex", `<div class="err">Tautulli: ${esc(e.message)}</div>`);
+    kpi("k-plex", "warn", "?", "Tautulli unreachable");
+  }
 }
 
 // More streams than fit (wall mode)? "+N more" gives Now Playing the whole row and moves Requests aside;
@@ -355,7 +506,7 @@ function plexHint() {
   const bottom = $("plex").getBoundingClientRect().bottom;   // the list's own box (it scrolls on the wall)
   const cut = [...$("plex").querySelectorAll(".stream")].filter(el => el.getBoundingClientRect().bottom > bottom + 1).length;
   $("plex-more").hidden = !cut && !plexWide;
-  $("plex-more").textContent = plexWide ? `${cut ? `+${cut} more · ` : ""}show requests` : `+${cut} more ▸`;
+  setText("plex-more", plexWide ? `${cut ? `+${cut} more · ` : ""}show requests` : `+${cut} more ▸`);
 }
 setPlexWide(plexWide);
 $("plex-more").addEventListener("click", () => setPlexWide(!plexWide));
@@ -365,106 +516,139 @@ $("k-plex").addEventListener("click", e => { if (isWall()) { e.preventDefault();
 if ("ResizeObserver" in window) { const ro = new ResizeObserver(() => plexHint()); ro.observe($("s-plex")); ro.observe($("plex")); }
 else addEventListener("resize", () => requestAnimationFrame(plexHint));
 
-// ---------- security & backups (every box is optional: it only shows if the collector reports it) ----------
+// ---------- security & backups ----------
+// Every box is optional: it only shows if the collector reports it.
 // "known" is decided on the server (config known_ips), so your list of trusted IPs never reaches the browser.
 const known = item => !!item.known;
 const flagged = item => !item.known && !item.acked;   // unknown and not yet marked "looks fine"
+
 async function ackLogins(btn) {
-  btn.disabled = true; btn.textContent = "…";
+  btn.disabled = true;
+  btn.textContent = "…";
+  try { await postJSON("/api/security/ack"); loadSystem(); }
+  catch (e) { btn.disabled = false; btn.textContent = "failed: " + e.message; }
+}
+
+async function approveCron(hash, btn) {
+  btn.disabled = true;
+  btn.textContent = "approving…";
   try {
-    const r = await fetch("/api/security/ack", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: "{}"});
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
-    loadSystem();
+    await postJSON("/api/cron/approve", {hash});
+    setTimeout(loadSystem, 6000);    // the root collector applies it on its next round
+    setTimeout(loadSystem, 11000);
   } catch (e) { btn.disabled = false; btn.textContent = "failed: " + e.message; }
 }
 
 function renderSecurity(hw) {
   const s = hw && hw.security, b = hw && hw.backups;
   if (!s || s.error) {
-    $("sec").innerHTML = `<div class="empty">${s && s.error ? esc(s.error) : "Security checks need the collector service."}</div>`;
+    setHTML("sec", `<div class="empty">${s && s.error ? esc(s.error) : "Security checks need the collector service."}</div>`);
     kpi("k-sec", "", "–", s && s.error ? "collector error" : "needs the collector");
     return;
   }
+  // ✓ / ✗ label
   const ok = (good, txt, badTxt) => `<span class="${good ? "ok-t" : "crit-t"}">${good ? "✓ " + txt : "✗ " + badTxt}</span>`;
+  const row = (left, right) => `<div class="row"><span>${left}</span><span>${right}</span></div>`;
+
+  // overall verdict for the header + summary tile
   const unknownLogins = s.ssh ? s.ssh.logins.filter(flagged) : [];
   const locksOk = !s.locks || s.locks.every(l => l.locked), cronBad = s.cron && s.cron.ok === false;
   const fwOk = !s.firewall || /^(active|running)/i.test(s.firewall.status);
   const issues = [!locksOk && "lock missing", s.procs && s.procs.found.length && "bad process", unknownLogins.length && "unknown SSH login",
                   b && b.ok === false && "backup problem", !fwOk && "firewall off", cronBad && "cron changed"].filter(Boolean);
-  $("sec-n").innerHTML = issues.length ? `<span class="crit-t">⚠ ${esc(issues.join(" · "))}</span>` : `<span class="ok-t">all clear ✓</span>`;
+  setHTML("sec-n", issues.length ? `<span class="crit-t">⚠ ${esc(issues.join(" · "))}</span>` : `<span class="ok-t">all clear ✓</span>`);
   const summary = [s.f2b && `${s.f2b.banned_now} banned`, b && `backup ${b.ok ? "ok" : b.ok === false ? "!" : "?"}`, s.locks && "locks ok"].filter(Boolean).join(" · ");
   kpi("k-sec", issues.length ? "bad" : "ok", issues.length ? `${issues.length} issue${issues.length > 1 ? "s" : ""}` : "all clear",
       issues.length ? esc(issues.join(" · ")) : summary || "no issues");
+
   const boxes = [];
-  if (s.f2b || s.firewall) boxes.push(`<div class="box"><h3>${s.firewall ? "Firewall" : ""}${s.firewall && s.f2b ? " &amp; " : ""}${s.f2b ? "fail2ban" : ""}
-      <span>${s.firewall ? ok(fwOk, esc(s.firewall.name + " " + s.firewall.status), esc(s.firewall.name + " " + s.firewall.status)) : ""}</span></h3>
-      ${s.f2b ? `<div class="row"><span>Banned right now (${esc(s.f2b.jail)})</span><span>${s.f2b.banned_now}</span></div>
-      <div class="row"><span>Banned total (since restart)</span><span>${s.f2b.banned_total}</span></div>` : ""}
-      ${s.ssh ? `<div class="row"><span>SSH failures, 24h</span><span>${s.ssh.failed_24h}</span></div>` : ""}
+  if (s.f2b || s.firewall) {
+    const fw = s.firewall ? esc(s.firewall.name + " " + s.firewall.status) : "";
+    boxes.push(`<div class="box"><h3>${[s.firewall && "Firewall", s.f2b && "fail2ban"].filter(Boolean).join(" &amp; ")}
+        <span>${s.firewall ? ok(fwOk, fw, fw) : ""}</span></h3>
+      ${s.f2b ? row(`Banned right now (${esc(s.f2b.jail)})`, s.f2b.banned_now) + row("Banned total (since restart)", s.f2b.banned_total) : ""}
+      ${s.ssh ? row("SSH failures, 24h", s.ssh.failed_24h) : ""}
       ${s.f2b && s.f2b.ips.length ? `<details data-k="f2b-ips"><summary>banned IPs</summary><div class="mono">${s.f2b.ips.map(esc).join("<br>")}</div></details>` : ""}</div>`);
-  if (s.ssh) boxes.push(`<div class="box"><h3>SSH logins <span>${unknownLogins.length ? `<span class="crit-t">${unknownLogins.length} unknown</span>` : '<span class="ok-t">all known ✓</span>'}</span></h3>
-      ${s.ssh.logins.slice(0, 5).map(l => `<div class="row"><span>${esc(shortTime(l.time))} · ${esc(l.user)}</span><span class="mono ${flagged(l) ? "unk" : ""}" title="${known(l) ? "known IP" : l.acked ? "not on your known_ips list, but you marked it as fine" : "NOT on your known_ips list"}">${esc(l.ip)}${!known(l) && l.acked ? " ✓" : ""}</span></div>`).join("") || '<div class="row"><span>none in 7 days</span></div>'}
+  }
+  if (s.ssh) {
+    const login = l => {
+      const tip = known(l) ? "known IP" : l.acked ? "not on your known_ips list, but you marked it as fine" : "NOT on your known_ips list";
+      return `<div class="row"><span>${esc(shortTime(l.time))} · ${esc(l.user)}</span><span class="mono ${flagged(l) ? "unk" : ""}" title="${tip}">${esc(l.ip)}${!known(l) && l.acked ? " ✓" : ""}</span></div>`;
+    };
+    boxes.push(`<div class="box"><h3>SSH logins <span>${unknownLogins.length ? `<span class="crit-t">${unknownLogins.length} unknown</span>` : '<span class="ok-t">all known ✓</span>'}</span></h3>
+      ${s.ssh.logins.slice(0, 5).map(login).join("") || '<div class="row"><span>none in 7 days</span></div>'}
       ${unknownLogins.length ? `<div class="row" style="margin-top:6px"><span>That was you?</span><button class="ok" onclick="ackLogins(this)" title="Clears this alert. A new login from somewhere unfamiliar will flag again.">Looks fine ✓</button></div>` : ""}</div>`);
-  if (s.authelia) boxes.push(`<div class="box"><h3>Authelia <span>${s.authelia.failed_24h ? `<span class="warn-t">${s.authelia.failed_24h} failed</span>` : '<span class="ok-t">no failures ✓</span>'}</span></h3>
-      ${s.authelia.recent.slice(0, 4).map(f => `<div class="row"><span>${esc(shortTime(f.time))} · ${esc(f.factor)} ${esc(f.user || "?")}</span><span class="mono ${known(f) ? "" : "unk"}">${esc(f.ip)}</span></div>`).join("") || '<div class="row"><span>failed logins, last 24h</span><span>0</span></div>'}</div>`);
-  if (s.procs) boxes.push(`<div class="box"><h3>Process watch <span>${ok(!s.procs.found.length, "clean", "FOUND: " + esc(s.procs.found.join(", ")))}</span></h3>
+  }
+  if (s.authelia) {
+    const fail = f => `<div class="row"><span>${esc(shortTime(f.time))} · ${esc(f.factor)} ${esc(f.user || "?")}</span><span class="mono ${known(f) ? "" : "unk"}">${esc(f.ip)}</span></div>`;
+    boxes.push(`<div class="box"><h3>Authelia <span>${s.authelia.failed_24h ? `<span class="warn-t">${s.authelia.failed_24h} failed</span>` : '<span class="ok-t">no failures ✓</span>'}</span></h3>
+      ${s.authelia.recent.slice(0, 4).map(fail).join("") || row("failed logins, last 24h", 0)}</div>`);
+  }
+  if (s.procs) {
+    boxes.push(`<div class="box"><h3>Process watch <span>${ok(!s.procs.found.length, "clean", "FOUND: " + esc(s.procs.found.join(", ")))}</span></h3>
       ${s.procs.top.map(p => `<div class="row" title="PID ${p.pid}"><span>${esc(p.name)}</span><span>${p.cpu.toFixed(0)}%</span></div>`).join("")}</div>`);
-  if (s.cron) boxes.push(`<div class="box"><h3>Cron jobs <span>${ok(!cronBad, "as approved", "CHANGED")}</span></h3>
-      ${cronBad ? s.cron.changes.map(c => `<div class="row"><span class="mono" style="white-space:normal">${esc(c.file)}${c.new_file ? " (new file)" : c.deleted ? " (deleted)" : ""}</span></div>
-          ${c.added.map(l => `<div class="mono" style="color:var(--down);word-break:break-all">+ ${esc(l)}</div>`).join("")}
-          ${c.removed.map(l => `<div class="mono" style="color:var(--mute);word-break:break-all">− ${esc(l)}</div>`).join("")}`).join("") +
-        `<div class="row" style="margin-top:8px"><span>If you made this change:</span><button class="ok" onclick="approveCron('${esc(s.cron.hash)}', this)">Looks good ✓</button></div>
-         <div class="mute" style="font-size:11px">Didn't make it? Don't approve. Check it (possible malware persistence).</div>`
-      : `<div class="row"><span>${s.cron.files ?? "–"} cron files watched</span><span>${s.cron.approved_at ? "approved " + ago2(s.cron.approved_at) : ""}</span></div>`}</div>`);
-  if (s.locks) boxes.push(`<div class="box"><h3>Immutable files <span>${ok(locksOk, "intact", "MISSING")}</span></h3>
-      ${s.locks.map(l => `<div class="row"><span>${esc(l.file)}</span><span>${l.locked ? "🔒" : '<span class="crit-t">unlocked</span>'}</span></div>`).join("")}</div>`);
-  if (b) boxes.push(`<div class="box"><h3>Backups <span>${b.ok == null ? "" : ok(b.ok, "ok", "PROBLEM")}</span></h3>
-      ${b.last_run ? `<div class="row"><span>Last run</span><span>${esc(b.last_run)}</span></div>` : ""}
-      ${(b.checks || []).map(c => `<div class="row"><span>${esc(c.label)}</span><span>${ok(c.ok, c.count + " ✓", c.count + " found")}</span></div>`).join("")}
-      ${(b.artifacts || []).map(a => `<div class="row"><span>${esc(a.label)}${a.count ? ` (${a.count})` : ""}</span><span class="${a.fresh ? "" : "crit-t"}">${a.count ? ago2(a.newest) + " · " + size(a.size) : "none found"}</span></div>`).join("")}
+  }
+  if (s.cron) {
+    // a changed crontab stays flagged until you approve exactly what's there now (the collector checks the hash)
+    const change = c => `<div class="row"><span class="mono" style="white-space:normal">${esc(c.file)}${c.new_file ? " (new file)" : c.deleted ? " (deleted)" : ""}</span></div>
+      ${c.added.map(l => `<div class="mono" style="color:var(--down);word-break:break-all">+ ${esc(l)}</div>`).join("")}
+      ${c.removed.map(l => `<div class="mono" style="color:var(--mute);word-break:break-all">− ${esc(l)}</div>`).join("")}`;
+    const body = cronBad
+      ? s.cron.changes.map(change).join("")
+        + `<div class="row" style="margin-top:8px"><span>If you made this change:</span><button class="ok" onclick="approveCron('${esc(s.cron.hash)}', this)">Looks good ✓</button></div>
+           <div class="mute" style="font-size:11px">Didn't make it? Don't approve. Check it (possible malware persistence).</div>`
+      : row(`${s.cron.files ?? "–"} cron files watched`, s.cron.approved_at ? "approved " + ago2(s.cron.approved_at) : "");
+    boxes.push(`<div class="box"><h3>Cron jobs <span>${ok(!cronBad, "as approved", "CHANGED")}</span></h3>${body}</div>`);
+  }
+  if (s.locks) {
+    boxes.push(`<div class="box"><h3>Immutable files <span>${ok(locksOk, "intact", "MISSING")}</span></h3>
+      ${s.locks.map(l => row(esc(l.file), l.locked ? "🔒" : '<span class="crit-t">unlocked</span>')).join("")}</div>`);
+  }
+  if (b) {
+    const artifact = a => `<div class="row"><span>${esc(a.label)}${a.count ? ` (${a.count})` : ""}</span><span class="${a.fresh ? "" : "crit-t"}">${a.count ? ago2(a.newest) + " · " + size(a.size) : "none found"}</span></div>`;
+    boxes.push(`<div class="box"><h3>Backups <span>${b.ok == null ? "" : ok(b.ok, "ok", "PROBLEM")}</span></h3>
+      ${b.last_run ? row("Last run", esc(b.last_run)) : ""}
+      ${(b.checks || []).map(c => row(esc(c.label), ok(c.ok, c.count + " ✓", c.count + " found"))).join("")}
+      ${(b.artifacts || []).map(artifact).join("")}
       ${b.log && b.log.length ? `<details data-k="backup-log"><summary>log</summary><div class="mono">${b.log.map(esc).join("<br>")}</div></details>` : ""}</div>`);
-  // the panel is rebuilt every few seconds: keep open dropdowns (log, banned IPs) open, and where you'd scrolled in them
+  }
+
+  // When the panel does change, keep open dropdowns (log, banned IPs) open and where you'd scrolled in them.
   const open = {};
   $("sec").querySelectorAll("details[open]").forEach(d => open[d.dataset.k] = (d.querySelector(".mono") || {}).scrollTop || 0);
-  $("sec").innerHTML = boxes.join("") || `<div class="empty">All security checks are switched off in collector.toml.</div>`;
+  if (!setHTML("sec", boxes.join("") || `<div class="empty">All security checks are switched off in collector.toml.</div>`)) return;
   $("sec").querySelectorAll("details").forEach(d => {
     if (!(d.dataset.k in open)) return;
     d.open = true;
-    const m = d.querySelector(".mono"); if (m) m.scrollTop = open[d.dataset.k];
+    const m = d.querySelector(".mono");
+    if (m) m.scrollTop = open[d.dataset.k];
   });
 }
 
-async function approveCron(hash, btn) {
-  btn.disabled = true; btn.textContent = "approving…";
-  try {
-    const r = await fetch("/api/cron/approve", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({hash})});
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
-    setTimeout(loadSystem, 6000); setTimeout(loadSystem, 11000);
-  } catch (e) { btn.disabled = false; btn.textContent = "failed: " + e.message; }
-}
-
 // ---------- mascot, bubbles, confetti ----------
-let lastDown = 0;
+let lastDown = 0;   // how many services are down (the mascot gets sad)
 function setMood(down) {
   lastDown = down;
-  $("quote").textContent = down ? CFG.tagline_down : CFG.tagline;
+  setText("quote", down ? CFG.tagline_down : CFG.tagline);
   $("mascot").classList.toggle("sad", !!down);
-  if (down) $("say").textContent = `${CFG.tagline_down} (${down} down)`;
-  else if ($("say").dataset.sad) $("say").textContent = CFG.greeting || CFG.quotes[0] || "All good!";
+  if (down) setText("say", `${CFG.tagline_down} (${down} down)`);
+  else if ($("say").dataset.sad) setText("say", CFG.greeting || CFG.quotes[0] || "All good!");
   $("say").dataset.sad = down ? "1" : "";
 }
 function mascotSay() {
   if (lastDown || !CFG.mascot) return;
   const plex = $("plex-n").textContent, req = parseInt($("req-n").textContent) || 0;
   const extra = [plex && `Now playing: ${plex}`, req && `${req} request${req > 1 ? "s" : ""} waiting for you!`].filter(Boolean);
-  const pool = CFG.quotes.concat(extra, extra);
+  const pool = CFG.quotes.concat(extra, extra);   // live facts twice: they come up more often than plain quotes
   if (pool.length) $("say").textContent = pool[Math.floor(Math.random() * pool.length)];
 }
 function bubbles() {
-  const box = $("bubbles"); if (!box || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const box = $("bubbles");
+  if (!box || reducedMotion()) return;
   for (let i = 0; i < 18; i++) {
     const b = document.createElement("i"), s = 14 + Math.random() * 46;
-    Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%", animationDuration: 14 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"});
+    Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%",
+                            animationDuration: 14 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"});
     box.appendChild(b);
   }
 }
@@ -474,22 +658,26 @@ function pickEmoji(str) {
   return parts.length ? parts[Math.floor(Math.random() * parts.length)] : "🫧";
 }
 function confetti() {
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (reducedMotion()) return;
   for (let i = 0; i < 16; i++) setTimeout(() => {
-    const m = document.createElement("div"); m.className = "confetti"; m.textContent = pickEmoji(CFG.click_emoji);
-    m.style.left = Math.random() * 96 + "vw"; m.style.animationDuration = 2.2 + Math.random() * 1.8 + "s";
-    document.body.appendChild(m); setTimeout(() => m.remove(), 4500);
+    const m = document.createElement("div");
+    m.className = "confetti";
+    m.textContent = pickEmoji(CFG.click_emoji);
+    m.style.left = Math.random() * 96 + "vw";
+    m.style.animationDuration = 2.2 + Math.random() * 1.8 + "s";
+    document.body.appendChild(m);
+    setTimeout(() => m.remove(), 4500);
   }, i * 90);
 }
 $("title").addEventListener("click", confetti);
 $("mascot-img").addEventListener("click", () => { confetti(); mascotSay(); });
-setInterval(mascotSay, 20000);
 
 // ---------- wall mode: ?wall in the URL, the 🖥 button, or the W key ----------
 let idleTimer, reloadTimer;
 const isWall = () => document.body.classList.contains("wall");
 function wake() {   // in wall mode, show the cursor (and the button) while the mouse moves; hide them after 3 s of stillness
-  document.body.classList.remove("idle"); clearTimeout(idleTimer);
+  document.body.classList.remove("idle");
+  clearTimeout(idleTimer);
   if (isWall()) idleTimer = setTimeout(() => document.body.classList.add("idle"), 3000);
 }
 function setWall(on) {
@@ -501,22 +689,27 @@ function setWall(on) {
   history.replaceState(null, "", url.pathname + url.search.replace("wall=", "wall").replace(/\?$/, "") + url.hash);
   clearTimeout(reloadTimer);
   if (on) reloadTimer = setTimeout(() => location.reload(), 6 * 3600 * 1000);   // wall display: fresh page every 6 h clears browser memory
-  wake(); tick();
+  wake();
+  tick();
 }
 ["mousemove", "mousedown", "touchstart", "keydown"].forEach(e => addEventListener(e, wake, {passive: true}));
 $("wall-btn").addEventListener("click", () => setWall(!isWall()));
-addEventListener("keydown", e => { if (e.key.toLowerCase() === "w" && !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) setWall(!isWall()); });
+addEventListener("keydown", e => { if (e.key.toLowerCase() === "w" && noTyping(e)) setWall(!isWall()); });
 if (/[?&#]wall\b/.test(location.search + location.hash)) setWall(true);
-function tick() { $("p-time").textContent = document.body.classList.contains("wall")
-  ? new Date().toLocaleString([], {weekday: "short", hour: "numeric", minute: "2-digit"}) : new Date().toLocaleTimeString(); }
 
-// ---------- CPU / memory breakdown: live treemap ----------
+// header clock (wall mode shows weekday + minutes only, so it only really changes once a minute there)
+function tick() {
+  setText("p-time", isWall() ? new Date().toLocaleString([], {weekday: "short", hour: "numeric", minute: "2-digit"}) : new Date().toLocaleTimeString());
+}
+
+// ---------- CPU / memory breakdown: live treemap (opens from the ⚡ breakdown button or the CPU tile) ----------
+// U.hist keeps the last 60 samples per group for the sparkline in the detail pane.
 const U = {mode: "cpu", sel: null, data: null, hist: {}, open: false};
 const ukey = g => g.kind + ":" + g.name;
-function hue(str) { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
 const UPAL = ["#6366f1", "#8b5cf6", "#ec4899", "#e11d48", "#ea580c", "#0d9488", "#0284c7", "#16a34a", "#a21caf", "#2563eb", "#c026d3", "#0891b2", "#7c3aed", "#db2777"];
 const UHOST = ["#64748b", "#6b7c95", "#57708a", "#7a7f9e", "#5f7a7a"];
-function ucolor(g) {
+function hue(str) { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
+function ucolor(g) {   // stable colour per name: bright for containers, greys for host programs and the kernel
   if (g.kind === "kernel" || g.kind === "other") return "#6b7080";
   const h = hue(g.name);
   return g.kind === "container" ? UPAL[h % UPAL.length] : UHOST[h % UHOST.length];
@@ -525,10 +718,14 @@ function usageData(u) {
   const first = !U.data;
   U.data = u;
   if (first && /[?&]breakdown\b/.test(location.search)) setTimeout(openUsage, 0);   // deep link: /?breakdown
-  for (const g of u.groups) { const k = ukey(g), a = U.hist[k] || (U.hist[k] = []); a.push(U.mode === "mem" ? g.mem : g.cpu); if (a.length > 60) a.shift(); }
+  for (const g of u.groups) {
+    const a = U.hist[ukey(g)] || (U.hist[ukey(g)] = []);
+    a.push(U.mode === "mem" ? g.mem : g.cpu);
+    if (a.length > 60) a.shift();
+  }
   if (U.open) renderUsage();
 }
-// squarified treemap: lay rects out in rows that keep tiles as square as possible
+// Squarified treemap: lay rectangles out in rows that keep each tile as close to square as possible.
 function squarify(items, x, y, w, h) {
   const out = [], total = items.reduce((a, b) => a + b.v, 0);
   if (!total || w <= 0 || h <= 0) return out;
@@ -536,12 +733,13 @@ function squarify(items, x, y, w, h) {
   while (rest.length) {
     const side = Math.min(w, h), row = [];
     let worst = Infinity;
-    while (rest.length) {
+    while (rest.length) {   // keep adding tiles to this row while it makes the worst aspect ratio better
       const next = [...row, rest[0]], sum = next.reduce((a, b) => a + b.a, 0);
       const mx = Math.max(...next.map(r => r.a)), mn = Math.min(...next.map(r => r.a));
-      const wr = Math.max(side * side * mx / (sum * sum), sum * sum / (side * side * mn));
-      if (row.length && wr > worst) break;
-      row.push(rest.shift()); worst = wr;
+      const ratio = Math.max(side * side * mx / (sum * sum), sum * sum / (side * side * mn));
+      if (row.length && ratio > worst) break;
+      row.push(rest.shift());
+      worst = ratio;
     }
     const sum = row.reduce((a, b) => a + b.a, 0), thick = sum / side;
     let off = 0;
@@ -562,67 +760,114 @@ function spark(vals) {
   return `<svg viewBox="0 0 ${W} ${H}" class="spark" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
 }
 function renderUsage() {
-  const u = U.data; if (!u) return;
+  const u = U.data;
+  if (!u) return;
   const mem = U.mode === "mem", val = g => mem ? g.mem : g.cpu;
   const groups = u.groups.filter(g => val(g) > (mem ? 1024 * 1024 : 0.005));
   const busy = u.groups.reduce((a, g) => a + g.cpu, 0), memSum = u.groups.reduce((a, g) => a + g.mem, 0);
-  $("u-what").textContent = mem ? "memory" : "CPU";
-  $("u-sum").textContent = mem ? `${size(memSum)} in programs` : `${busy.toFixed(1)}% busy · ${(busy * u.ncpu / 100).toFixed(1)} of ${u.ncpu} threads`;
-  const box = $("u-map"), W = box.clientWidth, H = box.clientHeight;
-  const rects = squarify(groups.map(g => ({g, v: val(g)})).sort((a, b) => b.v - a.v), 0, 0, W, H);
+  setText("u-what", mem ? "memory" : "CPU");
+  setText("u-sum", mem ? `${size(memSum)} in programs` : `${busy.toFixed(1)}% busy · ${(busy * u.ncpu / 100).toFixed(1)} of ${u.ncpu} threads`);
+
+  // tiles are reused between refreshes (matched by data-k), so they glide to their new size instead of flickering
+  const box = $("u-map"), rects = squarify(groups.map(g => ({g, v: val(g)})).sort((a, b) => b.v - a.v), 0, 0, box.clientWidth, box.clientHeight);
   const seen = new Set();
   for (const r of rects) {
-    const k = ukey(r.g); seen.add(k);
+    const k = ukey(r.g);
+    seen.add(k);
     let el = box.querySelector(`[data-k="${CSS.escape(k)}"]`);
-    if (!el) { el = document.createElement("button"); el.className = "u-tile"; el.dataset.k = k; el.style.left = r.x + r.w / 2 + "px"; el.style.top = r.y + r.h / 2 + "px"; box.appendChild(el); }
+    if (!el) {
+      el = document.createElement("button");
+      el.className = "u-tile";
+      el.dataset.k = k;
+      el.style.left = r.x + r.w / 2 + "px";   // new tiles grow out of their centre
+      el.style.top = r.y + r.h / 2 + "px";
+      box.appendChild(el);
+    }
     Object.assign(el.style, {left: r.x + "px", top: r.y + "px", width: Math.max(r.w - 3, 0) + "px", height: Math.max(r.h - 3, 0) + "px", background: ucolor(r.g)});
-    el.classList.toggle("sel", U.sel === k); el.classList.toggle("tiny", r.w < 70 || r.h < 34);
-    const v = mem ? size(r.g.mem) : fmtCpu(r.g.cpu);
+    el.classList.toggle("sel", U.sel === k);
+    el.classList.toggle("tiny", r.w < 70 || r.h < 34);
     el.title = `${r.g.name} (${r.g.kind})\n${mem ? size(r.g.mem) : fmtCpu(r.g.cpu, u.ncpu)}`;
-    el.innerHTML = `<b>${esc(r.g.name)}</b><span>${v}</span>` + (r.h > 70 && r.g.top && r.g.top[0] ? `<small>${esc(r.g.top[0].name)}</small>` : "");
+    setHTML(el, `<b>${esc(r.g.name)}</b><span>${mem ? size(r.g.mem) : fmtCpu(r.g.cpu)}</span>` + (r.h > 70 && r.g.top && r.g.top[0] ? `<small>${esc(r.g.top[0].name)}</small>` : ""));
   }
   box.querySelectorAll(".u-tile").forEach(el => { if (!seen.has(el.dataset.k)) el.remove(); });
   if (!rects.length) box.innerHTML = `<div class="empty" style="padding:20px">Nothing measurable right now.</div>`;
+
+  // side list (top 25) and the detail pane for the selected tile
   const list = [...u.groups].sort((a, b) => val(b) - val(a)).slice(0, 25), top = val(list[0] || {cpu: 1, mem: 1}) || 1;
-  $("u-list").innerHTML = list.map(g => `<button class="u-row ${U.sel === ukey(g) ? "sel" : ""}" data-k="${esc(ukey(g))}">
+  setHTML("u-list", list.map(g => `<button class="u-row ${U.sel === ukey(g) ? "sel" : ""}" data-k="${esc(ukey(g))}">
       <i style="background:${ucolor(g)}"></i><span class="n">${esc(g.name)}</span><span class="v">${mem ? size(g.mem) : fmtCpu(g.cpu)}</span>
-      <span class="b"><i style="width:${(100 * val(g) / top).toFixed(1)}%;background:${ucolor(g)}"></i></span></button>`).join("");
+      <span class="b"><i style="width:${(100 * val(g) / top).toFixed(1)}%;background:${ucolor(g)}"></i></span></button>`).join(""));
   const g = u.groups.find(x => ukey(x) === U.sel);
-  $("u-detail").innerHTML = g ? `<h3><i style="background:${ucolor(g)}"></i>${esc(g.name)} <small class="mute">${esc(g.kind === "process" ? "host program" : g.kind)}</small></h3>
-      <div class="kv"><span>CPU</span><span>${fmtCpu(g.cpu, u.ncpu)}</span></div>
-      <div class="kv"><span>Memory</span><span>${size(g.mem)}</span></div>
-      <div class="kv"><span>Processes</span><span>${g.procs}</span></div>
+  setHTML("u-detail", g ? `<h3><i style="background:${ucolor(g)}"></i>${esc(g.name)} <small class="mute">${esc(g.kind === "process" ? "host program" : g.kind)}</small></h3>
+      ${kvRow("CPU", fmtCpu(g.cpu, u.ncpu))}${kvRow("Memory", size(g.mem))}${kvRow("Processes", g.procs)}
       <div class="u-spark" style="color:${ucolor(g)}">${spark(U.hist[ukey(g)])}<small class="mute">${mem ? "memory" : "CPU"}, last few minutes</small></div>
-      ${g.top && g.top.length ? `<div class="mute" style="font-size:12px;margin-top:8px">busiest inside</div>` + g.top.map(t => `<div class="kv"><span>${esc(t.name)}</span><span>${fmtCpu(t.cpu)}</span></div>`).join("") : ""}`
-    : `<div class="mute">Click a tile or a row for details. Bigger tile = more ${mem ? "memory" : "CPU"}.</div>`;
+      ${g.top && g.top.length ? `<div class="mute" style="font-size:12px;margin-top:8px">busiest inside</div>` + g.top.map(t => kvRow(esc(t.name), fmtCpu(t.cpu))).join("") : ""}`
+    : `<div class="mute">Click a tile or a row for details. Bigger tile = more ${mem ? "memory" : "CPU"}.</div>`);
 }
 function openUsage() {
-  U.open = true; $("usage-ov").hidden = false; document.body.style.overflow = "hidden";
+  U.open = true;
+  $("usage-ov").hidden = false;
+  document.body.style.overflow = "hidden";
   requestAnimationFrame(() => requestAnimationFrame(renderUsage));   // measure the map after the window has laid out
   loadSystem();
 }
-function closeUsage() { U.open = false; $("usage-ov").hidden = true; document.body.style.overflow = ""; }
+function closeUsage() {
+  U.open = false;
+  $("usage-ov").hidden = true;
+  document.body.style.overflow = "";
+}
 $("usage-btn").addEventListener("click", openUsage);
 $("k-sys").addEventListener("click", e => { if (U.data) { e.preventDefault(); openUsage(); } });
 $("usage-close").addEventListener("click", closeUsage);
 $("usage-ov").addEventListener("click", e => {
-  if (e.target === $("usage-ov")) return closeUsage();
-  const t = e.target.closest("[data-k]"); if (t) { U.sel = U.sel === t.dataset.k ? null : t.dataset.k; renderUsage(); }
-  const m = e.target.closest("[data-um]");
-  if (m) { U.mode = m.dataset.um; U.hist = {}; document.querySelectorAll("[data-um]").forEach(b => b.classList.toggle("on", b === m)); $("u-map").innerHTML = ""; renderUsage(); }
+  if (e.target === $("usage-ov")) return closeUsage();   // click on the dimmed backdrop
+  const t = e.target.closest("[data-k]");
+  if (t) { U.sel = U.sel === t.dataset.k ? null : t.dataset.k; renderUsage(); }
+  const m = e.target.closest("[data-um]");                 // CPU / Memory tabs
+  if (m) {
+    U.mode = m.dataset.um;
+    U.hist = {};
+    document.querySelectorAll("[data-um]").forEach(b => b.classList.toggle("on", b === m));
+    $("u-map").innerHTML = "";
+    renderUsage();
+  }
 });
 addEventListener("keydown", e => { if (e.key === "Escape" && U.open) closeUsage(); });
 // redraw whenever the map's real size changes (window resize, fonts/scrollbar settling after it opens)
 if ("ResizeObserver" in window) new ResizeObserver(() => { if (U.open) renderUsage(); }).observe($("u-map"));
 else addEventListener("resize", () => { if (U.open) renderUsage(); });
 
-const loadAll = () => { loadServices(); loadQbit(); loadRequests(); loadSystem(); loadPlex(); };
+// ---------- polling ----------
+// Each panel refreshes on its own timer. A refresh never overlaps the previous one (a slow upstream can't pile up
+// requests), timers stop while the tab is hidden, and everything refreshes at once when it's shown again.
+const pollers = [];
+function poll(fn, ms) {
+  const p = {timer: 0, busy: false};
+  p.run = async () => {
+    clearTimeout(p.timer);
+    if (p.busy) return;                 // still running: it reschedules itself when done
+    p.busy = true;
+    try { await fn(); } finally { p.busy = false; }
+    if (!document.hidden) p.timer = setTimeout(p.run, ms);
+  };
+  pollers.push(p);
+  p.run();
+}
+document.addEventListener("visibilitychange", () => pollers.forEach(p => document.hidden ? clearTimeout(p.timer) : p.run()));
+
 (async () => {
-  try { CFG = await getJSON("/api/config"); } catch (e) { $("svc").innerHTML = `<div class="err">config: ${esc(e.message)}</div>`; }
-  applyConfig(); bubbles(); loadAll(); tick();
-  setInterval(loadPlex, 10000); setInterval(loadSystem, 3000); setInterval(loadQbit, 5000);
-  setInterval(loadRequests, 30000); setInterval(loadServices, 30000); setInterval(tick, 1000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadAll(); });
+  try { CFG = await getJSON("/api/config"); }
+  catch (e) { setHTML("svc", `<div class="err">config: ${esc(e.message)}</div>`); }
+  applyConfig();
+  bubbles();
+  poll(loadSystem, 3000);     // CPU/RAM/temps/drives/security (the collector writes every 5 s)
+  poll(loadQbit, 5000);
+  poll(loadPlex, 10000);
+  poll(loadServices, 30000);  // the server checks every service at most every 25 s anyway
+  poll(loadRequests, 30000);
+  tick();
+  setInterval(tick, 1000);
+  setInterval(mascotSay, 20000);
 })();
 </script>
 </body>
