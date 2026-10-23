@@ -63,6 +63,9 @@ html[data-theme="miku"] .meter i{border-radius:3px;background:
   repeating-linear-gradient(90deg,transparent 0 7px,color-mix(in srgb,var(--bg) 65%,transparent) 7px 9px),linear-gradient(90deg,var(--acc),var(--eye));
   box-shadow:0 0 10px -2px var(--glow)}
 html[data-theme="miku"] .bar i{background:linear-gradient(90deg,var(--acc),var(--eye) 60%,var(--coat))}
+/* the live window's 4px per-thread bars: segments that thin read as dashes, so a plain gradient there */
+html[data-theme="miku"] .lv-bars .meter i{background:linear-gradient(90deg,var(--acc),var(--eye));box-shadow:none}
+html[data-theme="miku"] .lv-bars .meter i.warn{background:var(--warn)}html[data-theme="miku"] .lv-bars .meter i.crit{background:var(--down)}
 html[data-theme="miku"] .cores i b{background:repeating-linear-gradient(0deg,transparent 0 3px,color-mix(in srgb,var(--bg) 55%,transparent) 3px 4px),
   linear-gradient(0deg,var(--acc),var(--eye) 70%,var(--coat))}
 

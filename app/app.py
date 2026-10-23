@@ -455,8 +455,9 @@ def system():
 
 @functools.lru_cache(maxsize=1)
 def cpu_topology():
-    """Per CPU thread: which group it belongs to (CCD / L3 cache cluster on AMD, package elsewhere) and whether it is
-    an SMT sibling (the second thread of a core). Read once from /sys; [] if the folders aren't there."""
+    """Per CPU thread: which group it belongs to (CCD / L3 cache cluster on AMD, package elsewhere), which core
+    (= the core's first thread number) and whether it is an SMT sibling (not that first thread). Read once from /sys;
+    [] if the folders aren't there."""
     out, groups = [], {}
     n = 0
     while os.path.isdir(f"/sys/devices/system/cpu/cpu{n}"):
@@ -471,7 +472,7 @@ def cpu_topology():
         group = groups.setdefault(key, len(groups))
         siblings = rd("topology/thread_siblings_list", str(n))
         first = int(siblings.replace("-", ",").split(",")[0]) if siblings else n
-        out.append({"group": group, "smt": first != n})
+        out.append({"group": group, "core": first, "smt": first != n})
         n += 1
     return out
 
@@ -516,7 +517,8 @@ def live():
     cpus = cpu_usage(_live_prev)
     topo, mhz = cpu_topology(), cpu_mhz()
     threads = [{"use": cpus.get(f"cpu{i}", 0.0), "mhz": mhz[i] if i < len(mhz) else None,
-                "group": topo[i]["group"] if i < len(topo) else 0, "smt": topo[i]["smt"] if i < len(topo) else False}
+                "group": topo[i]["group"] if i < len(topo) else 0, "core": topo[i]["core"] if i < len(topo) else i,
+                "smt": topo[i]["smt"] if i < len(topo) else False}
                for i in range(len(cpus) - 1)]
     mem = {}
     for line in open("/proc/meminfo"):

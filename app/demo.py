@@ -170,7 +170,7 @@ def system():
 def live():
     """Fake /api/live for the demo: an 8-core / 16-thread single-CCD CPU wandering around."""
     s = system()
-    threads = [{"use": round(wobble(12, 10, 20 + i), 1), "mhz": int(wobble(3900, 600, 7 + i)), "group": 0, "smt": i >= 8}
+    threads = [{"use": round(wobble(12, 10, 20 + i), 1), "mhz": int(wobble(3900, 600, 7 + i)), "group": 0, "core": i % 8, "smt": i >= 8}
                for i in range(16)]
     disks = [{"dev": "sda", "name": "disk1", "read_bps": wobble(9e7, 6e7, 30), "write_bps": wobble(2e6, 2e6), "busy": wobble(35, 25, 30)},
              {"dev": "nvme0n1", "name": "system", "read_bps": wobble(4e6, 3e6), "write_bps": wobble(6e6, 5e6), "busy": wobble(4, 3)},
