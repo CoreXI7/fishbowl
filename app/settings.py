@@ -111,6 +111,7 @@ def _seed():
 
 
 def load():
+    """The editable settings: what the GUI saved, else the config.toml seed. Always validated."""
     saved = _read_json(SETTINGS_FILE)
     return validate(saved, None) if saved else validate(_seed(), None)
 
@@ -126,6 +127,7 @@ def secret(field, store):
 
 
 def url_of(name, editable):
+    """(url, locked) for an integration: the environment wins and locks it, else the saved URL."""
     env = os.environ.get(INTEGRATIONS[name][0], "")
     return (env.rstrip("/"), True) if env else (editable[name]["url"].rstrip("/"), False)
 
@@ -137,6 +139,7 @@ class Invalid(ValueError):
 
 
 def _s(v, n, what, pattern=None):
+    """A text field: at most n characters, no control characters, trimmed, and matching pattern if given."""
     if v is None:
         v = ""
     if not isinstance(v, str) or len(v) > n or any(ord(c) < 32 for c in v):
@@ -148,10 +151,23 @@ def _s(v, n, what, pattern=None):
 
 
 def _list(v, n, what):
+    """A list field with at most n entries (missing = empty)."""
     if v is None:
         return []
-    if not isinstance(v, list) or len(v) > n:
+    if not isinstance(v, list):
+        raise Invalid(f"{what}: must be a list")
+    if len(v) > n:
         raise Invalid(f"{what}: too many entries")
+    return v
+
+
+def _obj(v, what):
+    """A section that must be an object (missing = empty). Anything else is refused with a clear message
+    instead of crashing further down."""
+    if not v:                         # missing or empty ("", [], null) = not set
+        return {}
+    if not isinstance(v, dict):
+        raise Invalid(f"{what}: must be an object")
     return v
 
 
@@ -161,6 +177,7 @@ ICON = r"[a-z0-9][a-z0-9-]{0,80}|/(static|uploads)/[\w.-]{1,120}"
 
 
 def _ip_or_prefix(v):
+    """A known IP: a full address, or a prefix like "203.0.113." / "2001:db8:" that matches a whole range."""
     v = _s(v, 64, "known IP")
     try:
         ipaddress.ip_address(v)
@@ -184,13 +201,12 @@ def _personality(src, where):
     }
 
 
-def validate(d, _old):
-    if not isinstance(d, dict):
-        raise Invalid("settings must be an object")
-    site_in = d.get("site") or {}
+def _site(site_in):
+    """Title, the default theme, and the personality fields (top level = Bubbles; other themes under "themes")."""
     site = {"title": _s(site_in.get("title"), 60, "title") or DEFAULT_SITE["title"], **_personality(site_in, "")}
     site["click_emoji"] = site["click_emoji"] or "🫧"
-    site["theme"] = site_in.get("theme") if site_in.get("theme") in THEMES else "bubbles"
+    theme = site_in.get("theme")
+    site["theme"] = theme if isinstance(theme, str) and theme in THEMES else "bubbles"
     themes_in = site_in.get("themes") or {}
     if not isinstance(themes_in, dict):
         raise Invalid("themes: invalid")
@@ -198,15 +214,26 @@ def validate(d, _old):
     for tid, t in themes_in.items():
         if tid in THEMES and tid != "bubbles" and isinstance(t, dict):   # bubbles = the top-level fields above
             t = {k: v for k, v in _personality(t, THEMES[tid]["label"] + " theme: ").items() if v}
-            if t:
+            if t:                                                        # keep only what was actually set
                 site["themes"][tid] = t
+    return site
+
+
+def _groups(groups_in):
+    """Named service groups, each a list of hostnames (duplicates dropped, order kept)."""
     groups = []
-    for g in _list(d.get("groups"), 30, "groups"):
-        name = _s((g or {}).get("name"), 60, "group name")
+    for g in _list(groups_in, 30, "groups"):
+        g = _obj(g, "group")
+        name = _s(g.get("name"), 60, "group name")
         hosts = [_s(h, 253, "host", HOST) for h in _list(g.get("hosts"), 300, "hosts in a group")]
         if name:
             groups.append({"name": name, "hosts": list(dict.fromkeys(h for h in hosts if h))})
-    apps_in = d.get("apps") or {}
+    return groups
+
+
+def _apps(apps_in):
+    """Per-host display overrides: label, icon (dashboard-icons name or an uploaded file) and link."""
+    apps_in = apps_in or {}
     if not isinstance(apps_in, dict) or len(apps_in) > 1000:
         raise Invalid("apps: too many entries")
     apps = {}
@@ -218,27 +245,47 @@ def validate(d, _old):
                                    "url": _s(a.get("url"), 500, f"link for {host}", URL)}.items() if v}
         if host and entry:
             apps[host] = entry
+    return apps
+
+
+def _services(services_in):
+    """Extra services that aren't NPM proxy hosts: name + URL to check (+ whether it's behind SSO)."""
     services = []
-    for s in _list(d.get("services"), 200, "extra services"):
+    for s in _list(services_in, 200, "extra services"):
         s = s if isinstance(s, dict) else {}
         name, url = _s(s.get("name"), 253, "service name", HOST), _s(s.get("url"), 500, "service URL", URL)
         if name and url:
             services.append({"name": name, "url": url, "auth": bool(s.get("auth"))})
-    out = {
-        "site": site, "groups": groups, "apps": apps, "services": services,
-        "skip_hosts": [h for h in (_s(h, 253, "hidden host", HOST) for h in _list(d.get("skip_hosts"), 500, "hidden hosts")) if h],
-        "known_ips": [ip for ip in (_ip_or_prefix(v) for v in _list(d.get("known_ips"), 200, "known IPs")) if ip],
-    }
-    for name in INTEGRATIONS:
-        sec = d.get(name) or {}
-        out[name] = {"url": _s(sec.get("url"), 500, f"{name} URL", URL)}
-    home = _s((d.get("qbittorrent") or {}).get("home_ip"), 64, "home IP")
+    return services
+
+
+def _home_ip(qbit_in):
+    """Your real WAN IP: qBittorrent reporting it means the VPN isn't in use."""
+    home = _s(_obj(qbit_in, "qbittorrent").get("home_ip"), 64, "home IP")
     if home:
         try:
             ipaddress.ip_address(home)
         except ValueError:
             raise Invalid(f"home IP: '{home}' is not an IP address")
-    out["qbittorrent"]["home_ip"] = home
+    return home
+
+
+def validate(d, _old):
+    """Check and normalise a whole settings object (from the browser, settings.json or config.toml).
+    Returns a clean copy; raises Invalid with a message the settings page can show. (_old is unused, kept for callers.)"""
+    if not isinstance(d, dict):
+        raise Invalid("settings must be an object")
+    out = {
+        "site": _site(_obj(d.get("site"), "site")),
+        "groups": _groups(d.get("groups")),
+        "apps": _apps(d.get("apps")),
+        "services": _services(d.get("services")),
+        "skip_hosts": [h for h in (_s(h, 253, "hidden host", HOST) for h in _list(d.get("skip_hosts"), 500, "hidden hosts")) if h],
+        "known_ips": [ip for ip in (_ip_or_prefix(v) for v in _list(d.get("known_ips"), 200, "known IPs")) if ip],
+    }
+    for name in INTEGRATIONS:
+        out[name] = {"url": _s(_obj(d.get(name), name).get("url"), 500, f"{name} URL", URL)}
+    out["qbittorrent"]["home_ip"] = _home_ip(d.get("qbittorrent"))
     return out
 
 
@@ -269,6 +316,7 @@ def apply_secret_changes(new, old_editable, changes, store):
 
 
 def save(editable, store):
+    """Write settings.json and secrets.json (both chmod 600, written atomically)."""
     if not UI_ENABLED:
         raise Invalid("the settings page is read-only (SETTINGS_UI=0)")
     try:

@@ -188,7 +188,11 @@ function renderThemes() {
 }
 function renderThemeEd() {
   const id = edTheme, def = V.themes[id];
-  if (id === "bubbles") { $("theme-ed").innerHTML = '<p class="hint" style="margin-top:10px">Bubbles is the default look: its mascot, lines and click emoji are the <b>Look &amp; feel</b> settings above.</p>'; return; }
+  if (id === "bubbles") {   // Bubbles has no separate editor: it uses the Look & feel fields
+    $("theme-ed").innerHTML = '<p class="hint" style="margin-top:10px">Bubbles is the default look: its mascot, lines and click emoji are '
+      + 'the <b>Look &amp; feel</b> settings above.</p>';
+    return;
+  }
   const t = S.site.themes[id] || {};
   $("theme-ed").innerHTML = `
     <div class="mascot-ed" style="margin:12px 0 10px">
@@ -242,7 +246,8 @@ function srow(host, gi, idx, len) {
     <input type="text" placeholder="${esc(host.split(".")[0])}" value="${esc(a.label || "")}" data-f="label" aria-label="label">
     <input type="text" placeholder="icon (auto)" value="${esc(a.icon || "")}" data-f="icon" aria-label="icon">
     <span class="acts">
-      ${gi >= 0 ? `<button class="ibtn" data-a="up" ${idx === 0 ? "disabled" : ""} title="move up">↑</button><button class="ibtn" data-a="down" ${idx === len - 1 ? "disabled" : ""} title="move down">↓</button>` : ""}
+      ${gi >= 0 ? `<button class="ibtn" data-a="up" ${idx === 0 ? "disabled" : ""} title="move up">↑</button>`
+                + `<button class="ibtn" data-a="down" ${idx === len - 1 ? "disabled" : ""} title="move down">↓</button>` : ""}
       <select data-a="move" aria-label="move to group">${opts}</select>
       <button class="ibtn danger" data-a="hide" title="hide from the dashboard">hide</button>
     </span></div>`;
@@ -285,7 +290,10 @@ function onServicesEvent(e) {
   const host = row.dataset.host;
   if (t.dataset.f && e.type === "input") {
     app(host)[t.dataset.f] = t.value.trim(); cleanApp(host); setDirty();
-    if (t.dataset.f === "icon") { const img = row.querySelector("img,.lt"), src = iconSrc(host); if (img && src) img.outerHTML = `<img src="${esc(src)}" alt="" data-letter="?" onerror="iconFail(this)">`; }
+    if (t.dataset.f === "icon") {   // preview the new icon right away
+      const img = row.querySelector("img,.lt"), src = iconSrc(host);
+      if (img && src) img.outerHTML = `<img src="${esc(src)}" alt="" data-letter="?" onerror="iconFail(this)">`;
+    }
     return;
   }
   const a = t.dataset.a;
@@ -318,13 +326,18 @@ function renderExtras() {
 }
 $("extras").addEventListener("input", e => { const row = e.target.closest("[data-i]"); if (!row) return; const x = S.services[+row.dataset.i], k = e.target.dataset.x;
   x[k] = k === "auth" ? e.target.checked : e.target.value.trim(); setDirty(); });
-$("extras").addEventListener("click", e => { if (e.target.hasAttribute("data-xdel")) { S.services.splice(+e.target.closest("[data-i]").dataset.i, 1); renderExtras(); renderServices(); setDirty(); } });
+$("extras").addEventListener("click", e => {   // ✕ on an extra service
+  if (!e.target.hasAttribute("data-xdel")) return;
+  S.services.splice(+e.target.closest("[data-i]").dataset.i, 1);
+  renderExtras(); renderServices(); setDirty();
+});
 $("add-extra").onclick = () => { S.services.push({name: "", url: "", auth: false}); renderExtras(); setDirty(); };
 
 // ---------- integrations ----------
 const INTEG = [
   {k: "qbittorrent", title: "qBittorrent", what: "torrents + VPN-leak check", fields: [["qbit_user", "Username", "text"], ["qbit_pass", "Password", "password"]],
-   extra: `<label class="field"><span>Your real home IP (optional)</span><input type="text" data-k="qbittorrent.home_ip" placeholder="203.0.113.10"><small>If qBittorrent ever shows this IP, the VPN leaked: big red banner.</small></label>`,
+   extra: `<label class="field"><span>Your real home IP (optional)</span><input type="text" data-k="qbittorrent.home_ip" placeholder="203.0.113.10">`
+        + `<small>If qBittorrent ever shows this IP, the VPN leaked: big red banner.</small></label>`,
    url: "http://192.168.1.10:8080"},
   {k: "seerr", title: "Seerr / Overseerr / Jellyseerr", what: "approve requests", fields: [["seerr_key", "API key", "password"]], url: "http://overseerr:5055",
    help: "Settings → General → API Key"},
@@ -343,7 +356,8 @@ function renderInteg() {
         return `<label class="field" style="margin-top:8px"><span>${esc(label)}${it.help && type === "password" ? ` <small>(${esc(it.help)})</small>` : ""}</span>
           <input type="${type}" data-secret="${f}" autocomplete="${type === "password" ? "new-password" : "off"}" ${st.locked ? "disabled" : ""}
             placeholder="${st.locked ? "🔒 set in the environment" : st.set ? "•••••• saved (leave empty to keep)" : "not set"}">
-          ${st.set && !st.locked ? `<small><label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-clear="${f}"> remove saved value</label></small>` : ""}</label>`; }).join("")}
+          ${st.set && !st.locked ? `<small><label style="display:inline-flex;gap:4px;align-items:center">`
+                                   + `<input type="checkbox" data-clear="${f}"> remove saved value</label></small>` : ""}</label>`; }).join("")}
       ${it.extra ? `<div style="margin-top:8px">${it.extra}</div>` : ""}
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center"><button class="ibtn" data-test="${it.k}">Test</button><span class="res" data-res="${it.k}"></span></div>
     </div>`; }).join("");
@@ -396,7 +410,9 @@ $("save").onclick = async () => {
 (function bubbles() {
   const box = $("bubbles"); if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   for (let i = 0; i < 12; i++) { const b = document.createElement("i"), s = 14 + Math.random() * 40;
-    Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%", animationDuration: 16 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"}); box.appendChild(b); }
+    Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%",
+                            animationDuration: 16 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"});
+    box.appendChild(b); }
 })();
 load().catch(e => showErr("Couldn't load settings: " + e.message));
 </script>
