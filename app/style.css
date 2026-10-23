@@ -399,7 +399,9 @@ body.wall #plex{flex:1;min-height:0;overflow-y:auto;align-content:start;overscro
 
 /* live window (🌡 live on the Temperatures panel): reuses the breakdown window's frame (.usage-ov / .usage-box) */
 #s-tmp .temps{cursor:pointer}
-.live-body{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px}
+/* the live window is as tall as its content and only scrolls when the screen is shorter than that */
+#live-ov .usage-box{height:auto;max-height:100%}
+.live-body{flex:0 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px}
 /* fixed sizes everywhere, so live numbers never shift the layout */
 .lv-top{display:grid;grid-template-columns:repeat(var(--lv-tiles,6),minmax(0,1fr));gap:10px}
 .lv-tile b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
