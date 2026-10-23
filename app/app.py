@@ -6,6 +6,7 @@ Services are read from Nginx Proxy Manager's proxy_host/*.conf (mounted read-onl
 hosts show up automatically. Hardware/security stats come from the optional root collector
 (see ../collector), which writes a JSON file this app reads.
 """
+import functools
 import glob
 import hashlib
 import http.client
@@ -59,6 +60,7 @@ def apply_settings():
     with _lock:
         _cache.clear()
     _icons.clear()
+    _npm["sig"] = _hw["key"] = None                     # skip list / known IPs may have changed: re-read both
 
 
 _proxy_ip = {"ip": None, "at": 0}
@@ -74,6 +76,7 @@ def scrub(text):
 
 
 def proxy_ip():
+    """IP of the trusted reverse proxy container, looked up at most once a minute (it can change on recreate)."""
     if time.monotonic() - _proxy_ip["at"] > 60:
         try:
             _proxy_ip["ip"] = socket.gethostbyname(TRUSTED_PROXY)
@@ -95,31 +98,48 @@ UA = "homelab-dash"
 
 # ---------- services (from NPM + config) ----------
 
+def parse_npm_conf(path):
+    """One NPM proxy host file -> {name, upstream, auth}, or None if it isn't a plain proxy host."""
+    try:
+        with open(path) as f:
+            txt = f.read()
+    except OSError:
+        return None
+    name = re.search(r"server_name\s+([^\s;]+)", txt)
+    server = re.search(r'set \$server\s+"?([^";]+)"?;', txt)
+    port = re.search(r"set \$port\s+(\d+);", txt)
+    scheme = re.search(r"set \$forward_scheme\s+(\w+);", txt)
+    if not (name and server and port):
+        return None
+    return {
+        "name": name.group(1),
+        "upstream": f"{scheme.group(1) if scheme else 'http'}://{server.group(1)}:{port.group(1)}",
+        "auth": bool(re.search(r"auth_request\s+/(authelia|authentik|outpost)", txt)),   # behind an SSO proxy
+    }
+
+
+_npm = {"sig": None, "hosts": []}   # last parsed host list + the folder state it came from
+
+
 def read_npm_hosts():
-    hosts = []
-    for f in glob.glob(os.path.join(NPM_DIR, "*.conf")):
-        try:
-            txt = open(f).read()
-        except OSError:
-            continue
-        name = re.search(r"server_name\s+([^\s;]+)", txt)
-        server = re.search(r'set \$server\s+"?([^";]+)"?;', txt)
-        port = re.search(r"set \$port\s+(\d+);", txt)
-        scheme = re.search(r"set \$forward_scheme\s+(\w+);", txt)
-        if not (name and server and port) or name.group(1) in SKIP_HOSTS:
-            continue
-        hosts.append({
-            "name": name.group(1),
-            "upstream": f"{scheme.group(1) if scheme else 'http'}://{server.group(1)}:{port.group(1)}",
-            "auth": bool(re.search(r"auth_request\s+/(authelia|authentik|outpost)", txt)),
-        })
-    for s in EXTRA_SERVICES:
-        if s.get("name") and s.get("url") and s["name"] not in SKIP_HOSTS:
-            hosts.append({"name": s["name"], "upstream": s["url"].rstrip("/"), "auth": bool(s.get("auth"))})
-    return sorted(hosts, key=lambda h: (h["name"].split(".", 1)[-1], h["name"]))
+    """Every service to show: NPM's proxy hosts plus [[services]] from the settings, minus skipped ones.
+    The .conf files are only re-read when one was added, removed or edited (checked by name + mtime)."""
+    try:
+        sig = tuple(sorted((e.name, e.stat().st_mtime_ns) for e in os.scandir(NPM_DIR) if e.name.endswith(".conf")))
+    except OSError:
+        sig = ()
+    if sig != _npm["sig"]:
+        hosts = [h for h in (parse_npm_conf(os.path.join(NPM_DIR, n)) for n, _ in sig) if h and h["name"] not in SKIP_HOSTS]
+        for s in EXTRA_SERVICES:
+            if s.get("name") and s.get("url") and s["name"] not in SKIP_HOSTS:
+                hosts.append({"name": s["name"], "upstream": s["url"].rstrip("/"), "auth": bool(s.get("auth"))})
+        hosts.sort(key=lambda h: (h["name"].split(".", 1)[-1], h["name"]))   # group by domain, then name
+        _npm.update(sig=sig, hosts=hosts)
+    return _npm["hosts"]
 
 
 def check(host):
+    """Is this service answering? Any HTTP reply below 500 counts as up (a login page is fine)."""
     r = check_once(host)
     if not r["up"] and r["code"] is None:   # retry once: socket-activated apps (e.g. Cockpit) wake slowly
         r = check_once(host, timeout=10)
@@ -157,6 +177,7 @@ def check_via_proxy(host, timeout):
 
 
 def check_once(host, timeout=5):
+    """One GET / straight to the service's upstream (what NPM forwards to), timed."""
     if host["name"] in VIA_PROXY:
         return check_via_proxy(host, timeout)
     t0 = time.monotonic()
@@ -172,19 +193,33 @@ def check_once(host, timeout=5):
     return {"name": host["name"], "auth": host["auth"], "up": code < 500, "code": code, "ms": ms, "err": None}
 
 
-_cache = {}
-_lock = threading.Lock()
+_cache = {}                 # key -> (time it was computed, value)
+_lock = threading.Lock()    # guards _cache and _key_locks
+_key_locks = {}             # key -> lock held while that key is being recomputed
 
 
 def cached(key, ttl, fn):
-    with _lock:
+    """fn(), reused for ttl seconds. When several requests miss at the same moment (the wall display plus a
+    phone, say), only the first one runs fn; the others wait for it and share its result instead of each
+    checking every service again."""
+    def fresh():
         hit = _cache.get(key)
-        if hit and time.monotonic() - hit[0] < ttl:
-            return hit[1]
-    val = fn()
+        return hit if hit and time.monotonic() - hit[0] < ttl else None
+
     with _lock:
-        _cache[key] = (time.monotonic(), val)
-    return val
+        hit = fresh()
+        if hit:
+            return hit[1]
+        key_lock = _key_locks.setdefault(key, threading.Lock())
+    with key_lock:
+        with _lock:
+            hit = fresh()           # someone else refreshed it while we waited
+        if hit:
+            return hit[1]
+        val = fn()
+        with _lock:
+            _cache[key] = (time.monotonic(), val)
+        return val
 
 
 _icons = {}
@@ -230,6 +265,7 @@ def favicon(name):
 
 
 def services():
+    """/api/services: check every service in parallel (cached 25 s, so this runs at most that often)."""
     hosts = read_npm_hosts()
     with ThreadPoolExecutor(max_workers=16) as ex:
         results = list(ex.map(check, hosts))
@@ -257,7 +293,9 @@ def cpu_usage():
     return out
 
 
+@functools.lru_cache(maxsize=1)                 # the CPU doesn't change while we run
 def cpu_model():
+    """Short CPU name for the System panel, e.g. "Ryzen 9 9950X"."""
     try:
         for line in open("/proc/cpuinfo"):
             if line.startswith("model name"):
@@ -269,22 +307,40 @@ def cpu_model():
     return ""
 
 
+_sensors = {"at": float("-inf"), "list": []}   # [(chip, label, path of its temp*_input)], rescanned every 5 min
+
+
+def sensor_files():
+    """Find every temperature sensor once (chip names and labels don't change), then just read the values."""
+    if time.monotonic() - _sensors["at"] > 300:
+        found = []
+        for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+            try:
+                with open(d + "/name") as f:
+                    chip = f.read().strip()
+            except OSError:
+                continue
+            for inp in sorted(glob.glob(d + "/temp*_input")):
+                try:
+                    with open(inp.replace("_input", "_label")) as f:
+                        label = f.read().strip()
+                except OSError:
+                    label = os.path.basename(inp).split("_")[0]   # no label file: "temp1"
+                found.append((chip, label, inp))
+        _sensors.update(at=time.monotonic(), list=found)
+    return _sensors["list"]
+
+
 def hwmon():
     """Temperature cells from whatever sensors this machine has (AMD k10temp/zenpower, Intel coretemp, DDR5, NVMe, amdgpu)."""
-    raw = {}
-    for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+    raw = {}                                   # chip -> [(label, °C)]
+    for chip, lbl, inp in sensor_files():
         try:
-            name = open(d + "/name").read().strip()
-        except OSError:
+            with open(inp) as f:
+                v = int(f.read()) / 1000
+        except (OSError, ValueError):
             continue
-        for inp in sorted(glob.glob(d + "/temp*_input")):
-            try:
-                v = int(open(inp).read()) / 1000
-            except (OSError, ValueError):
-                continue
-            lbl_f = inp.replace("_input", "_label")
-            lbl = open(lbl_f).read().strip() if os.path.exists(lbl_f) else os.path.basename(inp).split("_")[0]
-            raw.setdefault(name, []).append((lbl, v))
+        raw.setdefault(chip, []).append((lbl, v))
     cells, cpu = [], None
     for chip in ("k10temp", "zenpower"):
         for lbl, v in raw.get(chip, []):
@@ -326,17 +382,36 @@ def load_acks():
         return set()
 
 
-def read_hw():
+def _mtime(path):
     try:
-        hw = json.load(open(HW_FILE))
-    except Exception:
+        return os.stat(path).st_mtime_ns
+    except OSError:
         return None
-    hw["stale"] = time.time() - hw.get("updated", 0) > 60
-    sec = hw.get("security") or {}
-    acks = load_acks()
-    for item in (sec.get("ssh") or {}).get("logins", []) + (sec.get("authelia") or {}).get("recent", []):
-        item["known"] = is_known(item.get("ip", ""))
-        item["acked"] = login_key(item) in acks
+
+
+_hw = {"key": None, "data": None}   # last parsed hw.json + the (hw.json, acks.json) mtimes it came from
+
+
+def read_hw():
+    """The collector's latest hw.json (None if there's no collector), with every SSH/Authelia login marked
+    known (IP on your list) and acked (you clicked "looks fine"). Only re-parsed when either file changed."""
+    key = (_mtime(HW_FILE), _mtime(ACKS_FILE))
+    if key[0] is None:
+        return None
+    if key != _hw["key"]:
+        try:
+            with open(HW_FILE) as f:
+                hw = json.load(f)
+        except Exception:
+            return None
+        sec = hw.get("security") or {}
+        acks = load_acks()
+        for item in (sec.get("ssh") or {}).get("logins", []) + (sec.get("authelia") or {}).get("recent", []):
+            item["known"] = is_known(item.get("ip", ""))
+            item["acked"] = login_key(item) in acks
+        _hw.update(key=key, data=hw)
+    hw = _hw["data"]
+    hw["stale"] = time.time() - hw.get("updated", 0) > 60   # collector stopped writing
     return hw
 
 
@@ -358,6 +433,8 @@ def ack_logins():
 
 
 def system():
+    """/api/system: CPU, memory, temps from the host's /proc and /sys (mounted into the container),
+    plus everything the root collector reports (drives, GPU, security, backups, the usage breakdown)."""
     mem = {}
     for line in open("/proc/meminfo"):
         k, v = line.split(":", 1)
@@ -376,6 +453,7 @@ def system():
 # ---------- qBittorrent ----------
 
 class Qbit:
+    """qBittorrent Web API client. Keeps the login cookie and logs in again when it expires (403)."""
     def __init__(self):
         self.jar = http.cookiejar.CookieJar()
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
@@ -405,6 +483,7 @@ SLIM = ("name", "state", "progress", "dlspeed", "upspeed", "eta", "size", "num_s
 
 
 def qbit():
+    """/api/qbit: speeds, the VPN check (external IP vs your home IP) and the torrent lists, trimmed to what the page shows."""
     t = qb.get("/api/v2/transfer/info")
     torrents = qb.get("/api/v2/torrents/info")
     slim = lambda x: {k: x.get(k) for k in SLIM}
@@ -442,6 +521,7 @@ PLEX_FIELDS = ("session_key", "friendly_name", "full_title", "title", "grandpare
 
 
 def plex():
+    """/api/plex: who's watching what, from Tautulli (so no Plex token is needed here)."""
     d = tautulli("get_activity")
     sessions = []
     for s in d.get("sessions", []):
@@ -476,6 +556,7 @@ _titles = {}
 
 
 def media_info(kind, tmdb):
+    """Title/year/poster for a request. Cached forever: a movie's title doesn't change."""
     key = (kind, tmdb)
     if key not in _titles:
         try:
@@ -490,6 +571,7 @@ def media_info(kind, tmdb):
 
 
 def requests_pending():
+    """/api/requests: pending Seerr requests with title, year, poster and who asked."""
     d = seerr("/request?take=50&filter=pending&sort=added")
     out = []
     for r in d.get("results", []):
@@ -603,6 +685,8 @@ def save_upload(data):
 if DEMO:
     import demo                            # fake data for screenshots / trying it out
 
+# GET endpoints: path -> (cache seconds, function). The page polls these; caching means extra browsers
+# (or the wall display) don't multiply the work. FEATURE ones answer 404 when that integration isn't set up.
 API = {
     "/api/config": (0, page_config),
     "/api/services": (25, services),
