@@ -400,7 +400,17 @@ body.wall #plex{flex:1;min-height:0;overflow-y:auto;align-content:start;overscro
 /* live window (🌡 live on the Temperatures panel): reuses the breakdown window's frame (.usage-ov / .usage-box) */
 #s-tmp .temps{cursor:pointer}
 .live-body{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px}
-.lv-top{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+/* fixed sizes everywhere, so live numbers never shift the layout */
+.lv-top{display:grid;grid-template-columns:repeat(var(--lv-tiles,6),minmax(0,1fr));gap:10px}
+.lv-tile b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lv-tile small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lv-blank,.lv-empty .meter{visibility:hidden}
+.lv-empty span{color:var(--mute)}
+.lv-row .lv-card{height:272px;overflow:hidden}
+.lv-spark{height:30px}
+.kv>span:last-child,.lv-drive small,.lv-thr span{font-variant-numeric:tabular-nums}
+@media (max-width:1100px){.lv-top{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:600px){.lv-top{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .lv-tile{padding:10px 12px 6px;border-radius:14px;background:color-mix(in srgb,var(--bar) 55%,transparent)}
 .lv-tile small{display:block;color:var(--mute);font-size:12px}
 .lv-tile b{display:block;font:600 22px Fredoka,"M PLUS Rounded 1c",sans-serif;font-variant-numeric:tabular-nums}
@@ -412,7 +422,8 @@ body.wall #plex{flex:1;min-height:0;overflow-y:auto;align-content:start;overscro
 .lv-spark{display:grid;grid-template-columns:72px minmax(0,1fr) 86px 70px;align-items:center;gap:8px;font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--acc)}
 .lv-spark>span:first-child,.lv-spark b{color:var(--fg)}
 .lv-sv svg{width:100%;height:28px;display:block}
-.lv-drive{margin-top:8px;font-size:12.5px}.lv-drive .meter{margin:3px 0 2px}.lv-drive small{font-variant-numeric:tabular-nums}
+.lv-drive{margin-top:7px;font-size:12.5px}.lv-drive .meter{margin:3px 0 0}.lv-drive small{font-variant-numeric:tabular-nums}
+.lv-dh{display:flex;justify-content:space-between;gap:8px;white-space:nowrap}.lv-dh span{overflow:hidden;text-overflow:ellipsis}
 .lv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:4px 22px}
 .lv-grid h4{margin:2px 0 6px;font:600 13px Fredoka,"M PLUS Rounded 1c",sans-serif;color:var(--mute)}
 .lv-thr{display:grid;grid-template-columns:44px 74px minmax(0,1fr) 46px;gap:8px;align-items:center;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.5}
@@ -420,4 +431,4 @@ body.wall #plex{flex:1;min-height:0;overflow-y:auto;align-content:start;overscro
 .lv-thr>span:last-child{text-align:right}
 .lv-boost{color:var(--acc);font-weight:600}
 .lv-smt{font-size:11px;margin:6px 0 2px}
-@media (max-width:900px){.lv-row{grid-template-columns:1fr}.lv-spark{grid-template-columns:64px minmax(0,1fr) 80px}.lv-spark small{display:none}}
+@media (max-width:900px){.lv-row{grid-template-columns:1fr}.lv-row .lv-card{height:auto;min-height:230px}.lv-spark{grid-template-columns:64px minmax(0,1fr) 80px}.lv-spark small{display:none}}

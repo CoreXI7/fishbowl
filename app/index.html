@@ -877,7 +877,10 @@ function lvSpark(vals, minRange) {
   return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
 }
 const lvMBs = b => (b / 1e6).toFixed(b >= 1e8 ? 0 : 1) + " MB/s";
-const lvTile = (label, value, cls, bar, sub) => `<div class="lv-tile"><small>${esc(label)}</small><b class="${cls || ""}">${value}</b>${bar || ""}${sub ? `<small>${sub}</small>` : ""}</div>`;
+// Every tile has the same parts (label, value, bar, sub-line) even when one is empty, so tiles never change height.
+const lvTile = (label, value, cls, bar, sub) => `<div class="lv-tile"><small>${esc(label)}</small><b class="${cls || ""}">${value}</b>` +
+  `${bar || '<div class="meter lv-blank"></div>'}<small>${sub || "&nbsp;"}</small></div>`;
+const LV_DRIVE_SLOTS = 4;   // the disk card always reserves room for this many drives
 // a temperature as a bar: full at 10 °C above its critical point
 const tempBar = t => meter(100 * t.c / (t.crit + 10), 100 * t.warn / (t.crit + 10), 100 * t.crit / (t.crit + 10));
 
@@ -886,23 +889,34 @@ function renderLive(d) {
   const maxClk = mhz.length ? Math.max(...mhz) : null, avgClk = mhz.length ? mhz.reduce((a, b) => a + b, 0) / mhz.length : null;
   const memUsed = d.mem_total - d.mem_avail, memPct = 100 * memUsed / d.mem_total;
   const cpuTemps = d.temps.cells.filter(t => /^CPU/.test(t.label)), otherTemps = d.temps.cells.filter(t => !/^CPU/.test(t.label));
-  const pw = d.power && d.power.pkg_w, pwMax = (d.power && d.power.limit_w) || Math.max(LV.peak.p || 0, pw || 0, 1);
+  const pw = d.power && d.power.pkg_w, pwLimit = d.power && d.power.limit_w;
+  // the power bar's full scale: the CPU's own limit, else a bit above the highest reading so far (at least 120 W)
+  const pwMax = pwLimit || Math.max((LV.peak.p || 0) * 1.15, (pw || 0) * 1.15, 120);
   lvPush("t", d.temps.cpu); lvPush("p", pw); lvPush("c", maxClk); lvPush("r", d.io.read_bps / 1e6); lvPush("w", d.io.write_bps / 1e6);
   setText("lv-sub", `${d.cpu_model || ""} · load ${d.load.map(x => x.toFixed(2)).join(" ")}`);
 
   // top row: CPU temps, power, usage, clocks, memory
-  setHTML("lv-top", [
+  // the same tiles every second ("–" until there's a value), in a fixed number of columns
+  const tiles = [
     ...cpuTemps.map(t => lvTile(t.label, `${t.c.toFixed(1)}°`, tcls(t.c, t.warn, t.crit), tempBar(t))),
-    pw != null ? lvTile("Package power", `${pw.toFixed(0)} W`, "", meter(100 * pw / pwMax, 60, 95), d.power.limit_w ? `of ${d.power.limit_w.toFixed(0)} W limit` : "") : "",
+    lvTile("Package power", pw != null ? `${pw.toFixed(0)} W` : "–", "",
+           pw == null ? "" : pwLimit ? meter(100 * pw / pwMax, 60, 95) : meter(100 * pw / pwMax, 999, 999),   // no limit: no warning colours
+           pw == null ? "needs the collector" : pwLimit ? `of ${pwLimit.toFixed(0)} W limit` : `peak ${(LV.peak.p || pw).toFixed(0)} W`),
     lvTile("CPU usage", `${(d.cpu || 0).toFixed(1)}%`, tcls(d.cpu, 50, 90), meter(d.cpu, 50, 90)),
-    maxClk != null ? lvTile("Clock", `${maxClk} MHz`, "", "", `max · ${Math.round(avgClk)} avg`) : "",
+    lvTile("Clock", maxClk != null ? `${maxClk} MHz` : "–", "", "", maxClk != null ? `max · ${Math.round(avgClk)} avg` : ""),
     lvTile("Memory", size(memUsed), tcls(memPct, 75, 90), meter(memPct, 75, 90), `of ${size(d.mem_total)}`),
-  ].join(""));
+  ];
+  $("lv-top").style.setProperty("--lv-tiles", tiles.length);
+  setHTML("lv-top", tiles.join(""));
   setHTML("lv-temps", otherTemps.map(t => `<div class="tc"><small>${esc(t.label)}</small><b class="${tcls(t.c, t.warn, t.crit)}">${Math.round(t.c)}°</b></div>`).join(""));
 
   // history sparklines: now + peak since the window opened
-  const hrow = (key, label, unit, fmt, minRange) => LV.hist[key] && LV.hist[key].length ?
-    `<div class="lv-spark"><span>${label}</span><span class="lv-sv">${lvSpark(LV.hist[key], minRange)}</span><b>${fmt(LV.hist[key][LV.hist[key].length - 1])} ${unit}</b><small class="mute">peak ${fmt(LV.peak[key])}</small></div>` : "";
+  // every row is always there ("–" before its first value), so the card never changes height
+  const hrow = (key, label, unit, fmt, minRange) => {
+    const h = LV.hist[key] || [];
+    return `<div class="lv-spark"><span>${label}</span><span class="lv-sv">${lvSpark(h, minRange)}</span>` +
+      `<b>${h.length ? fmt(h[h.length - 1]) + " " + unit : "–"}</b><small class="mute">${h.length ? "peak " + fmt(LV.peak[key]) : ""}</small></div>`;
+  };
   // minimum ranges keep tiny wobbles (±0.3 °C, ±20 MHz) from looking like big swings
   setHTML("lv-hist", [hrow("t", "CPU temp", "°C", v => v.toFixed(1), 5), hrow("p", "Power", "W", v => v.toFixed(0), 20),
                       hrow("c", "Max clock", "MHz", v => Math.round(v), 500),
@@ -918,10 +932,12 @@ function renderLive(d) {
       ${kvRow("Power", g.power != null ? g.power.toFixed(0) + " W" : "–")}` : `<h3>GPU</h3><div class="mute">No GPU stats (needs the collector and nvidia-smi).</div>`);
 
   // disk I/O: totals + busiest drives
-  const busy = d.io.disks.filter(x => x.busy >= 1).slice(0, 6);
-  setHTML("lv-io", kvRow("Read", lvMBs(d.io.read_bps)) + kvRow("Write", lvMBs(d.io.write_bps)) +
-    (busy.length ? busy.map(x => `<div class="lv-drive"><span>${esc(x.name)}</span>${meter(x.busy, 60, 90)}<small class="mute">${Math.round(x.busy)}% · r ${lvMBs(x.read_bps)} · w ${lvMBs(x.write_bps)}</small></div>`).join("")
-                 : `<div class="mute" style="margin-top:6px">All drives idle.</div>`));
+  // busiest drives in a fixed number of slots: empty slots keep their space, so the card never changes height
+  const busy = d.io.disks.filter(x => x.busy >= 1).slice(0, LV_DRIVE_SLOTS);
+  const slots = Array.from({length: LV_DRIVE_SLOTS}, (_, i) => busy[i]);
+  setHTML("lv-io", kvRow("Read", lvMBs(d.io.read_bps)) + kvRow("Write", lvMBs(d.io.write_bps)) + slots.map((x, i) => x
+    ? `<div class="lv-drive"><div class="lv-dh"><span>${esc(x.name)}</span><small class="mute">${Math.round(x.busy)}% · r ${lvMBs(x.read_bps)} · w ${lvMBs(x.write_bps)}</small></div>${meter(x.busy, 60, 90)}</div>`
+    : `<div class="lv-drive lv-empty"><div class="lv-dh"><span>${i === 0 ? "All drives idle." : "&nbsp;"}</span></div><div class="meter lv-blank"></div></div>`).join(""));
 
   // every thread, grouped by CCD (L3 cache), first threads of each core then their SMT siblings
   const groups = [...new Set(thr.map(t => t.group))].sort((a, b) => a - b);
