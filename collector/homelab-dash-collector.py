@@ -36,6 +36,7 @@ CRON_APPROVED = os.path.join(OUT_DIR, "cron-approved.json")   # root-only snapsh
 
 
 def run(cmd, timeout=20):
+    """A command's stdout, or "" if it fails or times out (every check here is optional)."""
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
     except Exception:
@@ -74,6 +75,7 @@ def mounts():
 
 
 def mount_sources():
+    """mount point -> device (e.g. /media/x/disk1 -> /dev/sdb1)."""
     src = {}
     for line in run(["findmnt", "-rno", "SOURCE,TARGET"]).splitlines():
         parts = line.split(" ", 1)
@@ -83,6 +85,7 @@ def mount_sources():
 
 
 def whole_disk(dev):
+    """/dev/sdb1 -> /dev/sdb, /dev/nvme0n1p2 -> /dev/nvme0n1 (SMART is per disk, not per partition)."""
     base = os.path.basename(dev)
     if base.startswith(("nvme", "mmcblk")):
         return "/dev/" + re.sub(r"p\d+$", "", base)
@@ -90,6 +93,7 @@ def whole_disk(dev):
 
 
 def disks():
+    """Size/used/free per shown mount. A mount listed in the config but not mounted is reported as missing."""
     src = mount_sources()
     labels = CFG.get("mount_labels", {})
     out = []
@@ -112,6 +116,7 @@ def disks():
 
 
 def smart(dev):
+    """SMART health + temperature for one disk. Sleeping disks are left asleep (-n standby)."""
     raw = run(["smartctl", "-n", "standby", "-i", "-H", "-A", "-j", dev], timeout=30)
     try:
         d = json.loads(raw)
@@ -137,6 +142,7 @@ def smart(dev):
 # ---------- GPU / containers / network ----------
 
 def gpu():
+    """NVIDIA GPU load, encoder/decoder use, VRAM, power, fan, encode sessions (None without nvidia-smi)."""
     if not have("nvidia-smi") or CFG.get("gpu") is False:
         return None
     q = "name,temperature.gpu,utilization.gpu,utilization.encoder,utilization.decoder,memory.used,memory.total,power.draw,fan.speed,encoder.stats.sessionCount"
@@ -154,6 +160,7 @@ CONTAINER_NAMES = {}          # full container id -> name, refreshed with contai
 
 
 def containers():
+    """Running/total container counts; also refreshes CONTAINER_NAMES for the usage breakdown."""
     if not have("docker"):
         return None
     rows = run(["docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}} {{.Names}} {{.State}}"]).split("\n")
@@ -170,16 +177,35 @@ PAGE = os.sysconf("SC_PAGE_SIZE")
 CONTAINER_RE = re.compile(r"(?:/docker/|docker-)([0-9a-f]{64})")
 
 
+def read_text(path):
+    with open(path) as f:
+        return f.read()
+
+
 class Usage:
-    """Samples /proc every round; CPU % = share of the whole machine between two samples."""
+    """Samples /proc every round; CPU % = share of the whole machine between two samples.
+
+    Which container a process belongs to (from /proc/<pid>/cgroup) is looked up once per process and remembered,
+    keyed by pid + start time so a recycled pid is looked up again. That halves the files read every round."""
     def __init__(self):
         self.prev, self.prev_total = {}, None
         self.ncpu = os.cpu_count() or 1
+        self.container_of = {}            # pid -> (start time, container id or None)
 
     @staticmethod
     def total_jiffies():
-        f = open("/proc/stat").readline().split()[1:]
-        return sum(int(x) for x in f[:8])
+        with open("/proc/stat") as f:
+            fields = f.readline().split()[1:]
+        return sum(int(x) for x in fields[:8])
+
+    def container_id(self, pid, started):
+        hit = self.container_of.get(pid)
+        if hit and hit[0] == started:
+            return hit[1]
+        m = CONTAINER_RE.search(read_text(f"/proc/{pid}/cgroup"))
+        cid = m[1] if m else None
+        self.container_of[pid] = (started, cid)
+        return cid
 
     def sample(self):
         total = self.total_jiffies()
@@ -188,17 +214,16 @@ class Usage:
             if not pid.isdigit():
                 continue
             try:
-                raw = open(f"/proc/{pid}/stat").read()
-                comm = raw[raw.index("(") + 1:raw.rindex(")")]
-                f = raw[raw.rindex(")") + 2:].split()
-                jiff, ppid, rss = int(f[11]) + int(f[12]), int(f[1]), int(f[21]) * PAGE
-                cg = open(f"/proc/{pid}/cgroup").read()
+                raw = read_text(f"/proc/{pid}/stat")
+                comm = raw[raw.index("(") + 1:raw.rindex(")")]       # the name can contain spaces and brackets
+                f = raw[raw.rindex(")") + 2:].split()                 # fields after the name (see man 5 proc)
+                jiff, ppid, rss = int(f[11]) + int(f[12]), int(f[1]), int(f[21]) * PAGE   # utime+stime, parent, RSS
+                cid = self.container_id(pid, f[19])                   # f[19] = start time
             except (OSError, ValueError, IndexError):
                 continue                  # process exited mid-read
             cur[pid] = (jiff, comm)
-            m = CONTAINER_RE.search(cg)
-            if m:
-                key, kind, name = "c:" + m[1], "container", CONTAINER_NAMES.get(m[1], m[1][:12])
+            if cid:
+                key, kind, name = "c:" + cid, "container", CONTAINER_NAMES.get(cid, cid[:12])
             elif ppid == 2 or pid == "2":
                 key, kind, name = "kernel", "kernel", "kernel threads"
             else:
@@ -213,6 +238,8 @@ class Usage:
                 g["top"][comm] = g["top"].get(comm, 0) + d
         dt = total - self.prev_total if self.prev_total else 0
         self.prev, self.prev_total = cur, total
+        for pid in self.container_of.keys() - cur.keys():
+            del self.container_of[pid]    # forget processes that have exited
         if dt <= 0:
             return None                   # first round: no delta yet
         out = []
@@ -237,6 +264,7 @@ USAGE = Usage()
 
 
 def net_bytes():
+    """Total bytes received/sent on the main interface so far (the rate is the change between rounds)."""
     base = f"/sys/class/net/{NET_IF}/statistics/"
     return int(open(base + "rx_bytes").read()), int(open(base + "tx_bytes").read())
 
@@ -244,6 +272,7 @@ def net_bytes():
 # ---------- cron watch: flags any crontab change until you approve it on the dash ----------
 
 def cron_files():
+    """Every crontab's active lines (comments and blanks dropped), by file."""
     files = ["/etc/crontab"] + sorted(glob.glob("/etc/cron.d/*")) + sorted(glob.glob("/var/spool/cron/crontabs/*")) \
         + sorted(glob.glob("/var/spool/cron/*"))         # RHEL-style per-user crontabs (dirs are skipped below)
     snap = {}
@@ -290,6 +319,7 @@ def save_approved(snap):
 
 
 def cron_state():
+    """Compare the crontabs with the approved snapshot: what was added/removed in which file."""
     snap = cron_files()
     appr = load_approved()
     if appr is None:                      # first run: today's crontabs become the baseline
@@ -335,6 +365,7 @@ MINERS = ("xmrig", "minerd", "cryptonight", "kdevtmpfsi", "kinsing", "kworkerds"
 
 
 def security():
+    """fail2ban, SSH logins/failures, Authelia failures, miner process watch, cron watch, immutable files, firewall."""
     s = {}
     jail = SEC.get("fail2ban_jail", "sshd")
     if jail and have("fail2ban-client"):
@@ -395,6 +426,7 @@ def security():
 # ---------- backups: read your backup script's log + check that fresh files exist ----------
 
 def backups():
+    """Did the last backup run cleanly (from its log) and are its output files fresh?"""
     log = BAK.get("log", "")
     arts = BAK.get("artifacts", [])
     if not log and not arts:
@@ -433,26 +465,47 @@ def backups():
     return b
 
 
+def write_output(data):
+    """Atomically replace hw.json, readable by root + the dash container's group only (not every user on the host)."""
+    tmp = OUT + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    try:
+        os.chown(tmp, 0, DASH_UID)
+    except PermissionError:               # not root (testing): leave ownership as is
+        pass
+    os.chmod(tmp, 0o640)
+    os.replace(tmp, OUT)
+
+
 def main():
+    """Every round (default 5 s): refresh whatever is due, then write hw.json.
+    Slow or expensive checks run less often: GPU 10 s, containers 30 s, drives + security + backups 60 s, SMART 5 min."""
     os.makedirs(OUT_DIR, exist_ok=True)
     os.chmod(OUT_DIR, 0o755)
     data = {"disks": [], "smart": {}, "gpu": None, "containers": None, "net": None}
-    last = {"disks": 0, "smart": 0, "gpu": 0, "containers": 0, "security": 0}
+    last_run = {}
+
+    def due(name, every):
+        now = time.monotonic()
+        if now - last_run.get(name, float("-inf")) >= every:
+            last_run[name] = now
+            return True
+        return False
+
     try:
         prev_net = (time.monotonic(), *net_bytes())
     except OSError:
         prev_net = None
     while True:
-        now = time.monotonic()
-        if now - last["disks"] >= 60:
-            data["disks"], last["disks"] = disks(), now
-        if now - last["smart"] >= 300 and have("smartctl"):
+        if due("disks", 60):
+            data["disks"] = disks()
+        if have("smartctl") and due("smart", 300):
             devs = {d["dev"] for d in data["disks"] if d.get("dev")}
             data["smart"] = {dev: smart(dev) for dev in sorted(devs)}
-            last["smart"] = now
-        if now - last["gpu"] >= 10:
-            data["gpu"], last["gpu"] = gpu(), now
-        if now - last["security"] >= 60:
+        if due("gpu", 10):
+            data["gpu"] = gpu()
+        if due("security", 60):
             try:
                 data["security"] = security()
             except Exception as e:
@@ -461,19 +514,22 @@ def main():
                 data["backups"] = backups()
             except Exception as e:
                 data["backups"] = {"ok": None, "log": [f"collector error: {e}"], "artifacts": []}
-            last["security"] = now
-        if now - last["containers"] >= 30:
-            data["containers"], last["containers"] = containers(), now
+        if due("containers", 30):
+            data["containers"] = containers()
         if CFG.get("usage", True):
             try:
-                data["usage"] = USAGE.sample() or data.get("usage")
+                data["usage"] = USAGE.sample() or data.get("usage")   # first round has no delta yet: keep the old one
             except Exception as e:
                 data["usage"] = {"error": str(e)}
+
+        # a "Looks good" click on the dash: apply it now, so the cron box clears within one round
         try:
             if handle_cron_approval() and isinstance(data.get("security"), dict) and "cron" in data["security"]:
                 data["security"]["cron"] = cron_state()
         except Exception:
             pass
+
+        # network rate = bytes since the previous round / seconds since then
         try:
             t, rx, tx = time.monotonic(), *net_bytes()
             if prev_net:
@@ -482,16 +538,9 @@ def main():
             prev_net = (t, rx, tx)
         except OSError:
             pass
+
         data["updated"] = int(time.time())
-        tmp = OUT + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(data, f)
-        try:
-            os.chown(tmp, 0, DASH_UID)
-        except PermissionError:           # not root (testing): leave ownership as is
-            pass
-        os.chmod(tmp, 0o640)              # root + the dash container's group only, not every user on the host
-        os.replace(tmp, OUT)
+        write_output(data)
         time.sleep(int(CFG.get("interval", 5)))
 
 
