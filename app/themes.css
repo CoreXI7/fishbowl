@@ -28,7 +28,7 @@ html[data-theme="miku"] body{background:
 
 /* header: twin-tail ribbon underneath, an "01" badge on the title, a little equalizer by the clock */
 html[data-theme="miku"] header::after{height:4px;background:linear-gradient(90deg,var(--acc),var(--acc2),var(--coat),var(--acc2),var(--acc),var(--eye),var(--acc));
-  background-size:200% 100%;box-shadow:0 2px 12px var(--glow)}
+  background-size:50% 100%;box-shadow:0 2px 12px var(--glow)}
 html[data-theme="miku"] #site-title{font-family:Orbitron,Fredoka,sans-serif;font-weight:800;letter-spacing:.02em;
   background:linear-gradient(90deg,var(--ink),var(--acc) 60%,var(--eye));-webkit-background-clip:text;background-clip:text;color:transparent}
 html[data-theme="miku"] #site-title::after{content:"01";display:inline-block;margin-left:7px;padding:1px 5px 0;border-radius:5px;transform:rotate(-8deg) translateY(-2px);

@@ -90,14 +90,19 @@ body{font-family:"M PLUS Rounded 1c",system-ui,sans-serif;background:
   radial-gradient(1200px 600px at 10% -10%,color-mix(in srgb,var(--acc) 22%,transparent),transparent 60%),
   radial-gradient(900px 500px at 110% 10%,color-mix(in srgb,var(--coat) 45%,transparent),transparent 60%),var(--bg);background-attachment:fixed}
 h1,h2,.big,.tc b{font-family:Fredoka,"M PLUS Rounded 1c",sans-serif}
-header{background:color-mix(in srgb,var(--card) 92%,transparent);backdrop-filter:blur(10px);border-bottom:0;box-shadow:var(--shadow)}
-header::after{content:"";position:absolute;left:0;right:0;bottom:-4px;height:4px;background:linear-gradient(90deg,var(--acc),var(--acc2),var(--coat),var(--acc2),var(--acc));background-size:200% 100%;animation:mane 8s linear infinite}
-@keyframes mane{to{background-position:200% 0}}
+header{background:color-mix(in srgb,var(--card) 96%,transparent);border-bottom:0;box-shadow:var(--shadow)}
+/* the flowing stripe under the header: a strip 4x the header width slides left by half its width and loops.
+   Sliding (transform) is done by the GPU; animating background-position instead repainted it every frame. */
+header{overflow-x:clip}
+header::after{content:"";position:absolute;left:0;width:400%;bottom:-4px;height:4px;background:linear-gradient(90deg,var(--acc),var(--acc2),var(--coat),var(--acc2),var(--acc));background-size:50% 100%;animation:mane 8s linear infinite;will-change:transform}
+@keyframes mane{to{transform:translateX(-50%)}}
 header h1{display:flex;align-items:center;gap:8px;font-size:20px;cursor:pointer;user-select:none}
 header h1 .tag{font:500 12px "M PLUS Rounded 1c",sans-serif;color:var(--mute)}
 .cutie{width:30px;height:30px;flex:none;filter:drop-shadow(0 2px 3px rgba(0,0,0,.15))}
 .pill{background:var(--card);border-color:var(--line);box-shadow:0 1px 0 var(--line)}
-section{border-radius:18px;border:1px solid var(--line);box-shadow:var(--shadow);position:relative;overflow:hidden;backdrop-filter:blur(1.5px)}
+/* No backdrop-filter on cards or tiles: the bubbles drift behind all of them, so the browser would have to
+   re-blur every card on every frame (that alone used most of a CPU core on the wall display). */
+section{border-radius:18px;border:1px solid var(--line);box-shadow:var(--shadow);position:relative;overflow:hidden}
 section::before{content:"";position:absolute;left:0;right:0;top:0;height:4px;background:linear-gradient(90deg,var(--acc),var(--acc2) 60%,transparent)}
 h2{font-size:16px;font-weight:600}
 h2{position:relative;padding-left:22px}
@@ -120,7 +125,7 @@ button.ok{background:linear-gradient(135deg,var(--up),color-mix(in srgb,var(--up
 #bubbles{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
 #bubbles i{position:absolute;bottom:-60px;border-radius:50%;opacity:.8;
   background:radial-gradient(circle at 32% 30%,rgba(255,255,255,.95) 0 10%,transparent 13%),radial-gradient(circle at 50% 50%,transparent 55%,color-mix(in srgb,#9fd8ff 55%,var(--acc)) 70%,transparent 72%),
-  radial-gradient(circle,rgba(159,216,255,.18),rgba(245,200,66,.12));animation:rise linear infinite}
+  radial-gradient(circle,rgba(159,216,255,.18),rgba(245,200,66,.12));animation:rise linear infinite;will-change:transform}
 @keyframes rise{0%{transform:translate(0,0) scale(.8)}50%{transform:translate(18px,-55vh) scale(1)}100%{transform:translate(-12px,-115vh) scale(1.05);opacity:0}}
 .layout,header{position:relative;z-index:1}
 header{position:sticky;z-index:10}   /* above .layout (same level 1 would let the content scroll over it), below overlays */
@@ -165,7 +170,7 @@ details summary{cursor:pointer;color:var(--mute);font-size:12px}
 @media (min-width:1500px){aside{position:static;max-height:none;overflow:visible}}
 .kpis{grid-area:kpi;display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr))}
 .kpi{display:flex;flex-direction:column;gap:2px;padding:12px 14px 12px 16px;border-radius:16px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);
-  text-decoration:none;color:inherit;position:relative;overflow:hidden;backdrop-filter:blur(1.5px);transition:transform .15s}
+  text-decoration:none;color:inherit;position:relative;overflow:hidden;transition:transform .15s}
 .kpi:hover{transform:translateY(-2px)}
 .kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--mute)}
 .kpi.ok::before{background:var(--up)}.kpi.warn::before{background:var(--warn)}.kpi.bad::before{background:var(--down)}
