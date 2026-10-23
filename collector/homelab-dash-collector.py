@@ -290,6 +290,25 @@ class Usage:
 USAGE = Usage()
 
 
+RAPL = "/sys/class/powercap/intel-rapl:0"      # CPU package energy counter (Intel, and AMD Zen via the same interface)
+
+
+def rapl_energy():
+    """Package energy in microjoules since boot (root-only file), or None without RAPL."""
+    try:
+        return int(read_text(RAPL + "/energy_uj"))
+    except (OSError, ValueError):
+        return None
+
+
+def rapl_limit_w():
+    """The package power limit the CPU reports (long-term constraint), or None."""
+    try:
+        return int(read_text(RAPL + "/constraint_0_power_limit_uw")) / 1e6 or None
+    except (OSError, ValueError):
+        return None
+
+
 def net_bytes():
     """Total bytes received/sent on the main interface so far (the rate is the change between rounds)."""
     base = f"/sys/class/net/{NET_IF}/statistics/"
@@ -524,6 +543,8 @@ def main():
         prev_net = (time.monotonic(), *net_bytes())
     except OSError:
         prev_net = None
+    prev_energy = (time.monotonic(), rapl_energy())
+    power_limit = rapl_limit_w()
     while True:
         if due("disks", 60):
             data["disks"] = disks()
@@ -565,6 +586,12 @@ def main():
             prev_net = (t, rx, tx)
         except OSError:
             pass
+
+        # CPU package power = energy since the previous round / seconds since then (the counter wraps now and then: skip)
+        t, e = time.monotonic(), rapl_energy()
+        if e is not None and prev_energy[1] is not None and e >= prev_energy[1]:
+            data["power"] = {"pkg_w": round((e - prev_energy[1]) / 1e6 / (t - prev_energy[0]), 1), "limit_w": power_limit}
+        prev_energy = (t, e)
 
         data["updated"] = int(time.time())
         write_output(data)

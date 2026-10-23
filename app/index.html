@@ -41,7 +41,7 @@
 </nav>
 <aside id="left">
   <section><h2>System <span class="h2r"><small id="sys-up"></small><button class="mini" id="usage-btn" hidden title="What's using the CPU and memory">⚡ breakdown</button></span></h2><div id="sys"><div class="empty">loading…</div></div></section>
-  <section><h2>Temperatures <small id="tmp-n"></small></h2><div class="temps" id="tmp"></div></section>
+  <section id="s-tmp"><h2>Temperatures <span class="h2r"><small id="tmp-n"></small><button class="mini" id="live-btn" title="Live view: temps, power, clocks, disks and every CPU thread, updated every second">🌡 live</button></span></h2><div class="temps" id="tmp"></div></section>
   <section id="s-gpu" hidden><h2>GPU <small id="gpu-n"></small></h2><div id="gpu"></div></section>
   <div class="mascot" id="mascot" hidden><div class="say" id="say"></div>
     <img src="data:," alt="mascot" id="mascot-img" title="click me!"><small id="mascot-credit"></small></div>
@@ -79,6 +79,26 @@
       </aside>
     </div>
     <div class="u-legend"><span><i class="k-container"></i>container</span><span><i class="k-process"></i>program on the host</span><span><i class="k-kernel"></i>kernel</span><span class="mute">live · updates every few seconds · Esc to close</span></div>
+  </div>
+</div>
+<div class="usage-ov" id="live-ov" hidden role="dialog" aria-modal="true" aria-labelledby="live-title">
+  <div class="usage-box">
+    <div class="usage-head">
+      <h2 id="live-title">Live</h2>
+      <span class="mute" id="lv-sub"></span>
+      <button class="mini" id="live-close" style="margin-left:auto" aria-label="Close">✕</button>
+    </div>
+    <div class="live-body">
+      <div class="lv-top" id="lv-top"></div>
+      <div class="temps" id="lv-temps"></div>
+      <div class="lv-row">
+        <div class="lv-card"><h3>History <small class="mute">last minute · peak since opened</small></h3><div id="lv-hist"></div></div>
+        <div class="lv-card" id="lv-gpu"></div>
+        <div class="lv-card"><h3>Disk I/O <small class="mute">all drives</small></h3><div id="lv-io"></div></div>
+      </div>
+      <div class="lv-card"><h3>Every CPU thread <small class="mute" id="lv-grid-n"></small></h3><div class="lv-grid" id="lv-grid"></div></div>
+    </div>
+    <div class="u-legend"><span class="mute">updates every second while open · Esc to close</span></div>
   </div>
 </div>
 <script>
@@ -836,6 +856,110 @@ addEventListener("keydown", e => { if (e.key === "Escape" && U.open) closeUsage(
 // redraw whenever the map's real size changes (window resize, fonts/scrollbar settling after it opens)
 if ("ResizeObserver" in window) new ResizeObserver(() => { if (U.open) renderUsage(); }).observe($("u-map"));
 else addEventListener("resize", () => { if (U.open) renderUsage(); });
+
+// ---------- live window (🌡 live on the Temperatures panel): a browser version of the `temps` terminal dashboard ----------
+// Polls /api/live every second, only while open. History (last 60 samples) and peaks live in the page: they start when
+// the window opens.
+const LV = {open: false, timer: 0, hist: {}, peak: {}};
+function lvPush(key, v) {
+  if (v == null || isNaN(v)) return;
+  const a = LV.hist[key] || (LV.hist[key] = []);
+  a.push(v); if (a.length > 60) a.shift();
+  if (!(key in LV.peak) || v > LV.peak[key]) LV.peak[key] = v;
+}
+// sparkline scaled between the lowest and highest value of the minute (temps barely move on a 0-based scale)
+function lvSpark(vals, minRange) {
+  if (!vals || vals.length < 2) return "";
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < minRange) { const mid = (hi + lo) / 2; lo = mid - minRange / 2; hi = mid + minRange / 2; }
+  const W = 260, H = 28, n = vals.length;
+  const pts = vals.map((v, i) => `${(i / (n - 1) * W).toFixed(1)},${(H - 2 - (v - lo) / (hi - lo) * (H - 4)).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const lvMBs = b => (b / 1e6).toFixed(b >= 1e8 ? 0 : 1) + " MB/s";
+const lvTile = (label, value, cls, bar, sub) => `<div class="lv-tile"><small>${esc(label)}</small><b class="${cls || ""}">${value}</b>${bar || ""}${sub ? `<small>${sub}</small>` : ""}</div>`;
+// a temperature as a bar: full at 10 °C above its critical point
+const tempBar = t => meter(100 * t.c / (t.crit + 10), 100 * t.warn / (t.crit + 10), 100 * t.crit / (t.crit + 10));
+
+function renderLive(d) {
+  const thr = d.threads || [], mhz = thr.map(t => t.mhz).filter(v => v != null);
+  const maxClk = mhz.length ? Math.max(...mhz) : null, avgClk = mhz.length ? mhz.reduce((a, b) => a + b, 0) / mhz.length : null;
+  const memUsed = d.mem_total - d.mem_avail, memPct = 100 * memUsed / d.mem_total;
+  const cpuTemps = d.temps.cells.filter(t => /^CPU/.test(t.label)), otherTemps = d.temps.cells.filter(t => !/^CPU/.test(t.label));
+  const pw = d.power && d.power.pkg_w, pwMax = (d.power && d.power.limit_w) || Math.max(LV.peak.p || 0, pw || 0, 1);
+  lvPush("t", d.temps.cpu); lvPush("p", pw); lvPush("c", maxClk); lvPush("r", d.io.read_bps / 1e6); lvPush("w", d.io.write_bps / 1e6);
+  setText("lv-sub", `${d.cpu_model || ""} · load ${d.load.map(x => x.toFixed(2)).join(" ")}`);
+
+  // top row: CPU temps, power, usage, clocks, memory
+  setHTML("lv-top", [
+    ...cpuTemps.map(t => lvTile(t.label, `${t.c.toFixed(1)}°`, tcls(t.c, t.warn, t.crit), tempBar(t))),
+    pw != null ? lvTile("Package power", `${pw.toFixed(0)} W`, "", meter(100 * pw / pwMax, 60, 95), d.power.limit_w ? `of ${d.power.limit_w.toFixed(0)} W limit` : "") : "",
+    lvTile("CPU usage", `${(d.cpu || 0).toFixed(1)}%`, tcls(d.cpu, 50, 90), meter(d.cpu, 50, 90)),
+    maxClk != null ? lvTile("Clock", `${maxClk} MHz`, "", "", `max · ${Math.round(avgClk)} avg`) : "",
+    lvTile("Memory", size(memUsed), tcls(memPct, 75, 90), meter(memPct, 75, 90), `of ${size(d.mem_total)}`),
+  ].join(""));
+  setHTML("lv-temps", otherTemps.map(t => `<div class="tc"><small>${esc(t.label)}</small><b class="${tcls(t.c, t.warn, t.crit)}">${Math.round(t.c)}°</b></div>`).join(""));
+
+  // history sparklines: now + peak since the window opened
+  const hrow = (key, label, unit, fmt, minRange) => LV.hist[key] && LV.hist[key].length ?
+    `<div class="lv-spark"><span>${label}</span><span class="lv-sv">${lvSpark(LV.hist[key], minRange)}</span><b>${fmt(LV.hist[key][LV.hist[key].length - 1])} ${unit}</b><small class="mute">peak ${fmt(LV.peak[key])}</small></div>` : "";
+  // minimum ranges keep tiny wobbles (±0.3 °C, ±20 MHz) from looking like big swings
+  setHTML("lv-hist", [hrow("t", "CPU temp", "°C", v => v.toFixed(1), 5), hrow("p", "Power", "W", v => v.toFixed(0), 20),
+                      hrow("c", "Max clock", "MHz", v => Math.round(v), 500),
+                      hrow("r", "Disk read", "MB/s", v => v.toFixed(v >= 100 ? 0 : 1), 20), hrow("w", "Disk write", "MB/s", v => v.toFixed(v >= 100 ? 0 : 1), 20)].join(""));
+
+  // GPU (NVIDIA): from the collector, so it moves every ~10 s
+  const g = d.gpu;
+  setHTML("lv-gpu", g ? `<h3>${esc(g.name)}${g.sessions ? ` <small class="ok-t">· ${g.sessions} transcode${g.sessions > 1 ? "s" : ""}</small>` : ""}</h3>
+      ${kvRow("Temperature", `<span class="${tcls(g.temp, 75, 85)}">${g.temp ?? "–"}°C</span>`)}
+      ${kvRow("Load", `${g.util ?? 0}%`)}${meter(g.util, 80, 95)}
+      ${kvRow("NVENC / NVDEC", `${g.enc ?? 0}% / ${g.dec ?? 0}%`)}
+      ${kvRow("VRAM", `${((g.mem_used || 0) / 1024).toFixed(1)} / ${((g.mem_total || 0) / 1024).toFixed(0)} GB`)}${meter(100 * (g.mem_used || 0) / (g.mem_total || 1), 85, 95)}
+      ${kvRow("Power", g.power != null ? g.power.toFixed(0) + " W" : "–")}` : `<h3>GPU</h3><div class="mute">No GPU stats (needs the collector and nvidia-smi).</div>`);
+
+  // disk I/O: totals + busiest drives
+  const busy = d.io.disks.filter(x => x.busy >= 1).slice(0, 6);
+  setHTML("lv-io", kvRow("Read", lvMBs(d.io.read_bps)) + kvRow("Write", lvMBs(d.io.write_bps)) +
+    (busy.length ? busy.map(x => `<div class="lv-drive"><span>${esc(x.name)}</span>${meter(x.busy, 60, 90)}<small class="mute">${Math.round(x.busy)}% · r ${lvMBs(x.read_bps)} · w ${lvMBs(x.write_bps)}</small></div>`).join("")
+                 : `<div class="mute" style="margin-top:6px">All drives idle.</div>`));
+
+  // every thread, grouped by CCD (L3 cache), first threads of each core then their SMT siblings
+  const groups = [...new Set(thr.map(t => t.group))].sort((a, b) => a - b);
+  const row = (t, i) => `<div class="lv-thr"><span class="mute">cpu${i}</span><span class="${t.mhz >= 5000 ? "lv-boost" : t.mhz < 1000 ? "mute" : ""}">${t.mhz ?? "–"} MHz</span>${meter(t.use, 50, 90)}<span class="${tcls(t.use, 50, 90)}">${t.use.toFixed(1)}%</span></div>`;
+  setText("lv-grid-n", `${thr.length} threads${groups.length > 1 ? ` · ${groups.length} CCDs` : ""}`);
+  setHTML("lv-grid", groups.map(gid => {
+    const mine = thr.map((t, i) => [t, i]).filter(([t]) => t.group === gid);
+    const main = mine.filter(([t]) => !t.smt), smt = mine.filter(([t]) => t.smt);
+    return `<div><h4>${groups.length > 1 ? "CCD " + (gid + 1) : "CPU"}</h4>${main.map(([t, i]) => row(t, i)).join("")}
+      ${smt.length ? `<div class="lv-smt mute">· SMT threads ·</div>` + smt.map(([t, i]) => row(t, i)).join("") : ""}</div>`;
+  }).join(""));
+}
+
+async function liveTick() {
+  if (!LV.open) return;
+  try { renderLive(await getJSON("/api/live")); }
+  catch (e) { setHTML("lv-top", `<div class="err">${esc(e.message)}</div>`); }
+  clearTimeout(LV.timer);
+  if (LV.open && !document.hidden) LV.timer = setTimeout(liveTick, 1000);
+}
+function openLive() {
+  LV.open = true; LV.hist = {}; LV.peak = {};
+  $("live-ov").hidden = false;
+  document.body.style.overflow = "hidden";
+  liveTick();
+}
+function closeLive() {
+  LV.open = false; clearTimeout(LV.timer);
+  $("live-ov").hidden = true;
+  document.body.style.overflow = "";
+}
+$("live-btn").addEventListener("click", openLive);
+$("tmp").addEventListener("click", openLive);
+$("live-close").addEventListener("click", closeLive);
+$("live-ov").addEventListener("click", e => { if (e.target === $("live-ov")) closeLive(); });   // click on the backdrop
+addEventListener("keydown", e => { if (e.key === "Escape" && LV.open) closeLive(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && LV.open) liveTick(); });
+if (/[?&]live\b/.test(location.search)) openLive();                                  // deep link: /?live
 
 // ---------- polling ----------
 // Each panel refreshes on its own timer. A refresh never overlaps the previous one (a slow upstream can't pile up

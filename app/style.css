@@ -396,3 +396,28 @@ body.wall .duo.plex-wide .streams{grid-template-columns:repeat(auto-fill,minmax(
 /* the stream list scrolls inside its box on the wall (mouse wheel / touch) */
 body.wall #s-plex{display:flex;flex-direction:column}
 body.wall #plex{flex:1;min-height:0;overflow-y:auto;align-content:start;overscroll-behavior:contain}
+
+/* live window (🌡 live on the Temperatures panel): reuses the breakdown window's frame (.usage-ov / .usage-box) */
+#s-tmp .temps{cursor:pointer}
+.live-body{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px}
+.lv-top{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.lv-tile{padding:10px 12px 6px;border-radius:14px;background:color-mix(in srgb,var(--bar) 55%,transparent)}
+.lv-tile small{display:block;color:var(--mute);font-size:12px}
+.lv-tile b{display:block;font:600 22px Fredoka,"M PLUS Rounded 1c",sans-serif;font-variant-numeric:tabular-nums}
+.lv-tile .meter{margin:4px 0 4px}
+.lv-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr);gap:12px}
+.lv-card{padding:12px 14px;border-radius:16px;background:color-mix(in srgb,var(--bar) 40%,transparent);min-width:0}
+.lv-card h3{margin:0 0 8px;font:600 14px Fredoka,"M PLUS Rounded 1c",sans-serif}
+.lv-card h3 small{font-weight:400;font-size:12px}
+.lv-spark{display:grid;grid-template-columns:72px minmax(0,1fr) 86px 70px;align-items:center;gap:8px;font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--acc)}
+.lv-spark>span:first-child,.lv-spark b{color:var(--fg)}
+.lv-sv svg{width:100%;height:28px;display:block}
+.lv-drive{margin-top:8px;font-size:12.5px}.lv-drive .meter{margin:3px 0 2px}.lv-drive small{font-variant-numeric:tabular-nums}
+.lv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:4px 22px}
+.lv-grid h4{margin:2px 0 6px;font:600 13px Fredoka,"M PLUS Rounded 1c",sans-serif;color:var(--mute)}
+.lv-thr{display:grid;grid-template-columns:44px 74px minmax(0,1fr) 46px;gap:8px;align-items:center;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.5}
+.lv-thr .meter{margin:0;height:6px}
+.lv-thr>span:last-child{text-align:right}
+.lv-boost{color:var(--acc);font-weight:600}
+.lv-smt{font-size:11px;margin:6px 0 2px}
+@media (max-width:900px){.lv-row{grid-template-columns:1fr}.lv-spark{grid-template-columns:64px minmax(0,1fr) 80px}.lv-spark small{display:none}}

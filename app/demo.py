@@ -165,3 +165,18 @@ def system():
                                                       {"label": "RAM 1", "c": 38, "warn": 70, "crit": 80},
                                                       {"label": "RAM 2", "c": 39, "warn": 70, "crit": 80}]},
             "hw": hw}
+
+
+def live():
+    """Fake /api/live for the demo: an 8-core / 16-thread single-CCD CPU wandering around."""
+    s = system()
+    threads = [{"use": round(wobble(12, 10, 20 + i), 1), "mhz": int(wobble(3900, 600, 7 + i)), "group": 0, "smt": i >= 8}
+               for i in range(16)]
+    disks = [{"dev": "sda", "name": "disk1", "read_bps": wobble(9e7, 6e7, 30), "write_bps": wobble(2e6, 2e6), "busy": wobble(35, 25, 30)},
+             {"dev": "nvme0n1", "name": "system", "read_bps": wobble(4e6, 3e6), "write_bps": wobble(6e6, 5e6), "busy": wobble(4, 3)},
+             {"dev": "sdb", "name": "disk2", "read_bps": 0, "write_bps": 0, "busy": 0}]
+    return {"cpu": s["cpu"], "cpu_model": s["cpu_model"], "threads": threads, "temps": s["temps"],
+            "mem_total": s["mem_total"], "mem_avail": s["mem_avail"], "load": s["load"],
+            "power": {"pkg_w": round(wobble(48, 18, 25), 1), "limit_w": 88.0}, "gpu": s["hw"]["gpu"],
+            "io": {"read_bps": sum(d["read_bps"] for d in disks), "write_bps": sum(d["write_bps"] for d in disks),
+                   "disks": sorted(disks, key=lambda d: -d["busy"])}}

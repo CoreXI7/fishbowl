@@ -274,11 +274,12 @@ def services():
 
 # ---------- host system (container sees host /proc + /sys/class/hwmon; the rest comes from the collector) ----------
 
-_cpu_prev = {}
+_cpu_prev = {}          # previous /proc/stat counters for /api/system
+_live_prev = {}         # ... and a separate set for /api/live, so the two endpoints don't skew each other's deltas
 
 
-def cpu_usage():
-    """Per-CPU busy % since the previous call (first call: since boot)."""
+def cpu_usage(prev=_cpu_prev):
+    """Per-CPU busy % since the previous call with the same prev dict (first call: since boot)."""
     out = {}
     for line in open("/proc/stat"):
         if not line.startswith("cpu"):
@@ -286,8 +287,8 @@ def cpu_usage():
         f = line.split()
         vals = list(map(int, f[1:9]))
         idle, total = vals[3] + vals[4], sum(vals)
-        p_idle, p_total = _cpu_prev.get(f[0], (0, 0))
-        _cpu_prev[f[0]] = (idle, total)
+        p_idle, p_total = prev.get(f[0], (0, 0))
+        prev[f[0]] = (idle, total)
         dt = total - p_total
         out[f[0]] = round(100 * (1 - (idle - p_idle) / dt), 1) if dt > 0 else 0.0
     return out
@@ -447,6 +448,85 @@ def system():
         "mem_total": mem["MemTotal"], "mem_avail": mem["MemAvailable"],
         "swap_total": mem.get("SwapTotal", 0), "swap_free": mem.get("SwapFree", 0),
         "temps": hwmon(), "hw": read_hw(),
+    }
+
+
+# ---------- live panel (/api/live, polled every second while the "live" window is open) ----------
+
+@functools.lru_cache(maxsize=1)
+def cpu_topology():
+    """Per CPU thread: which group it belongs to (CCD / L3 cache cluster on AMD, package elsewhere) and whether it is
+    an SMT sibling (the second thread of a core). Read once from /sys; [] if the folders aren't there."""
+    out, groups = [], {}
+    n = 0
+    while os.path.isdir(f"/sys/devices/system/cpu/cpu{n}"):
+        base = f"/sys/devices/system/cpu/cpu{n}"
+        def rd(path, default=""):
+            try:
+                with open(f"{base}/{path}") as f:
+                    return f.read().strip()
+            except OSError:
+                return default
+        key = rd("cache/index3/id") or rd("topology/physical_package_id", "0")
+        group = groups.setdefault(key, len(groups))
+        siblings = rd("topology/thread_siblings_list", str(n))
+        first = int(siblings.replace("-", ",").split(",")[0]) if siblings else n
+        out.append({"group": group, "smt": first != n})
+        n += 1
+    return out
+
+
+def cpu_mhz():
+    """Current clock of every thread, in /proc/cpuinfo order (= thread number)."""
+    mhz = []
+    for line in open("/proc/cpuinfo"):
+        if line.startswith("cpu MHz"):
+            mhz.append(int(float(line.split(":", 1)[1])))
+    return mhz
+
+
+_io_prev = {"t": None, "stats": {}}
+DISK_RE = re.compile(r"(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+|mmcblk\d+)")   # whole disks, not partitions
+
+
+def disk_io(names):
+    """Read/write MB/s and % busy per physical disk since the previous call. names: {"sdb": "disk1"}."""
+    now, stats = time.monotonic(), {}
+    for line in open("/proc/diskstats"):
+        f = line.split()
+        if len(f) >= 13 and DISK_RE.fullmatch(f[2]):
+            stats[f[2]] = (int(f[5]), int(f[9]), int(f[12]))   # sectors read, sectors written, ms busy
+    prev, dt = _io_prev["stats"], (now - _io_prev["t"]) if _io_prev["t"] else 0
+    _io_prev.update(t=now, stats=stats)
+    disks = []
+    for dev, (r, w, busy) in stats.items():
+        if dev in prev and dt > 0:
+            pr, pw, pb = prev[dev]
+            disks.append({"dev": dev, "name": names.get(dev, dev), "read_bps": (r - pr) * 512 / dt,
+                          "write_bps": (w - pw) * 512 / dt, "busy": min(100.0, (busy - pb) / (dt * 10))})
+    disks.sort(key=lambda d: -d["busy"])
+    return {"read_bps": sum(d["read_bps"] for d in disks), "write_bps": sum(d["write_bps"] for d in disks), "disks": disks}
+
+
+def live():
+    """/api/live: what the terminal `temps`-style live window shows, refreshed every second: every thread's clock and
+    load grouped by CCD, temperatures, memory, disk I/O; package power + GPU come from the root collector."""
+    hw = read_hw() or {}
+    names = {os.path.basename(d["dev"]): d["name"] for d in hw.get("disks") or [] if d.get("dev")}
+    cpus = cpu_usage(_live_prev)
+    topo, mhz = cpu_topology(), cpu_mhz()
+    threads = [{"use": cpus.get(f"cpu{i}", 0.0), "mhz": mhz[i] if i < len(mhz) else None,
+                "group": topo[i]["group"] if i < len(topo) else 0, "smt": topo[i]["smt"] if i < len(topo) else False}
+               for i in range(len(cpus) - 1)]
+    mem = {}
+    for line in open("/proc/meminfo"):
+        k, v = line.split(":", 1)
+        mem[k] = int(v.split()[0]) * 1024
+    return {
+        "cpu": cpus.get("cpu"), "cpu_model": cpu_model(), "threads": threads, "temps": hwmon(),
+        "mem_total": mem["MemTotal"], "mem_avail": mem["MemAvailable"],
+        "load": [float(x) for x in open("/proc/loadavg").read().split()[:3]],
+        "power": hw.get("power"), "gpu": hw.get("gpu"), "io": disk_io(names),
     }
 
 
@@ -694,6 +774,7 @@ API = {
     "/api/requests": (10, requests_pending),
     "/api/plex": (5, plex),
     "/api/system": (2, system),
+    "/api/live": (0.9, live),          # the live window polls every second
 }
 FEATURE = {"/api/qbit": lambda: QBIT, "/api/requests": lambda: SEERR, "/api/plex": lambda: TAUTULLI}
 PAGES = {"/": "index.html", "/settings": "settings.html"}
