@@ -191,6 +191,7 @@ class Usage:
         self.prev, self.prev_total = {}, None
         self.ncpu = os.cpu_count() or 1
         self.container_of = {}            # pid -> (start time, container id or None)
+        self.cgroup_of = {}               # container id -> its cgroup folder under /sys/fs/cgroup
 
     @staticmethod
     def total_jiffies():
@@ -202,10 +203,28 @@ class Usage:
         hit = self.container_of.get(pid)
         if hit and hit[0] == started:
             return hit[1]
-        m = CONTAINER_RE.search(read_text(f"/proc/{pid}/cgroup"))
+        cg = read_text(f"/proc/{pid}/cgroup")
+        m = CONTAINER_RE.search(cg)
         cid = m[1] if m else None
+        if cid and cid not in self.cgroup_of:
+            line = next((l for l in cg.splitlines() if l.startswith("0::")), "")   # cgroup v2: "0::/docker/<id>"
+            self.cgroup_of[cid] = "/sys/fs/cgroup" + line[3:] if line else None
         self.container_of[pid] = (started, cid)
         return cid
+
+    def container_memory(self, cid):
+        """A container's real memory use, the way `docker stats` counts it (memory in use minus reclaimable file
+        cache). Adding up each process's RSS overcounts badly: memory shared between processes (nginx's 30+ workers,
+        gunicorn workers) is counted once per process. None if the cgroup files can't be read (cgroup v1 etc.)."""
+        path = self.cgroup_of.get(cid)
+        if not path:
+            return None
+        try:
+            current = int(read_text(path + "/memory.current"))
+            stat = dict(l.split() for l in read_text(path + "/memory.stat").splitlines())
+            return max(current - int(stat.get("inactive_file", 0)), 0)
+        except (OSError, ValueError):
+            return None
 
     def sample(self):
         total = self.total_jiffies()
@@ -240,6 +259,14 @@ class Usage:
         self.prev, self.prev_total = cur, total
         for pid in self.container_of.keys() - cur.keys():
             del self.container_of[pid]    # forget processes that have exited
+        for key, g in groups.items():     # containers: use the cgroup's real number instead of the RSS sum
+            if g["kind"] == "container":
+                real = self.container_memory(key[2:])
+                if real is not None:
+                    g["mem"] = real
+        live = {key[2:] for key in groups if key.startswith("c:")}
+        for cid in self.cgroup_of.keys() - live:
+            del self.cgroup_of[cid]       # forget removed containers
         if dt <= 0:
             return None                   # first round: no delta yet
         out = []
