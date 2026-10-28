@@ -263,13 +263,15 @@ function serviceTile(s) {
   const fav = CFG.demo ? "" : "/api/icon?host=" + encodeURIComponent(s.name);
   const src = icon ? (/^(\/|https?:|data:)/.test(icon) ? icon : CDN + icon + ".png") : fav;
   const status = s.up ? `online · ${s.ms} ms${s.code ? " · HTTP " + s.code : ""}` : `OFFLINE (${s.err || "HTTP " + s.code})`;
-  const tip = `${s.name}\n${status}${s.auth ? "\nbehind SSO" : ""}`;
+  const tip = `${s.name}\n${status}${s.auth ? "\nbehind SSO" : "\npublic (no SSO)"}`;
   const img = src
     ? `<img src="${esc(src)}" alt="" loading="lazy" data-fav="${icon ? esc(fav) : ""}" data-letter="${letter}" onerror="iconFail(this)">`
     : `<span class="lt">${letter}</span>`;
+  // healthy tiles stay quiet (the group header and the Services KPI say "all up"); only problems get a badge,
+  // marked by shape and text too, not just colour
   return `<a class="app ${s.up ? "" : "down"}" href="${esc(app.url || "https://" + s.name)}" target="_blank" rel="noopener" title="${esc(tip)}">
-    <span class="ic">${img}<span class="st ${s.up ? "up" : "down"}"></span></span>
-    <span class="nm">${esc(label)}</span><span class="lk">${s.auth ? "🔒" : "&nbsp;"}</span></a>`;
+    <span class="ic">${img}${s.up ? "" : `<span class="st down" aria-hidden="true">!</span>`}</span>
+    <span class="nm">${esc(label)}${s.up ? "" : `<small> · down</small>`}</span></a>`;
 }
 
 async function loadServices() {
@@ -283,7 +285,7 @@ async function loadServices() {
     if (other.length) groups.push([CFG.groups.length ? "✨ New / other" : "All services", other]);
     setHTML("svc", groups.filter(([, list]) => list.length).map(([name, list]) => {
       const dn = list.filter(s => !s.up).length;
-      return `<div class="grp"><h3><span>${esc(name)}</span><span class="${dn ? "crit-t" : "ok-t"}">${dn ? dn + " down" : list.length + " ✓"}</span></h3>
+      return `<div class="grp" style="--c:${Math.ceil(list.length / 2)}"><h3><span>${esc(name)}</span><span class="${dn ? "crit-t" : "ok-t"}">${dn ? dn + " down" : list.length + " ✓"}</span></h3>
         <div class="apps">${list.map(serviceTile).join("")}</div></div>`;
     }).join("") || `<div class="empty">No services found. Mount NPM's proxy_host folder or add [[services]] to config.toml.</div>`);
     setText("svc-n", `${d.services.length - down.length}/${d.services.length} up · checked ${new Date(d.checked * 1000).toLocaleTimeString()}`);
