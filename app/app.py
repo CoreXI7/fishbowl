@@ -147,8 +147,10 @@ def check(host):
 
 
 # Hosts the dashboard can't reach directly (e.g. on a network only the proxy shares): check them through the
-# proxy instead, the way visitors reach them. Env CHECK_VIA_PROXY="demo.example.com other.example.com".
-VIA_PROXY = set(os.environ.get("CHECK_VIA_PROXY", "").split())
+# proxy instead, the way visitors reach them. Env CHECK_VIA_PROXY="demo.example.com other.example.com/health".
+# An optional path is checked instead of / (useful when / sits behind a login the proxy enforces).
+VIA_PROXY = dict((e.split("/", 1)[0], "/" + e.split("/", 1)[1] if "/" in e else "/")
+                 for e in os.environ.get("CHECK_VIA_PROXY", "").split())
 
 
 class _SNIConnection(http.client.HTTPSConnection):
@@ -166,7 +168,7 @@ def check_via_proxy(host, timeout):
     t0 = time.monotonic()
     conn = _SNIConnection(TRUSTED_PROXY or "nginx", host["name"], port=443, timeout=timeout, context=INSECURE)
     try:
-        conn.request("GET", "/", headers={"Host": host["name"], "User-Agent": UA})
+        conn.request("GET", VIA_PROXY[host["name"]], headers={"Host": host["name"], "User-Agent": UA})
         code = conn.getresponse().status
     except Exception as e:
         return {"name": host["name"], "auth": host["auth"], "up": False, "code": None, "ms": None, "err": type(e).__name__}
