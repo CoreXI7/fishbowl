@@ -278,6 +278,12 @@ body.wall .grp h3{margin-bottom:6px}
 body.wall .grp .apps{grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:4px}
 body.wall .grp .app{padding:6px 2px}
 body.wall .grp .app .ic,body.wall .grp .app .ic img,body.wall .grp .app .ic .lt{width:38px;height:38px}
+/* wall: the middle column is a stack. Services keeps its full height (sections clip, so the old grid squeezed the icons
+   on short screens); Plex + requests shrink and clip at the bottom; torrents only get what's left */
+body.wall .layout>main{display:flex;flex-direction:column}
+body.wall .layout>main>*{flex:none}
+body.wall .layout>main>.duo{flex:0 1 auto;min-height:0}
+body.wall .layout>main>#s-tor{flex:1 1 0;height:auto;min-height:0}
 body.wall .temps{gap:10px}
 body.wall .tc{padding:6px 10px}
 body.wall .kv{padding:4px 0}
