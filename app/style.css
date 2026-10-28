@@ -348,6 +348,8 @@ textarea{min-height:84px;resize:vertical;font-family:inherit}
 .h2r{display:flex;align-items:center;gap:8px}
 button.mini{padding:2px 9px;font-size:11.5px;border-radius:999px;line-height:1.6;cursor:pointer}
 button.mini:hover{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 18%,var(--card))}
+/* thermometer on the 🌡 live button: drawn in SVG so the bulb is red on every OS (the emoji renders grey on some) */
+button.mini .therm{width:.75em;height:1.2em;vertical-align:-.25em}
 .usage-ov{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:18px;
   background:color-mix(in srgb,var(--bg) 55%,rgba(0,0,0,.45));backdrop-filter:blur(6px);animation:uo .25s ease}
 @keyframes uo{from{opacity:0}}
