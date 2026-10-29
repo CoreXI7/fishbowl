@@ -461,3 +461,70 @@ body.wall #plex{flex:1;min-height:0;overflow-y:auto;align-content:start;overscro
 @media (max-width:1100px){.lv-top{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:900px){.lv-row{grid-template-columns:1fr}.lv-row .lv-card{height:auto;min-height:200px}}
 @media (max-width:600px){.lv-top{grid-template-columns:repeat(2,minmax(0,1fr))}.lv-live{display:none}}
+
+/* Security & backups details: the breakdown window's frame with a tab per box. Tables turn into cards on a phone
+   (each cell shows its column name). The box titles on the card are links that open it. */
+.box h3 .sd-open{color:inherit;text-decoration:none;cursor:pointer}
+.box h3 .sd-open i{font-style:normal;color:var(--mute);margin-left:4px;display:inline-block;transition:transform .15s}
+.box h3 .sd-open:hover,.box h3 .sd-open:focus-visible{color:var(--acc)}
+.box h3 .sd-open:hover i,.box h3 .sd-open:focus-visible i{transform:translateX(2px);color:var(--acc)}
+#sec-ov .usage-box{width:min(1120px,100%)}
+#sec-ov #sd-when{margin-left:auto}
+.sd-tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding:2px 1px 4px;flex:none}
+.sd-tabs::-webkit-scrollbar{display:none}
+.sd-tabs button{white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.sd-tabs .dot{width:8px;height:8px}
+/* rows sized to their content: in a fixed-height grid, auto rows would shrink sections below their content */
+.sd-body{flex:1;min-height:0;overflow:auto;display:grid;grid-auto-rows:max-content;gap:12px;align-content:start;padding-right:4px;overscroll-behavior:contain}
+.sd-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));align-items:start}
+.sd-sec{padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:color-mix(in srgb,var(--card) 70%,transparent);min-width:0}
+.sd-sec.sd-bad{border-color:color-mix(in srgb,var(--down) 55%,var(--line))}
+.sd-sec h3{margin:0 0 8px;font:600 15px Fredoka,sans-serif;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;overflow-wrap:anywhere}
+.sd-sec h3 small{font:400 12px "M PLUS Rounded 1c",system-ui,sans-serif;color:var(--mute)}
+.sd-sec .kv{font-size:13px;gap:12px}.sd-sec .kv span:last-child{text-align:right;overflow-wrap:anywhere}
+.sd-sec .meter{margin:6px 0 2px}
+.sd-tw{overflow-x:auto}
+.sd-t{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.sd-t th{text-align:left;font-weight:600;color:var(--mute);font-size:11.5px;padding:4px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.sd-t td{padding:5px 8px;border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent);vertical-align:top;overflow-wrap:anywhere}
+.sd-t tr:last-child td{border-bottom:0}
+.sd-t tr.bad td{background:color-mix(in srgb,var(--down) 10%,transparent)}
+.sd-t tr.bad td:first-child{box-shadow:inset 3px 0 var(--down)}
+.sd-t tr.warn td:first-child{box-shadow:inset 3px 0 var(--warn)}
+.sd-t tr.dim td{color:var(--mute)}
+.sd-t .chip{white-space:nowrap}
+.sd-alert{padding:9px 12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--down) 50%,transparent);
+  background:color-mix(in srgb,var(--down) 10%,transparent);color:var(--down);font-weight:600;font-size:13.5px}
+.sd-alert .mono{font-weight:400;margin-top:4px;overflow-wrap:anywhere}
+.sd-note{font-size:12px;color:var(--mute);margin:8px 0 4px}
+.sd-empty{padding:6px 2px;font-size:13px}
+.sd-list{margin:2px 0 4px;padding-left:18px;font-size:12.5px}
+.sd-ips,.sd-items{margin:4px 0}.sd-items{display:flex;flex-wrap:wrap;gap:5px}
+.sd-more summary{cursor:pointer;font-size:12.5px;color:var(--mute);margin:6px 0}
+.sd-pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;margin:4px 0}
+.sd-removed{color:var(--mute);overflow-wrap:anywhere}
+#sec-ov.lv-stale .sd-body{opacity:.65}
+#sd-status .chip{white-space:normal}
+body.wall #sec-ov details{display:block}                 /* wall mode hides details on the dashboard, not in this window */
+body.wall .sd-open i{display:none}                       /* the wall's card stays exactly as it was */
+@media (max-width:640px){
+  #sec-ov .usage-box{height:100%;border-radius:16px;gap:10px}
+  /* title + ✕ on the first line; status, "checked …" and refresh on the second (the live window hides .lv-live here) */
+  #sec-ov .usage-head{gap:8px 10px}
+  #sec-ov .usage-head h2{font-size:17px;flex:1 1 0;min-width:0}
+  #sec-ov #sec-close{order:1}
+  #sec-ov #sd-status{order:2;flex:1 1 100%}
+  #sec-ov #sd-when{order:3;display:inline-flex;margin-left:0}
+  #sec-ov #sd-refresh{order:4;margin-left:auto}
+  .sd-sec{padding:10px 11px}
+  .sd-t thead{display:none}
+  .sd-t,.sd-t tbody,.sd-t tr{display:block;width:100%}
+  .sd-t tr{padding:6px 0;border-bottom:1px solid var(--line)}
+  .sd-t tr:last-child{border-bottom:0}
+  .sd-t td{display:flex;justify-content:flex-end;flex-wrap:wrap;align-items:baseline;gap:4px 8px;border:0;padding:2px 4px;text-align:right}
+  .sd-t td::before{content:attr(data-l);color:var(--mute);font-size:11.5px;flex:none;text-align:left;margin-right:auto}
+  .sd-t td:empty{display:none}
+  .sd-t tr.bad td:first-child,.sd-t tr.warn td:first-child{box-shadow:none}
+  .sd-t tr.bad{box-shadow:inset 3px 0 var(--down);background:color-mix(in srgb,var(--down) 8%,transparent)}
+  .sd-t tr.bad td{background:none}
+}

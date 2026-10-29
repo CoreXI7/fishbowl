@@ -46,6 +46,9 @@ Needs the (optional) root collector; see Install.
 - **Drives**: usage + SMART health/temps for every disk, without waking sleeping drives.
 - **Security & backups**: fail2ban, SSH logins from unknown IPs, Authelia failures, crypto-miner watch,
   crontab change detection with a one-click "Looks good" approval, `chattr +i` lock checks, backup freshness.
+  Click a box's title for its **details** (read-only): firewall rules and bans, who logged in over SSH (with the key
+  they used), Authelia sign-ins and lockouts, every cron line marked approved or not, each backup job's last run,
+  size and free space. Deep link: `https://your-dash/?security=ssh`.
 - **Wall mode**: `https://your-dash/?wall` fits a 1920×1080 screen with no scrolling and hides the cursor.
   Click the Plex tile there to expand or collapse Now Playing; the stream list scrolls inside its own box.
 - Light/dark automatic, floating bubbles, optional mascot. Every panel is optional and hides itself if not configured.

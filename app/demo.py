@@ -167,6 +167,85 @@ def system():
             "hw": hw}
 
 
+def security_detail():
+    """What the Security & backups detail views show (the real one comes from the collector's sec-detail.json)."""
+    now = int(time.time())
+    iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
+    day = lambda h, m=0: now - now % 86400 + h * 3600 + m * 60 - (86400 if now % 86400 < 3 * 3600 else 0)
+    run = day(3)
+    bans = ["198.51.100.23", "198.51.100.77", "192.0.2.199"]
+    return {
+        "updated": now - 20, "stale": False,
+        "firewall": {"name": "UFW", "status": "active", "logging": "on (low)", "checked": now - 20,
+                     "default": "deny (incoming), allow (outgoing), deny (routed)",
+                     "rules": [{"to": "443/tcp", "action": "ALLOW IN", "from": "Anywhere", "note": "web"},
+                               {"to": "22/tcp", "action": "ALLOW IN", "from": "Anywhere", "note": "ssh"},
+                               {"to": "Anywhere", "action": "ALLOW IN", "from": "192.168.1.0/24", "note": "LAN"},
+                               {"to": "Anywhere", "action": "DENY IN", "from": "203.0.113.66", "note": "blocked"},
+                               {"to": "443/tcp (v6)", "action": "ALLOW IN", "from": "Anywhere (v6)", "note": ""}]},
+        "fail2ban": {"checked": now - 20,
+                     "jails": [{"jail": "sshd", "failed_now": 2, "failed_total": 230, "banned_now": 3, "banned_total": 57, "ips": bans}],
+                     "events": [{"time": now - 1800 * (i + 1), "jail": "sshd", "action": "Ban" if i % 3 else "Unban", "ip": bans[i % 3]}
+                                for i in range(8)],
+                     "found_7d": [{"ip": "198.51.100.23", "jail": "sshd", "count": 41, "last": now - 1900},
+                                  {"ip": "192.0.2.199", "jail": "sshd", "count": 12, "last": now - 7200}]},
+        "ssh": {"checked": now - 20, "attempts_24h": 212, "attempts_7d": 1350, "probes_7d": 96, "failed_ip_count": 3, "login_count": 41,
+                "sources": [{"user": "admin", "ip": "192.168.1.20", "key": "admin@laptop", "method": "publickey", "count": 38,
+                             "first": now - 6 * 86400, "last": now - 5400, "known": True},
+                            {"user": "admin", "ip": "203.0.113.45", "key": "admin-phone", "method": "publickey", "count": 3,
+                             "first": now - 260000, "last": now - 250000, "known": False}],
+                "logins": [{"time": now - 5400, "raw": iso(now - 5400), "user": "admin", "ip": "192.168.1.20", "method": "publickey", "key": "admin@laptop", "known": True},
+                           {"time": now - 90000, "raw": iso(now - 90000), "user": "admin", "ip": "192.168.1.20", "method": "publickey", "key": "admin@laptop", "known": True},
+                           {"time": now - 250000, "raw": iso(now - 250000), "user": "admin", "ip": "203.0.113.45", "method": "publickey", "key": "admin-phone",
+                            "known": False, "acked": True}],
+                "failed_ips": [{"ip": "198.51.100.23", "attempts": 820, "attempts_24h": 130, "probes": 12, "users": ["root", "admin", "ubuntu"],
+                                "first": now - 6 * 86400, "last": now - 1900, "known": False},
+                               {"ip": "198.51.100.77", "attempts": 410, "attempts_24h": 70, "probes": 4, "users": ["root", "test"],
+                                "first": now - 4 * 86400, "last": now - 600, "known": False},
+                               {"ip": "192.0.2.199", "attempts": 120, "attempts_24h": 12, "probes": 80, "users": ["oracle"],
+                                "first": now - 2 * 86400, "last": now - 7200, "known": False}]},
+        "authelia": {"checked": now - 20, "ok_24h": 3, "fail_24h": 1, "ok_7d": 19, "fail_7d": 2,
+                     "events": [{"time": now - 3600, "ok": True, "banned": False, "user": "admin", "factor": "2FA", "ip": "192.168.1.20",
+                                 "site": "dash.example.com", "known": True},
+                                {"time": now - 3700, "ok": True, "banned": False, "user": "admin", "factor": "1FA", "ip": "192.168.1.20",
+                                 "site": "dash.example.com", "known": True},
+                                {"time": now - 40000, "ok": False, "banned": False, "user": "admin", "factor": "1FA", "ip": "203.0.113.9",
+                                 "site": "auth.example.com", "known": False}],
+                     "fail_by_user": [{"key": "admin", "count": 2, "last": now - 40000}],
+                     "fail_by_ip": [{"key": "203.0.113.9", "count": 2, "last": now - 40000, "known": False}], "bans": []},
+        "procs": {"checked": now - 20, "names": ["xmrig", "minerd", "kinsing"], "found": [],
+                  "top": [{"pid": 1234, "user": "plex", "cpu": 21.0, "mem": 2.1, "name": "Plex Transcoder"},
+                          {"pid": 999, "user": "abc", "cpu": 4.0, "mem": 1.2, "name": "qbittorrent-nox"},
+                          {"pid": 77, "user": "root", "cpu": 1.0, "mem": 0.4, "name": "dockerd"}],
+                  "watcher": {"label": "miner-watch.sh (every 5 min)", "last_run": now - 140, "every_minutes": 5, "late": False,
+                              "checks": ["known miner names (killed on sight)", "programs running from /tmp or from memory",
+                                         "connections to mining-pool ports", "one process above 90% CPU for 15 minutes"],
+                              "alerts": [], "alert_count": 0}},
+        "cron": {"checked": now - 20, "approved_at": now - 3 * 86400, "unapproved": 0, "removed": 0,
+                 "files": [{"file": "/etc/crontab", "user": "", "new_file": False, "deleted": False, "removed": [],
+                            "entries": [{"when": "17 * * * *", "user": "root", "cmd": "cd / && run-parts --report /etc/cron.hourly", "setting": False, "approved": True},
+                                        {"when": "0 3 * * *", "user": "root", "cmd": "/usr/local/bin/backup.sh >> /var/log/backup.log 2>&1", "setting": False, "approved": True}]},
+                           {"file": "/var/spool/cron/crontabs/admin", "user": "admin", "new_file": False, "deleted": False, "removed": [],
+                            "entries": [{"when": "*/30 * * * *", "user": "admin", "cmd": "/home/admin/bin/sync-notes.sh", "setting": False, "approved": True}]}],
+                 "folders": [{"folder": "/etc/cron.daily", "scripts": [{"name": "apt-compat", "mtime": now - 90 * 86400},
+                                                                      {"name": "logrotate", "mtime": now - 90 * 86400}]}],
+                 "timers": [{"unit": "logrotate.timer", "runs": "logrotate.service", "next": now + 7200, "last": now - 79200},
+                            {"unit": "apt-daily.timer", "runs": "apt-daily.service", "next": now + 20000, "last": now - 60000}]},
+        "locks": {"checked": now - 20, "files": [{"path": "/srv/app/config.ini", "exists": True, "locked": True, "attrs": "----i---------e-------",
+                                                  "mtime": now - 40 * 86400, "symlink": False}]},
+        "backups": {"checked": now - 20, "max_age_hours": 26,
+                    "run": {"start": run, "end": run + 892, "errors": [], "warnings": [], "warning_count": 0},
+                    "jobs": [{"label": "Nightly snapshot", "every": "nightly", "remote": "", "last_ok": run + 840, "stale": False, "max_age_hours": 26,
+                              "items": [{"time": run + 840, "took": 812}],
+                              "dest": {"path": "/mnt/backup", "free": 2.1e12, "total": 4e12, "size": {"bytes": 3.2e11, "at": run + 1500, "secs": 64}}},
+                             {"label": "DB dumps", "every": "nightly, 7 kept", "remote": "", "last_ok": run + 30, "stale": False, "max_age_hours": 26,
+                              "items": [{"time": run + 20, "took": 4, "name": "app-db", "size": "4.1M"}],
+                              "files": {"count": 7, "newest": run + 30, "oldest": run - 6 * 86400, "bytes": 2.9e7, "list": []}},
+                             {"label": "Offsite copy", "every": "nightly", "remote": "on another machine", "last_ok": run + 2300, "stale": False,
+                              "max_age_hours": 26, "items": [{"time": run + 2300, "took": None, "name": "remote", "size": "1.2 GiB", "took_text": "6:12"}]}]},
+    }
+
+
 def live():
     """Fake /api/live for the demo: an 8-core / 16-thread single-CCD CPU wandering around."""
     s = system()

@@ -60,7 +60,7 @@ def apply_settings():
     with _lock:
         _cache.clear()
     _icons.clear()
-    _npm["sig"] = _hw["key"] = None                     # skip list / known IPs may have changed: re-read both
+    _npm["sig"] = _hw["key"] = _sd["key"] = None       # skip list / known IPs may have changed: re-read them
 
 
 _proxy_ip = {"ip": None, "at": 0}
@@ -393,6 +393,8 @@ def _mtime(path):
 
 
 _hw = {"key": None, "data": None}   # last parsed hw.json + the (hw.json, acks.json) mtimes it came from
+SEC_DETAIL_FILE = os.environ.get("SEC_DETAIL_FILE", os.path.join(os.path.dirname(HW_FILE), "sec-detail.json"))
+_sd = {"key": None, "data": None}   # the same for sec-detail.json (+ hw.json: which logins the card shows)
 
 
 def read_hw():
@@ -416,6 +418,35 @@ def read_hw():
     hw = _hw["data"]
     hw["stale"] = time.time() - hw.get("updated", 0) > 60   # collector stopped writing
     return hw
+
+
+
+
+def security_detail():
+    """/api/security/detail: what the Security & backups detail views show, from the collector's sec-detail.json
+    (rewritten every minute). Read-only on purpose: no parameters, no actions. IPs are marked known (on your list)
+    and SSH logins acked (you clicked "looks fine"), like on the card. Re-parsed only when either file changed."""
+    key = (_mtime(SEC_DETAIL_FILE), _mtime(ACKS_FILE), _mtime(HW_FILE))
+    if key[0] is None:
+        return {"missing": True}
+    if key != _sd["key"]:
+        try:
+            with open(SEC_DETAIL_FILE) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            return {"missing": True, "error": "the collector's sec-detail.json can't be read"}
+        acks = load_acks()
+        # on_card = the card lists this login too, so its "Looks fine" button can clear it (the card shows the newest few)
+        card = {login_key(l) for l in (((read_hw() or {}).get("security") or {}).get("ssh") or {}).get("logins", [])}
+        ssh = d.get("ssh") or {}
+        for item in ssh.get("logins", []):
+            k = login_key({"time": item.get("raw"), "user": item.get("user"), "ip": item.get("ip")})
+            item.update(known=is_known(item.get("ip", "")), acked=k in acks, on_card=k in card)
+        auth = d.get("authelia") or {}
+        for item in ssh.get("failed_ips", []) + ssh.get("sources", []) + auth.get("events", []) + (auth.get("fail_by_ip") or []):
+            item["known"] = is_known(item.get("ip") or item.get("key") or "")
+        _sd.update(key=key, data=d)
+    return {**_sd["data"], "stale": time.time() - _sd["data"].get("updated", 0) > 180}
 
 
 def ack_logins():
@@ -779,6 +810,7 @@ API = {
     "/api/plex": (5, plex),
     "/api/system": (2, system),
     "/api/live": (0.9, live),          # the live window polls every second
+    "/api/security/detail": (0, security_detail),   # the Security & backups detail views (cached by file change)
 }
 FEATURE = {"/api/qbit": lambda: QBIT, "/api/requests": lambda: SEERR, "/api/plex": lambda: TAUTULLI}
 PAGES = {"/": "index.html", "/settings": "settings.html"}
