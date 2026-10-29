@@ -119,6 +119,8 @@ const iconSrc = (host) => {
   return icon ? (icon.startsWith("/") ? icon : CDN + icon + ".png") : (V.demo ? "" : "/api/icon?host=" + encodeURIComponent(host));
 };
 function iconFail(img) { const d = document.createElement("span"); d.className = "lt"; d.textContent = img.dataset.letter || "?"; img.replaceWith(d); }
+// broken icons fall back to their letter: one capturing listener, no inline onerror (the CSP allows no inline script)
+document.addEventListener("error", e => { if (e.target.tagName === "IMG" && "letter" in e.target.dataset) iconFail(e.target); }, true);
 const app = host => S.apps[host] = S.apps[host] || {};
 function cleanApp(host) { const a = S.apps[host]; if (a && !a.label && !a.icon && !a.url) delete S.apps[host]; }
 
@@ -128,7 +130,7 @@ function srow(host, gi, idx, len) {
                 gi >= 0 ? `<option value="-1">(no group)</option>` : ""].join("");
   const src = iconSrc(host), letter = esc(((a.label || host)[0] || "?").toUpperCase());
   return `<div class="srow" data-host="${esc(host)}">
-    ${src ? `<img src="${esc(src)}" alt="" data-letter="${letter}" onerror="iconFail(this)">` : `<span class="lt">${letter}</span>`}
+    ${src ? `<img src="${esc(src)}" alt="" data-letter="${letter}">` : `<span class="lt">${letter}</span>`}
     <div class="host" title="${esc(host)}">${esc(host)}${found ? "" : "<small>not found any more</small>"}</div>
     <input type="text" placeholder="${esc(host.split(".")[0])}" value="${esc(a.label || "")}" data-f="label" aria-label="label">
     <input type="text" placeholder="icon (auto)" value="${esc(a.icon || "")}" data-f="icon" aria-label="icon">
@@ -179,7 +181,7 @@ function onServicesEvent(e) {
     app(host)[t.dataset.f] = t.value.trim(); cleanApp(host); setDirty();
     if (t.dataset.f === "icon") {   // preview the new icon right away
       const img = row.querySelector("img,.lt"), src = iconSrc(host);
-      if (img && src) img.outerHTML = `<img src="${esc(src)}" alt="" data-letter="?" onerror="iconFail(this)">`;
+      if (img && src) img.outerHTML = `<img src="${esc(src)}" alt="" data-letter="?">`;
     }
     return;
   }
@@ -249,6 +251,7 @@ function renderInteg() {
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center"><button class="ibtn" data-test="${it.k}">Test</button><span class="res" data-res="${it.k}"></span></div>
     </div>`; }).join("");
 }
+$("integ").addEventListener("submit", e => e.preventDefault());   // Enter in a field must not reload the page
 $("integ").addEventListener("input", e => {
   if (e.target.dataset.secret) { SEC[e.target.dataset.secret] = e.target.value; setDirty(); }
   if (e.target.dataset.clear) { SEC[e.target.dataset.clear + "_clear"] = e.target.checked; setDirty(); }

@@ -144,6 +144,9 @@ addEventListener("keydown", e => { if (e.key.toLowerCase() === "t" && noTyping(e
 
 // ---------- services (one tile per NPM proxy host, grouped as configured) ----------
 // Icon fallback chain: configured icon -> the service's own favicon (via /api/icon) -> first letter.
+// One capturing listener for every icon (error events don't bubble), instead of an inline onerror on each <img>:
+// the Content-Security-Policy allows no inline script at all.
+document.addEventListener("error", e => { if (e.target.tagName === "IMG" && "letter" in e.target.dataset) iconFail(e.target); }, true);
 function iconFail(img) {
   const step = +(img.dataset.step || 0);
   img.dataset.step = step + 1;
@@ -162,7 +165,7 @@ function serviceTile(s) {
   const status = s.up ? `online · ${s.ms} ms${s.code ? " · HTTP " + s.code : ""}` : `OFFLINE (${s.err || "HTTP " + s.code})`;
   const tip = `${s.name}\n${status}${s.auth ? "\nbehind SSO" : "\npublic (no SSO)"}`;
   const img = src
-    ? `<img src="${esc(src)}" alt="" loading="lazy" data-fav="${icon ? esc(fav) : ""}" data-letter="${letter}" onerror="iconFail(this)">`
+    ? `<img src="${esc(src)}" alt="" loading="lazy" data-fav="${icon ? esc(fav) : ""}" data-letter="${letter}">`
     : `<span class="lt">${letter}</span>`;
   // healthy tiles stay quiet (the group header and the Services KPI say "all up"); only problems get a badge,
   // marked by shape and text too, not just colour
@@ -202,6 +205,8 @@ const TOR_STATE = {downloading: "downloading", stalledDL: "stalled", metaDL: "fe
 function torTab(which) {
   ["dl", "seed"].forEach(w => { $(w).hidden = w !== which; $("t-" + w).classList.toggle("on", w === which); });
 }
+$("t-dl").addEventListener("click", () => torTab("dl"));
+$("t-seed").addEventListener("click", () => torTab("seed"));
 
 function torRow(t, dl) {
   const pct = (+t.progress * 100 || 0).toFixed(1);
@@ -453,6 +458,12 @@ async function ackLogins(btn) {
   catch (e) { btn.disabled = false; btn.textContent = "failed: " + e.message; }
 }
 
+$("sec").addEventListener("click", e => {          // the card's buttons (no inline onclick: see the CSP)
+  const b = e.target.closest("button[data-sec]");
+  if (b && b.dataset.sec === "ack") ackLogins(b);
+  else if (b && b.dataset.sec === "cron") approveCron(b.dataset.hash, b);
+});
+
 async function approveCron(hash, btn) {
   btn.disabled = true;
   btn.textContent = "approving…";
@@ -501,7 +512,7 @@ function renderSecurity(hw) {
     };
     boxes.push(`<div class="box"><h3>${sdLink("ssh", "SSH logins")} <span>${unknownLogins.length ? `<span class="crit-t">${unknownLogins.length} unknown</span>` : '<span class="ok-t">all known ✓</span>'}</span></h3>
       ${s.ssh.logins.slice(0, 5).map(login).join("") || '<div class="row"><span>none in 7 days</span></div>'}
-      ${unknownLogins.length ? `<div class="row" style="margin-top:6px"><span>That was you?</span><button class="ok" onclick="ackLogins(this)" title="Clears this alert. A new login from somewhere unfamiliar will flag again.">Looks fine ✓</button></div>` : ""}</div>`);
+      ${unknownLogins.length ? `<div class="row" style="margin-top:6px"><span>That was you?</span><button class="ok" data-sec="ack" title="Clears this alert. A new login from somewhere unfamiliar will flag again.">Looks fine ✓</button></div>` : ""}</div>`);
   }
   if (s.authelia) {
     const fail = f => `<div class="row"><span>${esc(shortTime(f.time))} · ${esc(f.factor)} ${esc(f.user || "?")}</span><span class="mono ${known(f) ? "" : "unk"}">${esc(f.ip)}</span></div>`;
@@ -519,7 +530,7 @@ function renderSecurity(hw) {
       ${c.removed.map(l => `<div class="mono" style="color:var(--mute);word-break:break-all">− ${esc(l)}</div>`).join("")}`;
     const body = cronBad
       ? s.cron.changes.map(change).join("")
-        + `<div class="row" style="margin-top:8px"><span>If you made this change:</span><button class="ok" onclick="approveCron('${esc(s.cron.hash)}', this)">Looks good ✓</button></div>
+        + `<div class="row" style="margin-top:8px"><span>If you made this change:</span><button class="ok" data-sec="cron" data-hash="${esc(s.cron.hash)}">Looks good ✓</button></div>
            <div class="mute" style="font-size:11px">Didn't make it? Don't approve. Check it (possible malware persistence).</div>`
       : row(`${s.cron.files ?? "–"} cron files watched`, s.cron.approved_at ? "approved " + ago2(s.cron.approved_at) : "");
     boxes.push(`<div class="box"><h3>${sdLink("cron", "Cron jobs")} <span>${ok(!cronBad, "as approved", "CHANGED")}</span></h3>${body}</div>`);
