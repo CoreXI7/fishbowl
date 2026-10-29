@@ -946,6 +946,7 @@ API = {
 }
 FEATURE = {"/api/qbit": lambda: QBIT, "/api/requests": lambda: SEERR, "/api/plex": lambda: TAUTULLI}
 PAGES = {"/": "index.html", "/settings": "settings.html"}
+SCRIPTS = {f[:-3] for f in os.listdir(os.path.join(HERE, "js")) if f.endswith(".js")}   # app/js/*.js, read at start
 apply_settings()
 
 
@@ -1082,8 +1083,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, page, "text/html; charset=utf-8")
         elif p in ("/style.css", "/themes.css", "/fonts.css"):
             self.send(200, open(os.path.join(HERE, p[1:]), "rb").read(), "text/css; charset=utf-8", "no-cache")
-        elif p in ("/js/index.js", "/js/settings.js", "/js/theme-boot.js"):
-            self.send(200, open(os.path.join(HERE, p[1:]), "rb").read(), "text/javascript; charset=utf-8", "no-cache")
+        elif (m := re.fullmatch(r"/js/([a-z-]+)\.js", p)) and m[1] in SCRIPTS:
+            self.send(200, open(os.path.join(HERE, "js", m[1] + ".js"), "rb").read(), "text/javascript; charset=utf-8", "no-cache")
         elif p in API:
             ttl, fn = API[p]
             if p in FEATURE and not FEATURE[p]()["on"]:
