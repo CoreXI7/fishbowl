@@ -602,6 +602,18 @@ def num(v, default=0):
     return default
 
 
+MB = 1 << 20
+QBIT_MAX, API_MAX = 32 * MB, 8 * MB   # biggest answer read from qBittorrent (~15,000 torrents) / Seerr and Tautulli
+
+
+def read_capped(r, limit):
+    """A response body, but at most limit bytes: a hostile upstream could send gigabytes (the container has 256 MB)."""
+    data = r.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"answer bigger than {limit // MB} MB")
+    return data
+
+
 def text(v, limit=300):
     """A string from an upstream JSON field, clipped; anything else (lists, objects, numbers) becomes ""."""
     return v[:limit] if isinstance(v, str) else ""
@@ -620,14 +632,15 @@ class Qbit:
         user, pw = QBIT["secrets"]
         data = urllib.parse.urlencode({"username": user, "password": pw}).encode()
         req = urllib.request.Request(QBIT["url"] + "/api/v2/auth/login", data=data, headers={"Referer": QBIT["url"]})
-        self.op.open(req, timeout=10).read()
+        with self.op.open(req, timeout=10) as r:
+            read_capped(r, 64 * 1024)
 
     def get(self, path):
         with self.lock:
             for attempt in (1, 2):
                 try:
                     with self.op.open(QBIT["url"] + path, timeout=10) as r:
-                        return json.load(r)
+                        return json.loads(read_capped(r, QBIT_MAX))
                 except urllib.error.HTTPError as e:
                     if e.code == 403 and attempt == 1:
                         self.login()
@@ -670,7 +683,7 @@ def qbit():
 def tautulli(cmd, **params):
     q = urllib.parse.urlencode({"apikey": TAUTULLI["secrets"][0], "cmd": cmd, **params})
     with urllib.request.urlopen(f"{TAUTULLI['url']}/api/v2?{q}", timeout=10) as r:
-        return json.load(r)["response"]["data"]
+        return json.loads(read_capped(r, API_MAX))["response"]["data"]
 
 
 PLEX_TEXT = ("session_key", "friendly_name", "full_title", "title", "grandparent_title", "year", "media_type", "state",
@@ -712,7 +725,7 @@ def seerr(path, method="GET"):
     req = urllib.request.Request(SEERR["url"] + "/api/v1" + path, method=method,
                                  headers={"X-Api-Key": SEERR["secrets"][0], "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as r:
-        body = r.read()
+        body = read_capped(r, API_MAX)
         return json.loads(body) if body else {}
 
 
