@@ -104,6 +104,39 @@ INSECURE.verify_mode = ssl.CERT_NONE
 UA = "homelab-dash"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: the 3xx comes back as an HTTPError. A service could otherwise send the dash to an
+    internal address (and the integrations' API keys with it)."""
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+NOFOLLOW = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=INSECURE))   # LAN upstreams
+STRICT = urllib.request.build_opener(_NoRedirect)                                                    # integrations
+
+
+def fetch_same_host(url, base, name, limit, timeout=5):
+    """(content type, body) of a GET, following at most 3 redirects and only while they stay on base's scheme and
+    host:port. None if it fails or leaves that host."""
+    origin = urllib.parse.urlparse(base)[:2]
+    for _ in range(4):
+        if urllib.parse.urlparse(url)[:2] != origin:
+            return None
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Host": name})
+        try:
+            with NOFOLLOW.open(req, timeout=timeout) as r:
+                return r.headers.get("Content-Type", ""), r.read(limit)
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location") if 300 <= e.code < 400 else None
+            e.close()
+            if not loc:
+                return None
+            url = urllib.parse.urljoin(url, loc)
+        except Exception:
+            return None
+    return None
+
+
 # ---------- services (from NPM + config) ----------
 
 def parse_npm_conf(path):
@@ -187,13 +220,14 @@ def check_via_proxy(host, timeout):
 
 
 def check_once(host, timeout=5):
-    """One GET / straight to the service's upstream (what NPM forwards to), timed."""
+    """One GET / straight to the service's upstream (what NPM forwards to), timed. A redirect counts as an answer
+    (it isn't followed: wherever it points, the service itself is up)."""
     if host["name"] in VIA_PROXY:
         return check_via_proxy(host, timeout)
     t0 = time.monotonic()
     req = urllib.request.Request(host["upstream"] + "/", method="GET", headers={"User-Agent": UA, "Host": host["name"]})
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=INSECURE) as r:
+        with NOFOLLOW.open(req, timeout=timeout) as r:
             code = r.status
     except urllib.error.HTTPError as e:
         code = e.code                     # 401/403/404 still means the app answered
@@ -244,32 +278,22 @@ def favicon(name):
         return None
     base = host["upstream"]
     cands = []
-    try:
-        req = urllib.request.Request(base + "/", headers={"User-Agent": UA, "Host": name})
-        with urllib.request.urlopen(req, timeout=5, context=INSECURE) as r:
-            html = r.read(200_000).decode("utf-8", "replace")
+    page = fetch_same_host(base + "/", base, name, 200_000)      # every fetch stays on the service's own upstream
+    if page:
+        html = page[1].decode("utf-8", "replace")
         for tag in re.findall(r"<link\b[^>]*>", html, re.I):
             if re.search(r'rel=["\'][^"\']*icon', tag, re.I):
                 href = re.search(r'href=["\']([^"\']+)', tag, re.I)
                 if href and not href.group(1).startswith("data:"):
                     cands.append(urllib.parse.urljoin(base + "/", href.group(1)))
-    except Exception:
-        pass
     cands.append(base + "/favicon.ico")
     result = None
     for url in cands:
-        if urllib.parse.urlparse(url).netloc != urllib.parse.urlparse(base).netloc:
-            continue                      # stay on the service's own upstream
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA, "Host": name})
-            with urllib.request.urlopen(req, timeout=5, context=INSECURE) as r:
-                ctype = r.headers.get("Content-Type", "").split(";")[0]
-                data = r.read(512_000)
-            if ctype.startswith("image/") and ctype != "image/svg+xml" and data:
-                result = (data, ctype)
-                break
-        except Exception:
-            continue
+        got = fetch_same_host(url, base, name, 512_000)
+        ctype = got[0].split(";")[0] if got else ""
+        if ctype.startswith("image/") and ctype != "image/svg+xml" and got[1]:
+            result = (got[1], ctype)
+            break
     _icons[name] = result
     return result
 
@@ -633,7 +657,7 @@ class Qbit:
     """qBittorrent Web API client. Keeps the login cookie and logs in again when it expires (403)."""
     def __init__(self):
         self.jar = http.cookiejar.CookieJar()
-        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar), _NoRedirect)
         self.lock = threading.Lock()
 
     def login(self):
@@ -690,7 +714,7 @@ def qbit():
 
 def tautulli(cmd, **params):
     q = urllib.parse.urlencode({"apikey": TAUTULLI["secrets"][0], "cmd": cmd, **params})
-    with urllib.request.urlopen(f"{TAUTULLI['url']}/api/v2?{q}", timeout=10) as r:
+    with STRICT.open(f"{TAUTULLI['url']}/api/v2?{q}", timeout=10) as r:
         return json.loads(read_capped(r, API_MAX))["response"]["data"]
 
 
@@ -723,7 +747,7 @@ def plex_art(img):
     if not re.fullmatch(r"/library/metadata/\d+/(thumb|art)(/\d+)?", img or ""):
         return None
     q = urllib.parse.urlencode({"apikey": TAUTULLI["secrets"][0], "cmd": "pms_image_proxy", "img": img, "width": 200, "height": 300})
-    with urllib.request.urlopen(f"{TAUTULLI['url']}/api/v2?{q}", timeout=10) as r:
+    with STRICT.open(f"{TAUTULLI['url']}/api/v2?{q}", timeout=10) as r:
         return r.read(2_000_000), r.headers.get("Content-Type", "image/jpeg")
 
 
@@ -732,7 +756,7 @@ def plex_art(img):
 def seerr(path, method="GET"):
     req = urllib.request.Request(SEERR["url"] + "/api/v1" + path, method=method,
                                  headers={"X-Api-Key": SEERR["secrets"][0], "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=10) as r:
+    with STRICT.open(req, timeout=10) as r:
         body = read_capped(r, API_MAX)
         return json.loads(body) if body else {}
 
@@ -847,7 +871,9 @@ def test_integration(name):
             detail = f"connected · {d.get('stream_count', 0)} streams now"
         return {"ok": True, "detail": detail}
     except urllib.error.HTTPError as e:
-        return {"ok": False, "detail": f"HTTP {e.code}" + (" (wrong key or login?)" if e.code in (401, 403) else "")}
+        hint = (" (wrong key or login?)" if e.code in (401, 403) else
+                " (it redirects: use the address it redirects to)" if 300 <= e.code < 400 else "")
+        return {"ok": False, "detail": f"HTTP {e.code}{hint}"}
     except Exception as e:
         return {"ok": False, "detail": scrub(f"{type(e).__name__}: {e}")}
 
