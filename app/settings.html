@@ -205,8 +205,8 @@ function renderThemeEd() {
       ${tf("mascot_credit", "Art credit", 80, "art: …")}
       ${tf("greeting", "Greeting", 200, def.greeting)}
       ${tf("click_emoji", "Click emoji (several = a random one per drop)", 16, def.click_emoji || S.site.click_emoji)}
-      ${tf("tagline", "Tagline (all good)", 120, S.site.tagline)}
-      ${tf("tagline_down", "Tagline (something down)", 120, S.site.tagline_down)}
+      ${tf("tagline", "Tagline (all good)", 120, def.tagline || S.site.tagline)}
+      ${tf("tagline_down", "Tagline (something down)", 120, def.tagline_down || S.site.tagline_down)}
     </div>
     <label class="field" style="margin-top:10px"><span>Things the mascot says in this theme (one per line)</span>
       <textarea data-tk="quotes" placeholder="${esc((def.quotes || []).join("\n"))}"></textarea></label>`;
