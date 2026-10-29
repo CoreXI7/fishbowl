@@ -482,13 +482,16 @@ body.wall #plex{flex:1;min-height:0;overflow-y:auto;align-content:start;overscro
 .sd-tabs .dot{width:8px;height:8px}
 /* rows sized to their content: in a fixed-height grid, auto rows would shrink sections below their content */
 .sd-body{flex:1;min-height:0;overflow:auto;display:grid;grid-auto-rows:max-content;gap:12px;align-content:start;padding-right:4px;overscroll-behavior:contain}
-.sd-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));align-items:start}
+.sd-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}   /* cards in a row share its height */
 .sd-sec{padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:color-mix(in srgb,var(--card) 70%,transparent);min-width:0}
 .sd-sec.sd-bad{border-color:color-mix(in srgb,var(--down) 55%,var(--line))}
 .sd-sec h3{margin:0 0 8px;font:600 15px Fredoka,sans-serif;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;overflow-wrap:anywhere}
 .sd-sec h3 small{font:400 12px "M PLUS Rounded 1c",system-ui,sans-serif;color:var(--mute)}
 .sd-sec .kv{font-size:13px;gap:12px}.sd-sec .kv span:last-child{text-align:right;overflow-wrap:anywhere}
 .sd-sec .meter{margin:6px 0 2px}
+.sd-grid .sd-sec h3{row-gap:1px}.sd-grid .sd-sec h3 small{flex-basis:100%}   /* the subtitle always on its own line */
+.sd-sec .kv.sd-dest{flex-direction:column;gap:1px}.sd-sec .kv.sd-dest span:last-child{text-align:left;font-size:12px}
+.sd-sec .seg{display:inline-block;max-width:100%}
 .sd-tw{overflow-x:auto}
 .sd-t{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
 .sd-t th{text-align:left;font-weight:600;color:var(--mute);font-size:11.5px;padding:4px 8px;border-bottom:1px solid var(--line);white-space:nowrap}

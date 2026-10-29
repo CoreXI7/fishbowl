@@ -12,6 +12,8 @@ const sdAgo = ts => ts ? ago2(ts) : "never";
 const sdDur = s => s == null ? "–" : s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
 const sdChip = (cls, txt) => `<span class="chip ${cls}">${txt}</span>`;
 const sdSec = (title, sub, body, cls) => `<section class="sd-sec ${cls || ""}"><h3>${title}${sub ? ` <small>${sub}</small>` : ""}</h3>${body}</section>`;
+// a long path wraps only after a slash (each folder name is one unbreakable piece, unless it alone is too wide)
+const sdPath = p => String(p).split(/(?<=\/)/).map(s => `<span class="seg">${esc(s)}</span>`).join("");
 const sdNone = txt => `<div class="mute sd-empty">${txt}</div>`;
 // a table that turns into stacked cards on a phone (each cell shows its column name)
 function sdTable(head, rows, empty) {
@@ -191,11 +193,11 @@ function sdBackups(x) {
       (it.length ? `<div class="sd-items">${it.map(i => `<span class="chip">${esc(i.name || "")}${i.name && i.size ? " · " : ""}${esc(i.size || "")}${
         i.took_text ? " · " + esc(i.took_text) : ""}</span>`).join("")}</div>` : "") +
       ((j.fail_lines || []).length ? `<div class="sd-note crit-t">From the last run's log:</div>` + j.fail_lines.map(l => `<div class="mono sd-removed">${esc(l)}</div>`).join("") : "") +
-      (j.files ? kvRow("Files", `${esc(j.files.count)} · ${size(j.files.bytes)} · newest ${sdAgo(j.files.newest)}${
-        j.files.count > 1 ? ` · oldest ${sdAgo(j.files.oldest)}` : ""}`) : "") +
+      (j.files ? kvRow("Files", `${esc(j.files.count)} · ${size(j.files.bytes)}`) +
+        kvRow("Age", `newest ${sdAgo(j.files.newest)}${j.files.count > 1 ? ` · oldest ${sdAgo(j.files.oldest)}` : ""}`) : "") +
       paths("Missing", j.missing) + paths(`Older than ${esc(j.max_age_hours)} h`, j.old_files) +
-      (d && d.missing ? kvRow("Destination", `<span class="crit-t">${esc(d.path)} missing</span>`) : "") +
-      (d && !d.missing ? kvRow("Destination", `<span class="mono">${esc(d.path)}</span>`) +
+      (d && d.missing ? kvRow("Destination", `<span class="crit-t">${sdPath(d.path)} missing</span>`) : "") +
+      (d && !d.missing ? `<div class="kv sd-dest"><span>Destination</span><span class="mono">${sdPath(d.path)}</span></div>` +
         (d.size ? kvRow("Backup size", d.size.bytes != null ? `${size(d.size.bytes)} <small class="mute">(measured ${sdAgo(d.size.at)})</small>` : "–")
           : "size" in d ? kvRow("Backup size", '<small class="mute">measured after tonight\'s run</small>') : "") +
         kvRow("Drive free", `${size(d.free)} of ${size(d.total)}`) +
