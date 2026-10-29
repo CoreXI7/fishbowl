@@ -1,10 +1,12 @@
 # homelab-dash 🫧
 
 A glanceable dashboard for a self-hosted server: service status, Plex streams, media requests,
-torrents + VPN-leak check, a live **"what's eating my CPU" breakdown**, temps/GPU, drive health, and a security & backups panel.
-One small stdlib-Python app (no pip, no Node, no database), ~25 MB RAM.
+torrents + VPN-leak check, a live **"what's eating my CPU" breakdown**, a **live temps/power window**, drive health,
+and a **security & backups** panel with full detail views. Three switchable themes (Bubbles, Miku, Gura).
+One small stdlib-Python app (no pip, no Node, no database), ~25–40 MB RAM.
 
-**▶ Live demo: [demo.vicy.us](https://demo.vicy.us)** (fake data; try **⚡ breakdown**, the ⚙ settings page and the wall-mode button)
+**▶ Live demo: [demo.vicy.us](https://demo.vicy.us)** (fake data; try **⚡ breakdown**, **🌡 live**, a Security box's
+title, the 🎨 theme button, the ⚙ settings page and the wall-mode button)
 
 ![wall mode, dark](docs/screenshot-wall-dark.png)
 
@@ -13,6 +15,105 @@ One small stdlib-Python app (no pip, no Node, no database), ~25 MB RAM.
 | ![](docs/screenshot-wall-light.png) | ![](docs/screenshot-full.png) |
 
 *(Screenshots are demo mode: fake data, Blender open-movie titles.)*
+
+## What's new (October 2026)
+
+⭐ = a big one, with a picture.
+
+### ⭐ Security & backups: a detail view for every box (Oct 29)
+
+![Security details: SSH logins](docs/screenshot-security.png)
+
+Click any box's title on the Security & backups card (or open `/?security=ssh`) for the full picture behind its
+one-line status, in a window with a tab per box:
+
+- **Firewall & fail2ban**: status, default policy, every rule, every jail with its banned IPs, the week's bans.
+- **SSH logins**: grouped by user, IP **and the key that was used** (matched to your `authorized_keys` comments), so
+  one rare login can't hide behind thousands of routine ones. Failed attempts and scans by IP.
+  **New:** the yellow "not on your list" tag is a button: click it (or "Add all") to put a trusted place on your
+  known-IP list. Only IPs that really logged in can be added.
+- **Authelia**: sign-ins and lockouts straight from its database.
+- **Process watch**, **Cron jobs** (every line marked approved or not), **Immutable files** (each lock's flags).
+- **Backups**: each job's last success, what it did, how long it took, its files, destination size and free space.
+
+![Security details: backups](docs/screenshot-backups.png)
+
+The views are read-only: the dashboard runs no commands. The root collector gathers everything once a minute
+and the page only reads the result.
+
+### ⭐ Security fixes
+
+Most of these were found by separate security reviewers while the detail views were built. All are fixed and covered by tests:
+
+- **The crypto-miner watch couldn't be dodged any more.** It used to skip every process with "homelab-dash" in its
+  command line (the repo is public, so a miner could simply name itself that). It now skips only the collector's own PID.
+- **Authelia's database is read defensively.** Its folder is writable by the Authelia container, so the root collector
+  never lets SQLite open anything there: it reads the file's bytes (no symlinks, no FIFOs, size-capped) into an
+  in-memory copy and queries that with SQLite's defensive settings (no triggers, no views, untrusted schema), real
+  tables only, with row and time limits. A tampered database can't make root run SQL or hang.
+- **Crafted log lines can't stall the collector.** Giant Authelia log lines used to make its regex take minutes per
+  round; they're skipped now. SSH log reads are capped (a connection flood can't make them huge), and log files are
+  opened non-blocking and must be regular files, so a FIFO planted in a log folder can't freeze the details.
+- **User names can't fake an IP.** SSH user names can contain spaces (even "x from 192.0.2.5 port 1"), so the IP is
+  read from the end of the line and must be a real address.
+- **More secrets masked** in the cron and log lines the card shows: `curl -u user:pass`, `sshpass -p`,
+  `smbclient -U user%pass`, API-key and cookie headers, short `?key=` / `?token=` values.
+- **SSH key fingerprints are computed in Python**, instead of running `ssh-keygen` on a file the user controls.
+- **Safe "add to known IPs"**: the server only accepts IPs from its own login data, so a forged request can't trust an attacker.
+- **Settings can't be crashed** (Oct 22): fuzzing the validator with 20,000 broken inputs found ~4,200 that crashed it;
+  each now gets a clear error message instead.
+- **"Looks fine" can only clear real logins** (Oct 17): the acknowledgement keys are computed on the server, never sent by the browser.
+
+### ⭐ Three themes, switchable with one click (Oct 18, Gura on Oct 28)
+
+| Gura (light) | Gura (dark) |
+|---|---|
+| ![Gura theme](docs/screenshot-gura.png) | ![Gura theme, dark](docs/screenshot-gura-dark.png) |
+
+![Miku theme](docs/screenshot-miku.png)
+
+**Bubbles** (the default), **Miku** (teal twin-tails, VU-meter bars, floating notes, an equalizer by the clock) and
+**Gura** (a sunlit lagoon in light mode and the deep in dark mode: a shark-hood header with teeth, a little shark
+swimming behind the title, bubbles that are sometimes a shark, an "a" or a shrimp). Press **T** or 🎨 to switch; the
+choice is remembered per browser. See [Themes](#themes).
+
+### ⭐ Live window: temps, power, clocks and disks, every second (Oct 23)
+
+![Live window](docs/screenshot-live.png)
+
+Click **🌡 live** on the Temperatures panel (or open `/?live`): a browser version of a terminal temps dashboard.
+CPU temperatures, package power (from the CPU's own energy counter), usage, clock and memory, each with a one-minute
+trend and its peak; the GPU; disk I/O with the busiest drives; and every CPU thread's load and clock, grouped by CCD.
+It polls once a second only while it's open, and the layout never jumps while the numbers change.
+
+### ⭐ Services: compact shelves, badges only on problems (Oct 28)
+
+With 50+ services the panel had become the biggest thing on the page. Groups now sit on "shelves" sized for two
+rows of tiles, healthy tiles stay quiet (no green dot on every one), and a service that's down gets a red "!" badge,
+a tinted tile and "· down" after its name, so it isn't marked by colour alone. The panel is about a third shorter
+and the wall view fits any number of groups (see the screenshots above).
+
+### ⭐ The wall view uses about a fifth of the CPU (Oct 22)
+
+A wall display shows the dashboard all day, so its cost adds up. Measured in headless Chrome at 1920×1080:
+**~110% → ~19% of a core** (Bubbles) and **~114% → ~26%** (Miku), with the same look. The card blur behind the
+drifting bubbles was re-rendered every frame (now gone), the header stripe slides on the GPU, panels skip redraws
+that change nothing, refreshes never overlap, and everything pauses in a hidden tab. The server shares in-flight
+refreshes between browsers and re-reads files only when they change.
+
+### Smaller updates
+
+- **Plex Now Playing**: "+N more" gives it the whole row when more people watch than fit; on the wall the list
+  scrolls inside its box, and clicking the Plex tile expands or collapses it (Oct 18).
+- **SSH logins**: a "Looks fine ✓" button clears the unknown-login alert; a new unfamiliar login flags again (Oct 17).
+- **CPU / memory breakdown** shows containers' real memory (the figure `docker stats` shows), not the sum of their
+  processes: nginx's 34 workers no longer add up to 1.4 GB (Oct 23).
+- **Health checks through the proxy** can use a path (e.g. `pass.example.com/api/alive`) when `/` sits behind a login (Oct 28).
+- The **header** stays on top while you scroll (Oct 21); the System card says "N running · M stopped" (Oct 22);
+  the Security card's "log" and "banned IPs" dropdowns stay open across refreshes (Oct 20).
+- The live button got an SVG thermometer (Oct 28); a theme's tagline hints on the settings page show its own default (Oct 28);
+  on shorter screens the wall view keeps Services at full height (Oct 28).
+- Earlier: a custom tab icon setting, backup log checks, SVG icons from the data folder (Oct 15).
 
 ## ⚡ Spotlight: what's eating my CPU?
 
@@ -26,7 +127,7 @@ everything using your machine**, grouped the way you think about it:
 - **Flip to Memory** to see who's hoarding RAM instead.
 - **Click a tile** for its CPU in cores, memory, process count, a live sparkline, and the **busiest processes inside it**:
   watch "Plex Transcoder" light up the moment someone starts a transcode.
-- Counts *every* process on the box, not just containers, so nothing hides. Costs about 15 ms every 5 seconds.
+- Counts *every* process on the box, not just containers, so nothing hides. Costs about 6 ms every 5 seconds.
 - Deep-link it: `https://your-dash/?breakdown`. [Try it on the demo](https://demo.vicy.us/?breakdown).
 
 Needs the (optional) root collector; see Install.
@@ -35,33 +136,48 @@ Needs the (optional) root collector; see Install.
 
 - **Services, automatically.** Reads Nginx Proxy Manager's proxy host files, so every host you add in NPM
   shows up on its own, health-checked every 30 s, with icons from [dashboard-icons](https://github.com/homarr-labs/dashboard-icons).
-  Hosts behind Authelia/Authentik get a 🔒. Not using NPM? List services in `config.toml`.
+  Hover a tile to see whether it's behind SSO (Authelia/Authentik) or public. Not using NPM? List services in `config.toml`.
 - **Plex Now Playing** (via Tautulli): who's watching what, direct play vs transcode, HW vs CPU, home vs remote.
   Poster art is proxied, so your Plex token never reaches the browser. More viewers than fit? **"+N more"** gives
   Now Playing the whole row (Requests steps aside until you click "show requests"), and on the wall the list scrolls.
 - **Requests** (Seerr / Overseerr / Jellyseerr): approve or decline right from the dashboard.
 - **qBittorrent**: downloads, seeding, speeds, and a big red banner if it ever shows your real home IP (VPN leak).
 - **System**: CPU per thread, RAM, network, temperatures (AMD, Intel, DDR5, NVMe), NVIDIA GPU incl. NVENC/NVDEC.
+- **🌡 Live window**: temps, package power, clocks, memory and disk I/O every second, with one-minute trends (see above).
 - **⚡ CPU / memory breakdown**: a live treemap of every container and host program, with per-process detail (see above).
 - **Drives**: usage + SMART health/temps for every disk, without waking sleeping drives.
 - **Security & backups**: fail2ban, SSH logins from unknown IPs, Authelia failures, crypto-miner watch,
   crontab change detection with a one-click "Looks good" approval, `chattr +i` lock checks, backup freshness.
-  Click a box's title for its **details** (read-only): firewall rules and bans, who logged in over SSH (with the key
+  Click a box's title for its **details**: firewall rules and bans, who logged in over SSH (with the key
   they used), Authelia sign-ins and lockouts, every cron line marked approved or not, each backup job's last run,
   size and free space. Deep link: `https://your-dash/?security=ssh`.
 - **Wall mode**: `https://your-dash/?wall` fits a 1920×1080 screen with no scrolling and hides the cursor.
   Click the Plex tile there to expand or collapse Now Playing; the stream list scrolls inside its own box.
+- **Themes**: Bubbles, Miku and Gura, each with its own mascot, lines and tab icon (see below).
 - Light/dark automatic, floating bubbles, optional mascot. Every panel is optional and hides itself if not configured.
+
+## Themes
+
+- **Switch** with the 🎨 button or the **T** key. The choice is saved per browser, so a wall display can keep its own
+  theme. The default for new visitors is set on the settings page.
+- **Each theme has a personality**: mascot, greeting, quotes, click emoji, taglines and tab icon. Miku and Gura bring
+  their own defaults; anything you set for a theme on the settings page wins. Bubbles uses the top-level fields.
+- **Light and dark** follow your system, in every theme.
+- **Light on CPU**: no backdrop blur; the drifting bubbles, the header stripe and Gura's rays and shark move with
+  `transform` (cheap for the GPU), and everything stops with "reduce motion".
+- **Adding one**: add its id and defaults to `THEMES` in `app/settings.py` and its styles to `app/themes.css`, all scoped
+  under `html[data-theme="<id>"]`. The themes ship no character artwork; mascots are your own uploads.
 
 ## How it fits together
 
 ```
 browser ──► reverse proxy + SSO ──► dash container (uid 1000, read-only, no capabilities)
-                                       │  reads (read-only):  NPM proxy_host/*.conf, /proc, hwmon, hw.json
+                                       │  reads (read-only):  NPM proxy_host/*.conf, /proc, hwmon,
+                                       │                      hw.json + sec-detail.json
                                        │  calls with API keys: qBittorrent, Seerr, Tautulli
                                        ▼
-                     /var/lib/homelab-dash/hw.json  ◄── homelab-dash-collector (root systemd service, no network)
-                                                        smartctl · nvidia-smi · fail2ban · journal · cron · lsattr
+     /var/lib/homelab-dash/hw.json, sec-detail.json  ◄── homelab-dash-collector (root systemd service, no network)
+                                                         smartctl · nvidia-smi · fail2ban · journal · cron · lsattr · ufw
 ```
 
 The part exposed to the network has no power; the part with root never talks to the network.
@@ -95,7 +211,8 @@ DEMO=1 python3 app/app.py          # Python 3.11+, then open http://localhost:80
    sudo systemctl restart homelab-dash-collector
    ```
    Needs Python 3.11+ on the host. Uses `smartctl` (smartmontools), and `nvidia-smi`, `fail2ban-client`,
-   `docker` if present. Costs about 0.02 % CPU on a modern box. Uninstall: `sudo bash collector/install.sh --uninstall`.
+   `docker` if present. With every security check on, it costs about 4.5 s of CPU a minute (measured on a
+   32-thread box with a busy SSH log, ~0.2% of the machine). Uninstall: `sudo bash collector/install.sh --uninstall`.
    It's configured by file on purpose: it runs as root, so a web page shouldn't be able to change what it does.
 
 ## Settings page
@@ -104,12 +221,12 @@ DEMO=1 python3 app/app.py          # Python 3.11+, then open http://localhost:80
 
 Click ⚙ on the dashboard (or open `/settings`):
 
-- **Look & feel**: title, taglines, click emoji, mascot (upload an image), what the mascot says.
+- **Look & feel**: title, default theme, and per theme its taglines, click emoji, mascot (upload an image), what the mascot says.
 - **Services**: everything found in NPM, with groups you can create, rename and reorder, labels, icons
   (any [dashboard-icons](https://dashboard-icons.homarr.dev) name), and hiding. New NPM hosts appear on their own.
 - **Extra services** that aren't in NPM (NAS, router, ...), health-checked too.
 - **Integrations**: qBittorrent, Seerr/Overseerr/Jellyseerr, Tautulli, with a Test button.
-- **Trusted IPs** for the SSH/SSO login check.
+- **Trusted IPs** for the SSH/SSO login check (or add them from the SSH detail view).
 
 Changes apply immediately, no restart. They're saved to `data/settings.json`; keys to `data/secrets.json` (both `chmod 600`).
 Prefer files? Put a `config.toml` (see [`config.example.toml`](config.example.toml)) in `data/`; it's used until the first save.
@@ -141,7 +258,7 @@ Then add a proxy host for it (forward to `homelab-demo:8000`), with no SSO.
 - Plex posters are proxied through Tautulli, so your Plex token isn't exposed either.
 - Your `known_ips` list stays on the server; the page only gets a "known / unknown" flag per login.
 - The collector redacts passwords, tokens, webhook URLs and `user:pass@` from cron and log lines before writing
-  `hw.json`, and that file is readable only by root and the dash container's group.
+  `hw.json` and `sec-detail.json`, and those files are readable only by root and the dash container's group.
 
 **Who can use it.**
 - Run it **behind SSO** (Authelia, Authentik, ...). The app has no login of its own, so anyone who gets past your SSO
@@ -152,14 +269,15 @@ Then add a proxy host for it (forward to `homelab-demo:8000`), with no SSO.
   Uploads must really be PNG/JPEG/GIF/WebP (checked by content, not name); SVG is refused because it can carry scripts.
 - `trusted_proxy` (default `nginx`) makes the app refuse any connection that isn't from your reverse proxy,
   so another container on the same Docker network can't skip the SSO.
-- Every POST (saving settings, uploads, approve/decline, cron approval) requires the browser's `Origin` to be the
-  dashboard itself (`ORIGIN`, or its own Host if unset). That blocks other websites from acting for you (CSRF).
+- Every POST (saving settings, uploads, approve/decline, cron approval, adding a known IP) requires the browser's
+  `Origin` to be the dashboard itself (`ORIGIN`, or its own Host if unset). That blocks other websites from acting for you (CSRF).
 - Everything from outside (torrent names, Plex titles, Seerr usernames, hostnames) is HTML-escaped before it's shown,
-  under a strict Content-Security-Policy.
+  under a Content-Security-Policy.
 - Icons are fetched only from hosts the dashboard already knows (no open proxy), and static files can't escape `app/static/`.
 - The container runs as uid 1000 with a read-only filesystem, all capabilities dropped, and 256 MB / 128 process caps.
 - The root collector never listens on the network. The only thing the dash can ask of it is "approve the cron jobs
-  as they are right now", checked by hash.
+  as they are right now", checked by hash. Authelia's database (its folder is writable by the Authelia container) is
+  read without following symlinks or blocking on FIFOs, and log tails must be regular files.
 
 What it can't protect against: anyone with Docker or root access on the host can read the container's environment
 (`docker inspect`), like with any self-hosted app. Keep `.env` at `chmod 600` and don't commit it (`.gitignore` covers it).
