@@ -402,11 +402,11 @@ def handle_cron_approval():
     os.makedirs(REQ_DIR, exist_ok=True)
     os.chown(REQ_DIR, DASH_UID, DASH_UID)
     os.chmod(REQ_DIR, 0o700)
-    if not os.path.exists(REQ_FILE):
+    if not os.path.lexists(REQ_FILE):
         return False
-    try:
-        want = open(REQ_FILE).read(100).strip()
-    except OSError:
+    try:   # the dash can write here: never follow a link it planted or wait on a FIFO (that would stop the main loop)
+        want = read_regular(REQ_FILE, 100).decode("ascii", "replace").strip()
+    except CheckFailed:
         want = ""
     try:
         os.remove(REQ_FILE)
