@@ -472,6 +472,8 @@ class Qbit:
         self.jar = http.cookiejar.CookieJar()
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar), _NoRedirect)
         self.lock = threading.Lock()
+        self.sync_lock = threading.Lock()
+        self.rid, self.state = 0, {}        # sync/maindata position + hash -> the torrent fields the page shows
 
     def login(self):
         user, pw = QBIT["secrets"]
@@ -492,15 +494,35 @@ class Qbit:
                         continue
                     raise
 
+    def torrents(self):
+        """Every torrent, from sync/maindata (the feed qBittorrent's own web UI uses): the first call gets the full
+        list, later ones only what changed since, which are merged in. Starts over whenever qBittorrent says
+        full_update (e.g. after it restarted). Only the fields the page shows are kept."""
+        with self.sync_lock:
+            d = self.get(f"/api/v2/sync/maindata?rid={self.rid}")
+            if not isinstance(d, dict):
+                raise ValueError("unexpected answer from qBittorrent's sync API")
+            if d.get("full_update") or not self.rid:
+                self.state = {}
+            for h, fields in (d.get("torrents") or {}).items():
+                if isinstance(fields, dict):
+                    self.state.setdefault(h, {}).update((k, v) for k, v in fields.items() if k in SLIM_KEEP)
+            for h in d.get("torrents_removed") or []:
+                if isinstance(h, str):
+                    self.state.pop(h, None)
+            self.rid = d["rid"] if type(d.get("rid")) is int else 0
+            return list(self.state.values())
+
 
 SLIM_TEXT = ("name", "state", "category")
 SLIM_NUM = ("progress", "dlspeed", "upspeed", "eta", "size", "num_seeds", "num_leechs", "ratio", "added_on", "uploaded")
+SLIM_KEEP = frozenset(SLIM_TEXT + SLIM_NUM)
 
 
 def qbit():
     """/api/qbit: speeds, the VPN check (external IP vs your home IP) and the torrent lists, trimmed to what the page shows."""
     t = qb.get("/api/v2/transfer/info")
-    torrents = qb.get("/api/v2/torrents/info")
+    torrents = qb.torrents()
     torrents = torrents if isinstance(torrents, list) else []
     slim = [{**{k: text(x.get(k)) for k in SLIM_TEXT}, **{k: num(x.get(k)) for k in SLIM_NUM}}
             for x in torrents if isinstance(x, dict)]

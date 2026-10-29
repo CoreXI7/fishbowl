@@ -18,7 +18,7 @@ class UpstreamSize(unittest.TestCase):
         cls.up = Upstream({
             "/api/v2/auth/login": (200, {}, "Ok."),
             "/api/v2/transfer/info": (200, {}, {}),
-            "/api/v2/torrents/info": (200, {"Content-Type": "application/json"}, big),
+            "/api/v2/sync/maindata": (200, {"Content-Type": "application/json"}, big),
             "/api/v1/request": (200, {"Content-Type": "application/json"}, b'{"results": ' + big + b"}"),
             "/api/v2": (200, {"Content-Type": "application/json"}, b'{"response": {"data": ' + big + b"}}"),
         })
@@ -42,11 +42,11 @@ class UpstreamSize(unittest.TestCase):
             self.app.plex()
 
     def test_normal_sizes_pass(self):
-        self.up.routes["/api/v2/torrents/info"] = (200, {}, [{"name": "a", "state": "downloading"}])
+        self.up.routes["/api/v2/sync/maindata"] = (200, {}, {"rid": 1, "full_update": True, "torrents": {"h": {"name": "a", "state": "downloading"}}})
         try:
             self.assertEqual(self.app.qbit()["total"], 1)
         finally:
-            self.up.routes["/api/v2/torrents/info"] = (200, {}, big_json_list(40 * MB))
+            self.up.routes["/api/v2/sync/maindata"] = (200, {}, big_json_list(40 * MB))
 
 
 if __name__ == "__main__":

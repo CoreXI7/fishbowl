@@ -20,7 +20,9 @@ class UpstreamTypes(unittest.TestCase):
             "/api/v2/auth/login": (200, {"Set-Cookie": "SID=1; path=/"}, "Ok."),
             "/api/v2/transfer/info": (200, {}, {"connection_status": EVIL, "last_external_address_v4": EVIL,
                                                 "dl_info_speed": EVIL, "up_info_speed": "1", "dl_info_data": None, "up_info_data": [1]}),
-            "/api/v2/torrents/info": (200, {}, [evil_torrent("downloading"), evil_torrent("uploading")]),
+            "/api/v2/sync/maindata": (200, {}, {"rid": 1, "full_update": True,
+                                                 "torrents": {"a": evil_torrent("downloading"), "b": evil_torrent("uploading"),
+                                                              "c": EVIL}}),
             "/api/v1/request": (200, {}, {"results": [
                 {"id": "1);window.__xss=1;//", "type": "movie", "media": {"tmdbId": 5}, "seasons": [], "requestedBy": {}},
                 {"id": 7, "type": "tv", "media": {"tmdbId": "../../status"}, "seasons": [{"seasonNumber": EVIL}, {"seasonNumber": 2}],
