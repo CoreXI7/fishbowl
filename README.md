@@ -20,6 +20,43 @@ title, the 🎨 theme button, the ⚙ settings page and the wall-mode button)
 
 ⭐ = a big one, with a picture.
 
+### ⭐ Security audit and hardening (Oct 29)
+
+A full audit of the dashboard and the root collector: a [threat model](THREAT-MODEL.md), a working proof of concept for
+each problem found, then a fix with a test that failed before it (`tests/`, stdlib only). The big ones:
+
+- **A taken-over qBittorrent or Seerr could run script in your dashboard.** A few numbers and ids from them went into
+  the page unescaped, and the Content-Security-Policy allowed inline script, so a hostile answer could act as you
+  (the proof of concept quietly added a whole IP range to the known list). Now the server passes on only typed,
+  clipped fields, the page escapes every value (numbers too), and the CSP is strict: scripts only from the
+  dashboard's own files, no inline script or `onclick` anywhere. The fonts are self-hosted, so the page loads nothing
+  from Google either.
+- **A service can't send the dashboard to internal addresses any more.** Health checks and icon fetches followed
+  redirects anywhere, and `/api/icon` handed back whatever it found there; the integrations would even have carried
+  Seerr's API key along. Redirects to another host are no longer followed (a redirect still counts as "up").
+- **Other containers can be locked out completely.** The "only my proxy" check is by source address, on a Docker
+  network other containers share. The new `LISTEN` setting lets the dash answer only on a network that the proxy alone
+  shares with it ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)).
+- **The dashboard can't stall the root collector.** A FIFO or symlink planted in the dash's request folder used to
+  freeze the collector's main loop (every tile goes stale) or make root open a file of the dash's choosing.
+- Smaller ones: answers from qBittorrent, Seerr and Tautulli are size-capped (a 150 MB answer pushed the dash past its
+  memory cap); the container log escapes control characters and only believes the proxy about who sent a request;
+  IPv6 prefixes in the known-IP list now match; uploads are limited to 200 files / 100 MB.
+
+### ⭐ Much lighter on the network and the CPU (Oct 29)
+
+![Before and after: network, collector CPU, API traffic, wall-view CPU](docs/efficiency-2026-10-29.png)
+
+- **Torrents: 37.6 MB → 0.3 MB a minute.** The dash fetched qBittorrent's whole torrent list (3 MB for 1,500
+  torrents) every 4 seconds to show the few active ones. It now uses qBittorrent's incremental feed (what its own web
+  UI does): the full list once, then only what changed (~24 KB).
+- **The root collector reads the SSH log once a minute, not three times, and ~10× cheaper each time** (`journalctl -n`
+  walked the whole 2 GB journal). Once a minute every tile used to wait 9 seconds for the security checks; now ~6.
+- **Everything the server sends is compressed** (the proxy only compressed HTML): `/api/system` 13.8 → 3.2 KB per poll.
+  Reloads get "not modified" for every file that didn't change.
+- **Miku's equalizer and the pulsing "down" badge run on the GPU** (they used to repaint 60 times a second): the wall
+  view is as cheap in Miku, or with a service down, as plain Bubbles. Same look.
+
 ### ⭐ Security & backups: a detail view for every box (Oct 29)
 
 ![Security details: SSH logins](docs/screenshot-security.png)
@@ -102,6 +139,11 @@ that change nothing, refreshes never overlap, and everything pauses in a hidden 
 refreshes between browsers and re-reads files only when they change.
 
 ### Smaller updates
+
+- **Hide panels** you don't use (Oct 29): tick them off on the settings page; their summary tiles at the top stay.
+- **Docs** (Oct 29): [ARCHITECTURE.md](ARCHITECTURE.md) (which file does what), a [settings reference](docs/SETTINGS.md),
+  the [threat model](THREAT-MODEL.md) and the measured [performance baseline](PERF-BASELINE.md). The page script is
+  now one file per panel.
 
 - **Plex Now Playing**: "+N more" gives it the whole row when more people watch than fit; on the wall the list
   scrolls inside its box, and clicking the Plex tile expands or collapses it (Oct 18).
@@ -268,15 +310,22 @@ Then add a proxy host for it (forward to `homelab-demo:8000`), with no SSO.
 - Everything typed into the settings page is validated on the server (lengths, URL schemes, icon names, IPs).
   Uploads must really be PNG/JPEG/GIF/WebP (checked by content, not name); SVG is refused because it can carry scripts.
 - `trusted_proxy` (default `nginx`) makes the app refuse any connection that isn't from your reverse proxy,
-  so another container on the same Docker network can't skip the SSO.
+  so another container on the same Docker network can't skip the SSO. With `LISTEN` it answers only on a network the
+  proxy alone shares with it, so a container that fakes the proxy's address can't reach it either
+  ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)).
 - Every POST (saving settings, uploads, approve/decline, cron approval, adding a known IP) requires the browser's
   `Origin` to be the dashboard itself (`ORIGIN`, or its own Host if unset). That blocks other websites from acting for you (CSRF).
 - Everything from outside (torrent names, Plex titles, Seerr usernames, hostnames) is HTML-escaped before it's shown,
-  under a Content-Security-Policy.
-- Icons are fetched only from hosts the dashboard already knows (no open proxy), and static files can't escape `app/static/`.
+  numbers included, and the server passes on only typed, clipped fields. The Content-Security-Policy allows scripts
+  only from the dashboard's own files (no inline script or event handlers), and fonts and styles only from itself.
+- Icons are fetched only from hosts the dashboard already knows (no open proxy). No outbound request follows a
+  redirect to another host, and answers are size-capped. Static files can't escape `app/static/`.
+- The container log escapes control characters and names the sender from the proxy's headers only when the request
+  really came from the proxy.
 - The container runs as uid 1000 with a read-only filesystem, all capabilities dropped, and 256 MB / 128 process caps.
 - The root collector never listens on the network. The only thing the dash can ask of it is "approve the cron jobs
-  as they are right now", checked by hash. Authelia's database (its folder is writable by the Authelia container) is
+  as they are right now", checked by hash, and that request file is read without following symlinks or waiting on a
+  FIFO. Authelia's database (its folder is writable by the Authelia container) is
   read without following symlinks or blocking on FIFOs, and log tails must be regular files.
 
 What it can't protect against: anyone with Docker or root access on the host can read the container's environment
