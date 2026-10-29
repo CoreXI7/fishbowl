@@ -37,6 +37,21 @@ cron_watch = true
 firewall = true
 # Files you locked with `chattr +i`; the dash goes red if a lock disappears.
 # immutable_files = ["/opt/app/config.ini"]
+# Detail views (click a box's title on the dash): written to sec-detail.json every minute. Set false to skip.
+# details = true
+# fail2ban's log, for the recent bans list.
+# fail2ban_log = "/var/log/fail2ban.log"
+# Authelia's SQLite database (opened read-only): sign-ins and lockouts in the Authelia details.
+# authelia_db = "/srv/authelia/config/db.sqlite3"
+
+# A watch script of your own that runs from cron, shown in the Process watch details.
+# [security.watcher]
+# label = "miner-watch.sh"
+# heartbeat = "/var/lib/miner-watch/last-run"   # a file the script rewrites every run (its age = time since the last run)
+# alerts = "/var/lib/miner-watch/alerted"       # one line per problem it has alerted on ("kind:detail")
+# every_minutes = 5
+# checks = ["known miner names", "programs running from /tmp", "connections to mining-pool ports"]
+# kinds = { pool = "connection to a mining-pool port", tmp = "program running from /tmp" }   # labels for "kind:" prefixes
 
 [backup]
 # Your backup script's log. Lines starting with YYYY-MM-DD are grouped by the last day.
@@ -61,3 +76,22 @@ firewall = true
 # [[backup.artifacts]]
 # label = "DB dumps"
 # glob = "/srv/backups/db/*.sql.gz"
+
+# Backup jobs for the Backups details: one block per job.
+#   regex  = the log line that marks the job as done (the last match = its last success). Named groups
+#            (?P<name>...), (?P<size>...) and (?P<took>...) are shown next to it.
+#   files  = what it leaves behind (globs; a file named exactly that is missing gets flagged)
+#   dest   = its destination folder: free space of that drive; size = true also measures the folder (du, once
+#            after each backup run, at idle priority)
+#   max_age_hours = overdue after this (default: max_age_hours above)
+# [[backup.jobs]]
+# label = "Nightly snapshot"
+# regex = "snapshot done"
+# dest = "/mnt/backup/snapshots"
+# size = true
+# every = "nightly at 03:00"
+#
+# [[backup.jobs]]
+# label = "DB dumps"
+# regex = "dumped (?P<name>\\S+) \\((?P<size>[^)]+)\\)"
+# files = ["/srv/backups/db/*.sql.gz"]
