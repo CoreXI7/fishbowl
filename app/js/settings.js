@@ -1,0 +1,304 @@
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/png/";
+let V = null, S = null, SEC = {}, dirty = false;
+
+async function api(url, opts = {}) {
+  const r = await fetch(url, {credentials: "same-origin", ...opts});
+  if (r.redirected || (r.headers.get("content-type") || "").indexOf("json") < 0) { location.reload(); throw new Error("session expired"); }
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+const post = (url, body) => api(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+
+function setDirty(d = true) {
+  dirty = d;
+  $("save").disabled = !d || !V.ui_enabled;
+  $("msg").innerHTML = !V.ui_enabled ? '<span class="warn-t">Read-only: the settings page is disabled (SETTINGS_UI=0).</span>'
+    : !V.writable ? '<span class="crit-t">The data folder is not writable, so saving will fail. Make it writable by uid 1000.</span>'
+    : d ? '<span class="warn-t">● Unsaved changes</span>' : '<span class="mute">All changes saved.</span>';
+}
+addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+// ---------- simple fields (data-k="site.title", data-list = one per line) ----------
+const getPath = (o, k) => k.split(".").reduce((a, p) => a && a[p], o);
+const setPath = (o, k, v) => { const ps = k.split("."), last = ps.pop(); ps.reduce((a, p) => a[p] = a[p] || {}, o)[last] = v; };
+function bindFields() {
+  document.querySelectorAll("[data-k]").forEach(el => {
+    const v = getPath(S, el.dataset.k);
+    el.value = el.hasAttribute("data-list") ? (v || []).join("\n") : (v ?? "");
+    el.disabled = !V.ui_enabled;
+    el.oninput = () => { setPath(S, el.dataset.k, el.hasAttribute("data-list") ? el.value.split("\n").map(x => x.trim()).filter(Boolean) : el.value); setDirty(); };
+  });
+}
+
+// ---------- mascot ----------
+function renderMascot() {
+  $("mascot-prev").hidden = !S.site.mascot; if (S.site.mascot) $("mascot-prev").src = S.site.mascot;
+  $("mascot-rm").hidden = !S.site.mascot;
+}
+$("mascot-file").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  if (f.size > 2 * 1024 * 1024) return showErr("That image is over 2 MB.");
+  try {
+    const r = await api("/api/upload", {method: "POST", headers: {"Content-Type": "application/octet-stream"}, body: f});
+    S.site.mascot = r.url; renderMascot(); setDirty();
+  } catch (err) { showErr("Upload failed: " + err.message); }
+  e.target.value = "";
+};
+$("mascot-rm").onclick = () => { S.site.mascot = ""; renderMascot(); setDirty(); };
+function renderFav() { $("fav-prev").hidden = !S.site.favicon; if (S.site.favicon) $("fav-prev").src = S.site.favicon; $("fav-rm").hidden = !S.site.favicon; }
+$("fav-file").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { const r = await api("/api/upload", {method: "POST", headers: {"Content-Type": "application/octet-stream"}, body: f}); S.site.favicon = r.url; renderFav(); setDirty(); }
+  catch (err) { showErr("Upload failed: " + err.message); }
+  e.target.value = "";
+};
+$("fav-rm").onclick = () => { S.site.favicon = ""; renderFav(); setDirty(); };
+
+// ---------- themes: default theme + each theme's own mascot and lines (bubbles = the Look & feel fields above) ----------
+let edTheme = "";
+const tf = (k, label, max, ph) => `<label class="field"><span>${esc(label)}</span><input type="text" data-tk="${k}" maxlength="${max}" placeholder="${esc(ph || "")}"></label>`;
+function renderThemes() {
+  S.site.themes = S.site.themes || {};
+  const ids = Object.keys(V.themes);
+  $("theme-default").innerHTML = ids.map(id => `<option value="${esc(id)}">${esc(V.themes[id].label)}</option>`).join("");
+  $("theme-default").value = S.site.theme || "bubbles";
+  $("theme-default").disabled = !V.ui_enabled;
+  $("theme-default").onchange = () => { S.site.theme = $("theme-default").value; setDirty(); };
+  if (!V.themes[edTheme]) edTheme = ids.find(id => id !== "bubbles") || ids[0];
+  $("theme-tabs").innerHTML = ids.map(id => `<button class="${id === edTheme ? "on" : ""}" data-t="${esc(id)}">${esc(V.themes[id].label)}</button>`).join("");
+  $("theme-tabs").querySelectorAll("button").forEach(b => b.onclick = () => { edTheme = b.dataset.t; renderThemes(); });
+  document.documentElement.dataset.theme = edTheme;   // live preview of the theme being edited
+  renderThemeEd();
+}
+function renderThemeEd() {
+  const id = edTheme, def = V.themes[id];
+  if (id === "bubbles") {   // Bubbles has no separate editor: it uses the Look & feel fields
+    $("theme-ed").innerHTML = '<p class="hint" style="margin-top:10px">Bubbles is the default look: its mascot, lines and click emoji are '
+      + 'the <b>Look &amp; feel</b> settings above.</p>';
+    return;
+  }
+  const t = S.site.themes[id] || {};
+  $("theme-ed").innerHTML = `
+    <div class="mascot-ed" style="margin:12px 0 10px">
+      <img id="tm-prev" alt="" ${t.mascot ? `src="${esc(t.mascot)}"` : "hidden"}>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span><label class="pill" style="cursor:pointer">Upload ${esc(def.label)} mascot… <input type="file" id="tm-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
+          <button class="ibtn danger" id="tm-rm" ${t.mascot ? "" : "hidden"}>Remove</button></span>
+        <small class="mute">Optional, only shown in this theme. PNG, JPEG, WebP or GIF up to 2 MB; a transparent PNG looks best.</small></div></div>
+    <div class="fgrid">
+      ${tf("mascot_credit", "Art credit", 80, "art: …")}
+      ${tf("greeting", "Greeting", 200, def.greeting)}
+      ${tf("click_emoji", "Click emoji (several = a random one per drop)", 16, def.click_emoji || S.site.click_emoji)}
+      ${tf("tagline", "Tagline (all good)", 120, def.tagline || S.site.tagline)}
+      ${tf("tagline_down", "Tagline (something down)", 120, def.tagline_down || S.site.tagline_down)}
+    </div>
+    <label class="field" style="margin-top:10px"><span>Things the mascot says in this theme (one per line)</span>
+      <textarea data-tk="quotes" placeholder="${esc((def.quotes || []).join("\n"))}"></textarea></label>`;
+  const set = (k, v) => { S.site.themes[id] = {...(S.site.themes[id] || {}), [k]: v}; setDirty(); };
+  $("theme-ed").querySelectorAll("[data-tk]").forEach(el => {
+    const k = el.dataset.tk, v = t[k];
+    el.value = k === "quotes" ? (v || []).join("\n") : (v || "");
+    el.disabled = !V.ui_enabled;
+    el.oninput = () => set(k, k === "quotes" ? el.value.split("\n").map(x => x.trim()).filter(Boolean) : el.value);
+  });
+  $("tm-file").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    if (f.size > 2 * 1024 * 1024) return showErr("That image is over 2 MB.");
+    try { const r = await api("/api/upload", {method: "POST", headers: {"Content-Type": "application/octet-stream"}, body: f}); set("mascot", r.url); renderThemeEd(); }
+    catch (err) { showErr("Upload failed: " + err.message); }
+  };
+  $("tm-rm").onclick = () => { set("mascot", ""); renderThemeEd(); };
+}
+
+// ---------- services: groups, labels, icons, hidden ----------
+const iconSrc = (host) => {
+  const icon = (S.apps[host] || {}).icon || "";
+  return icon ? (icon.startsWith("/") ? icon : CDN + icon + ".png") : (V.demo ? "" : "/api/icon?host=" + encodeURIComponent(host));
+};
+function iconFail(img) { const d = document.createElement("span"); d.className = "lt"; d.textContent = img.dataset.letter || "?"; img.replaceWith(d); }
+const app = host => S.apps[host] = S.apps[host] || {};
+function cleanApp(host) { const a = S.apps[host]; if (a && !a.label && !a.icon && !a.url) delete S.apps[host]; }
+
+function srow(host, gi, idx, len) {
+  const a = S.apps[host] || {}, found = V.discovered.includes(host) || S.services.some(x => x.name === host);
+  const opts = [`<option value="">move to…</option>`, ...S.groups.map((g, i) => i === gi ? "" : `<option value="${i}">${esc(g.name)}</option>`),
+                gi >= 0 ? `<option value="-1">(no group)</option>` : ""].join("");
+  const src = iconSrc(host), letter = esc(((a.label || host)[0] || "?").toUpperCase());
+  return `<div class="srow" data-host="${esc(host)}">
+    ${src ? `<img src="${esc(src)}" alt="" data-letter="${letter}" onerror="iconFail(this)">` : `<span class="lt">${letter}</span>`}
+    <div class="host" title="${esc(host)}">${esc(host)}${found ? "" : "<small>not found any more</small>"}</div>
+    <input type="text" placeholder="${esc(host.split(".")[0])}" value="${esc(a.label || "")}" data-f="label" aria-label="label">
+    <input type="text" placeholder="icon (auto)" value="${esc(a.icon || "")}" data-f="icon" aria-label="icon">
+    <span class="acts">
+      ${gi >= 0 ? `<button class="ibtn" data-a="up" ${idx === 0 ? "disabled" : ""} title="move up">↑</button>`
+                + `<button class="ibtn" data-a="down" ${idx === len - 1 ? "disabled" : ""} title="move down">↓</button>` : ""}
+      <select data-a="move" aria-label="move to group">${opts}</select>
+      <button class="ibtn danger" data-a="hide" title="hide from the dashboard">hide</button>
+    </span></div>`;
+}
+
+function renderServices() {
+  const grouped = new Set(S.groups.flatMap(g => g.hosts)), hidden = new Set(S.skip_hosts);
+  const all = [...new Set([...V.discovered, ...S.services.map(x => x.name)])].filter(h => !hidden.has(h));
+  $("svc-count").textContent = `${all.length} found`;
+  $("groups").innerHTML = S.groups.map((g, gi) => `<div class="grp-ed" data-g="${gi}">
+      <div class="gh"><input type="text" value="${esc(g.name)}" data-gname aria-label="group name">
+        <button class="ibtn" data-ga="up" ${gi === 0 ? "disabled" : ""} title="move group up">↑</button>
+        <button class="ibtn" data-ga="down" ${gi === S.groups.length - 1 ? "disabled" : ""} title="move group down">↓</button>
+        <button class="ibtn danger" data-ga="del" title="delete group (its services become ungrouped)">delete</button>
+        <small class="mute" style="margin-left:auto">${g.hosts.length} service${g.hosts.length === 1 ? "" : "s"}</small></div>
+      ${g.hosts.map((h, i) => srow(h, gi, i, g.hosts.length)).join("") || '<div class="hint">Empty. Move services here with "move to…".</div>'}
+    </div>`).join("");
+  const loose = all.filter(h => !grouped.has(h));
+  $("unassigned").innerHTML = loose.length ? `<div class="grp-ed" data-g="-1" style="margin-top:12px"><div class="gh"><b>Not in a group</b>
+      <small class="mute">shown as "New / other" on the dashboard</small></div>${loose.map(h => srow(h, -1, 0, 0)).join("")}</div>` : "";
+  $("hidden-wrap").innerHTML = S.skip_hosts.length ? `<div class="hint" style="margin-bottom:6px">Hidden from the dashboard (click to show again):</div>
+      <div class="chiplist">${S.skip_hosts.map(h => `<button data-unhide="${esc(h)}">${esc(h)} ✕</button>`).join("")}</div>` : "";
+  document.querySelectorAll("#groups input, #groups button, #groups select, #unassigned input, #unassigned button, #unassigned select, #hidden-wrap button, #add-group")
+    .forEach(el => el.disabled = el.disabled || !V.ui_enabled);
+}
+
+function onServicesEvent(e) {
+  const t = e.target, row = t.closest(".srow"), grp = t.closest(".grp-ed");
+  const gi = grp ? +grp.dataset.g : null;
+  if (t.dataset.unhide) { S.skip_hosts = S.skip_hosts.filter(h => h !== t.dataset.unhide); renderServices(); return setDirty(); }
+  if (t.hasAttribute("data-gname")) { if (e.type === "input") { S.groups[gi].name = t.value; setDirty(); } return; }
+  if (t.dataset.ga && e.type === "click") {
+    const g = S.groups;
+    if (t.dataset.ga === "up") [g[gi - 1], g[gi]] = [g[gi], g[gi - 1]];
+    if (t.dataset.ga === "down") [g[gi + 1], g[gi]] = [g[gi], g[gi + 1]];
+    if (t.dataset.ga === "del" && confirm(`Delete the group "${g[gi].name}"? Its services become ungrouped.`)) g.splice(gi, 1);
+    renderServices(); return setDirty();
+  }
+  if (!row) return;
+  const host = row.dataset.host;
+  if (t.dataset.f && e.type === "input") {
+    app(host)[t.dataset.f] = t.value.trim(); cleanApp(host); setDirty();
+    if (t.dataset.f === "icon") {   // preview the new icon right away
+      const img = row.querySelector("img,.lt"), src = iconSrc(host);
+      if (img && src) img.outerHTML = `<img src="${esc(src)}" alt="" data-letter="?" onerror="iconFail(this)">`;
+    }
+    return;
+  }
+  const a = t.dataset.a;
+  if (a === "move" && e.type === "change" && t.value !== "") {
+    S.groups.forEach(g => g.hosts = g.hosts.filter(h => h !== host));
+    if (+t.value >= 0) S.groups[+t.value].hosts.push(host);
+  } else if ((a === "up" || a === "down") && e.type === "click") {
+    const hs = S.groups[gi].hosts, i = hs.indexOf(host), j = a === "up" ? i - 1 : i + 1;
+    [hs[i], hs[j]] = [hs[j], hs[i]];
+  } else if (a === "hide" && e.type === "click") {
+    S.groups.forEach(g => g.hosts = g.hosts.filter(h => h !== host));
+    if (!S.skip_hosts.includes(host)) S.skip_hosts.push(host);
+  } else return;
+  renderServices(); setDirty();
+}
+["click", "input", "change"].forEach(ev => {
+  $("groups").addEventListener(ev, onServicesEvent); $("unassigned").addEventListener(ev, onServicesEvent); $("hidden-wrap").addEventListener(ev, onServicesEvent);
+});
+$("add-group").onclick = () => { S.groups.push({name: "New group", hosts: []}); renderServices(); setDirty(); };
+
+// ---------- extra services ----------
+function renderExtras() {
+  $("extras").innerHTML = S.services.map((x, i) => `<div class="fgrid" data-i="${i}" style="grid-template-columns:1fr 1.4fr auto auto;align-items:end;margin-bottom:8px">
+      <label class="field"><span>Name (shown, and links to https://name)</span><input type="text" value="${esc(x.name)}" data-x="name" placeholder="nas.lan"></label>
+      <label class="field"><span>Address to check</span><input type="url" value="${esc(x.url)}" data-x="url" placeholder="http://192.168.1.5:5000"></label>
+      <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" ${x.auth ? "checked" : ""} data-x="auth"> 🔒 SSO</label>
+      <button class="ibtn danger" data-xdel style="margin-bottom:6px">remove</button></div>`).join("") || '<div class="hint">None.</div>';
+  $("extras").querySelectorAll("input,button").forEach(el => el.disabled = !V.ui_enabled);
+  $("add-extra").disabled = !V.ui_enabled;
+}
+$("extras").addEventListener("input", e => { const row = e.target.closest("[data-i]"); if (!row) return; const x = S.services[+row.dataset.i], k = e.target.dataset.x;
+  x[k] = k === "auth" ? e.target.checked : e.target.value.trim(); setDirty(); });
+$("extras").addEventListener("click", e => {   // ✕ on an extra service
+  if (!e.target.hasAttribute("data-xdel")) return;
+  S.services.splice(+e.target.closest("[data-i]").dataset.i, 1);
+  renderExtras(); renderServices(); setDirty();
+});
+$("add-extra").onclick = () => { S.services.push({name: "", url: "", auth: false}); renderExtras(); setDirty(); };
+
+// ---------- integrations ----------
+const INTEG = [
+  {k: "qbittorrent", title: "qBittorrent", what: "torrents + VPN-leak check", fields: [["qbit_user", "Username", "text"], ["qbit_pass", "Password", "password"]],
+   extra: `<label class="field"><span>Your real home IP (optional)</span><input type="text" data-k="qbittorrent.home_ip" placeholder="203.0.113.10">`
+        + `<small>If qBittorrent ever shows this IP, the VPN leaked: big red banner.</small></label>`,
+   url: "http://192.168.1.10:8080"},
+  {k: "seerr", title: "Seerr / Overseerr / Jellyseerr", what: "approve requests", fields: [["seerr_key", "API key", "password"]], url: "http://overseerr:5055",
+   help: "Settings → General → API Key"},
+  {k: "tautulli", title: "Tautulli", what: "Plex Now Playing", fields: [["tautulli_key", "API key", "password"]], url: "http://tautulli:8181",
+   help: "Settings → Web Interface → API Key"},
+];
+function renderInteg() {
+  $("integ").innerHTML = INTEG.map(it => {
+    const urlLocked = V.locked_urls[it.k], on = S[it.k].url && it.fields.every(([f]) => V.secrets[f].set);
+    return `<div class="integ" data-it="${it.k}">
+      <h3><span>${esc(it.title)} <small class="mute" style="font:400 12px 'M PLUS Rounded 1c'">${esc(it.what)}</small></span>
+        <span class="${on ? "ok-t" : "mute"}" style="font-size:12px">${on ? "● on" : "○ off"}</span></h3>
+      <label class="field"><span>Address</span><input type="url" data-k="${it.k}.url" placeholder="${esc(it.url)}" ${urlLocked ? "disabled" : ""}>
+        ${urlLocked ? '<small class="lockt">🔒 set in the environment</small>' : ""}</label>
+      ${it.fields.map(([f, label, type]) => { const st = V.secrets[f];
+        return `<label class="field" style="margin-top:8px"><span>${esc(label)}${it.help && type === "password" ? ` <small>(${esc(it.help)})</small>` : ""}</span>
+          <input type="${type}" data-secret="${f}" autocomplete="${type === "password" ? "new-password" : "off"}" ${st.locked ? "disabled" : ""}
+            placeholder="${st.locked ? "🔒 set in the environment" : st.set ? "•••••• saved (leave empty to keep)" : "not set"}">
+          ${st.set && !st.locked ? `<small><label style="display:inline-flex;gap:4px;align-items:center">`
+                                   + `<input type="checkbox" data-clear="${f}"> remove saved value</label></small>` : ""}</label>`; }).join("")}
+      ${it.extra ? `<div style="margin-top:8px">${it.extra}</div>` : ""}
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center"><button class="ibtn" data-test="${it.k}">Test</button><span class="res" data-res="${it.k}"></span></div>
+    </div>`; }).join("");
+}
+$("integ").addEventListener("input", e => {
+  if (e.target.dataset.secret) { SEC[e.target.dataset.secret] = e.target.value; setDirty(); }
+  if (e.target.dataset.clear) { SEC[e.target.dataset.clear + "_clear"] = e.target.checked; setDirty(); }
+});
+$("integ").addEventListener("click", async e => {
+  const k = e.target.dataset.test; if (!k) return;
+  const res = document.querySelector(`[data-res="${k}"]`);
+  if (dirty) { res.innerHTML = '<span class="warn-t">Save first: Test uses the saved settings.</span>'; return; }
+  res.textContent = "testing…";
+  try { const r = await post("/api/settings/test", {name: k}); res.innerHTML = `<span class="${r.ok ? "ok-t" : "crit-t"}">${r.ok ? "✓" : "✗"} ${esc(r.detail)}</span>`; }
+  catch (err) { res.innerHTML = `<span class="crit-t">✗ ${esc(err.message)}</span>`; }
+});
+
+// ---------- fixed settings ----------
+function renderInfra() {
+  const i = V.infra;
+  $("infra").innerHTML = [
+    ["Dashboard address (CSRF guard)", i.origins.length ? i.origins.join(", ") : "not set: any page on the dashboard's own address (ORIGIN)"],
+    ["Only accept connections from", i.trusted_proxy || "anyone (TRUSTED_PROXY not set)"],
+    ["NPM folder", i.npm_dir],
+    ["Saving", V.writable ? "data folder is writable ✓" : "data folder NOT writable ✗"],
+    ["Root collector", V.collector ? "running ✓ (configure in /etc/homelab-dash/collector.toml)" : "not installed (drives, GPU and security panels need it)"],
+  ].map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("");
+}
+
+// ---------- load / save ----------
+function showErr(m) { $("banner").hidden = false; $("banner").textContent = m; $("banner").scrollIntoView({behavior: "smooth", block: "center"}); }
+function render() {
+  S = structuredClone(V.settings); SEC = {};
+  if (V.settings.site.favicon) document.querySelector("link[rel=icon]").href = V.settings.site.favicon;
+  document.title = "Settings · " + S.site.title; $("site-title").textContent = S.site.title; $("demo-tag").hidden = !V.demo;
+  renderInteg(); bindFields(); renderMascot(); renderFav(); renderThemes(); renderServices(); renderExtras(); renderInfra();
+  $("banner").hidden = true; setDirty(false);
+}
+async function load() { V = await api("/api/settings"); render(); }
+$("reload").onclick = () => { if (!dirty || confirm("Discard your unsaved changes?")) render(); };
+$("save").onclick = async () => {
+  $("save").disabled = true; $("msg").textContent = "Saving…";
+  try {
+    S.services = S.services.filter(x => x.name || x.url);
+    V = await post("/api/settings", {settings: S, secrets: SEC});
+    render(); $("msg").innerHTML = V.demo_not_saved ? '<span class="ok-t">✓ Looks valid! (Demo: nothing is really saved, so the next visitor sees the original.)</span>'
+      : '<span class="ok-t">✓ Saved. The dashboard uses the new settings right away.</span>';
+  } catch (e) { showErr("Not saved: " + e.message); setDirty(true); }
+};
+(function bubbles() {
+  const box = $("bubbles"); if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (let i = 0; i < 12; i++) { const b = document.createElement("i"), s = 14 + Math.random() * 40;
+    Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%",
+                            animationDuration: 16 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"});
+    box.appendChild(b); }
+})();
+load().catch(e => showErr("Couldn't load settings: " + e.message));

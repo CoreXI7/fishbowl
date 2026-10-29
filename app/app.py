@@ -1082,6 +1082,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, page, "text/html; charset=utf-8")
         elif p in ("/style.css", "/themes.css"):
             self.send(200, open(os.path.join(HERE, p[1:]), "rb").read(), "text/css; charset=utf-8", "no-cache")
+        elif p in ("/js/index.js", "/js/settings.js", "/js/theme-boot.js"):
+            self.send(200, open(os.path.join(HERE, p[1:]), "rb").read(), "text/javascript; charset=utf-8", "no-cache")
         elif p in API:
             ttl, fn = API[p]
             if p in FEATURE and not FEATURE[p]()["on"]:
