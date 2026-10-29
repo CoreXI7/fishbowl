@@ -466,6 +466,28 @@ def ack_logins():
     return {"ok": True, "acked": len(new)}
 
 
+def add_known_ips(ip=None, everything=False):
+    """Put IPs on the known list from the SSH detail view: one (ip), or every unknown one (everything=True, "Add all").
+    Only IPs that really logged in over SSH (the server's own data, never failed attempts) can be added,
+    so a forged request can't trust an attacker."""
+    seen = {l.get("ip") for l in (((read_hw() or {}).get("security") or {}).get("ssh") or {}).get("logins", [])}
+    ssh = security_detail().get("ssh") or {}
+    seen |= {x.get("ip") for x in ssh.get("logins", []) + ssh.get("sources", [])}
+    if everything:
+        want = sorted(i for i in seen if isinstance(i, str) and i and not is_known(i))
+    elif not isinstance(ip, str) or ip not in seen:
+        raise cfgstore.Invalid("that IP hasn't logged in over SSH in the last 7 days")
+    else:
+        want = [] if is_known(ip) else [ip]
+    if not want or DEMO:
+        return {"ok": True, "added": want}
+    with _cfg_lock:
+        new = cfgstore.validate({**ED, "known_ips": ED["known_ips"] + want}, ED)
+        cfgstore.save(new, STORE)
+        apply_settings()
+    return {"ok": True, "added": want}
+
+
 def system():
     """/api/system: CPU, memory, temps from the host's /proc and /sys (mounted into the container),
     plus everything the root collector reports (drives, GPU, security, backups, the usage breakdown)."""
@@ -1016,6 +1038,12 @@ class Handler(BaseHTTPRequestHandler):
             except PermissionError:
                 raise cfgstore.Invalid("can't write to the data folder")
             print(f"SSH logins marked as reviewed by {who}", flush=True)
+            return self.send(200, result)
+        if path == "/api/security/known":
+            d = self.json_body(200)
+            result = add_known_ips(d.get("ip"), everything=d.get("all") is True)
+            if result["added"]:
+                print(f"known IPs {', '.join(result['added'])} added by {who}", flush=True)
             return self.send(200, result)
         if path == "/api/cron/approve":
             try:

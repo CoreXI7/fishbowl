@@ -112,7 +112,7 @@
     </div>
     <div class="tabs sd-tabs" id="sd-tabs" role="tablist"></div>
     <div class="sd-body" id="sd-body"></div>
-    <div class="u-legend"><span class="mute">read-only · checks run every minute, backup sizes once a night · Esc to close</span></div>
+    <div class="u-legend"><span class="mute">checks run every minute, backup sizes once a night · Esc to close</span></div>
   </div>
 </div>
 <script>
@@ -1051,6 +1051,9 @@ function sdTable(head, rows, empty) {
     rows.map(r => `<tr class="${r.cls || ""}">${r.cells.map((c, i) => `<td data-l="${esc(head[i])}">${c ?? ""}</td>`).join("")}</tr>`).join("") +
     "</tbody></table></div>";
 }
+// the yellow "not on your list" tag; with the settings page on, clicking it offers to put that IP on the known list
+const sdAddChip = (ip, cls, txt) => CFG.settings_ui ? `<button type="button" class="chip ${cls} sd-add" data-ip="${esc(ip)}"
+  title="Add ${esc(ip)} to your known IPs">${txt} <b aria-hidden="true">+</b></button>` : sdChip(cls, txt);
 const sdIP = (ip, item) => `<span class="mono">${esc(ip)}</span>${item && item.known ? ` ${sdChip("good", "known")}` : ""}`;
 
 // [class, text] for a tab's header chip and the little dot on its tab
@@ -1121,15 +1124,17 @@ function sdFirewall(d) {
 
 function sdSSH(x) {
   const unk = x.logins.filter(l => flagged(l) && l.on_card), other = (x.sources || []).filter(g => !g.known);
+  const newIPs = [...new Set([...(x.sources || []), ...x.logins].filter(g => !g.known && g.ip).map(g => g.ip))];   // what "Add all" adds
   return (unk.length ? `<div class="sd-alert">⚠ ${unk.length} login${unk.length > 1 ? "s" : ""} from an IP that isn't on your known list. If that wasn't you, act now.</div>` : "") +
     sdSec("Who logged in", `${x.login_count ?? x.logins.length} logins in 7 days, by user, IP and key`, sdTable(["User", "From", "Key", "Logins", "Last", "First"],
       (x.sources || []).map(g => ({cls: g.known ? "" : "warn", cells: [esc(g.user),
-        `${sdIP(g.ip, g)}${g.known ? "" : " " + sdChip("mid", "not on your list")}`, esc(g.key || g.method), esc(g.count), sdWhen(g.last), sdWhen(g.first)]})),
+        `${sdIP(g.ip, g)}${g.known ? "" : " " + sdAddChip(g.ip, "mid", "not on your list")}`, esc(g.key || g.method), esc(g.count), sdWhen(g.last), sdWhen(g.first)]})),
       "no logins in 7 days") + (other.length ? `<div class="sd-note">Not on your list: check the Key column. Your own key from a new
-      network (a phone on mobile data) is expected; a key you don't recognise is not. Fixed places you use can go on the known IPs list in settings.</div>` : "")) +
+      network (a phone on mobile data) is expected; a key you don't recognise is not. Fixed places you use can go on the known IPs list: click the tag next to the IP.${CFG.settings_ui && newIPs.length ?
+      ` <button type="button" class="sd-add-all" data-ips="${esc(newIPs.join(" "))}">Add all ${newIPs.length} to known IPs</button>` : ""}</div>` : "")) +
     sdSec("Latest logins", "newest first", sdTable(["When", "User", "From", "Key"],
       x.logins.slice(0, 15).map(l => ({cls: flagged(l) ? (l.on_card ? "bad" : "warn") : "", cells: [sdWhen(l.time), esc(l.user),
-        `${sdIP(l.ip, l)}${!l.known ? " " + sdChip(l.acked ? "mid" : l.on_card ? "bad" : "mid", l.acked ? "not on list · marked fine" : "NOT on your list") : ""}`, esc(l.key || l.method)]})),
+        `${sdIP(l.ip, l)}${!l.known ? " " + sdAddChip(l.ip, l.acked ? "mid" : l.on_card ? "bad" : "mid", l.acked ? "not on list · marked fine" : "NOT on your list") : ""}`, esc(l.key || l.method)]})),
       "no logins in 7 days")) +
     sdSec("Failed attempts by IP", `${x.attempts_24h} tries in 24 h · ${x.attempts_7d} in 7 days · ${x.failed_ip_count} IPs`,
       sdTable(["IP", "Tries (7 d)", "24 h", "Scans", "Users tried", "Last"], x.failed_ips.map(g => ({cells: [sdIP(g.ip, g),
@@ -1306,6 +1311,16 @@ $("sd-tabs").addEventListener("click", e => {
   const b = e.target.closest("[data-sdt]");
   if (b) { SD.tab = b.dataset.sdt; $("sd-body").scrollTop = 0; renderSec(); }
 });
+$("sd-body").addEventListener("click", async e => {
+  const b = e.target.closest(".sd-add, .sd-add-all");
+  if (!b || b.disabled) return;
+  const all = b.classList.contains("sd-add-all"), ip = b.dataset.ip;
+  const what = all ? `these ${b.dataset.ips.split(" ").length} IPs to your known IPs?\n\n${b.dataset.ips.split(" ").join("\n")}` : `${ip} to your known IPs?`;
+  if (!confirm(`Add ${what}\n\nLogins from ${all ? "them" : "it"} will show as "known" from now on. Only do this for places you trust (home, work), not a phone on mobile data: those IPs change.`)) return;
+  b.disabled = true;
+  try { await postJSON("/api/security/known", all ? {all: true} : {ip}); await loadSec(); loadSystem(); }
+  catch (err) { b.disabled = false; b.textContent = "failed: " + err.message; }
+});
 $("sd-refresh").addEventListener("click", async e => {
   e.target.disabled = true;
   await loadSec();
@@ -1339,6 +1354,7 @@ document.addEventListener("visibilitychange", () => pollers.forEach(p => documen
   try { CFG = await getJSON("/api/config"); }
   catch (e) { setHTML("svc", `<div class="err">config: ${esc(e.message)}</div>`); }
   applyConfig();
+  if (SD.open) renderSec();   // a /?security= deep link drew before the config (settings_ui) arrived
   bubbles();
   poll(loadSystem, 3000);     // CPU/RAM/temps/drives/security (the collector writes every 5 s)
   poll(loadQbit, 5000);
