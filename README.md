@@ -60,11 +60,12 @@ The big ones:
 
 ![Before and after: network, collector CPU, API traffic, wall-view CPU](docs/efficiency-2026-10-29.png)
 
-- **Torrents: 37.6 MB → 0.3 MB a minute.** The dash fetched qBittorrent's whole torrent list (3 MB for 1,500
+- **Network into the dash: 37.6 MB → 1.8 MB a minute.** It fetched qBittorrent's whole torrent list (3 MB for 1,500
   torrents) every 4 seconds to show the few active ones. It now uses qBittorrent's incremental feed (what its own web
-  UI does): the full list once, then only what changed (~24 KB).
-- **The root collector reads the SSH log once a minute, not three times, and ~10× cheaper each time** (`journalctl -n`
-  walked the whole 2 GB journal). Once a minute every tile used to wait 9 seconds for the security checks; now ~6.
+  UI does): the full list once, then only what changed (~24 KB, ~0.3 MB a minute; the rest is the health checks).
+- **The root collector: 4.5 → 0.95 CPU-seconds a minute.** It reads the SSH log once a minute instead of three times,
+  ~10× cheaper each time (`journalctl -n` walked the whole 2 GB journal). Once a minute every tile used to wait 9 seconds
+  for the security checks; now ~7.
 - **Everything the server sends is compressed** (the proxy only compressed HTML): `/api/system` 13.8 → 3.2 KB per poll.
   Reloads get "not modified" for every file that didn't change.
 - **Miku's equalizer and the pulsing "down" badge run on the GPU** (they used to repaint 60 times a second): the wall

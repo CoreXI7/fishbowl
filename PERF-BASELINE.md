@@ -95,3 +95,28 @@ What the numbers say:
 
 DOM nodes and event listeners stay flat over the run (no leaks), JS heap ~1 MB, script time ~0.016 s a minute:
 the page's own JavaScript is cheap. Almost all of the cost is compositing and painting the animations.
+
+## After the hardening (2026-10-29, the same measurements on the live install)
+
+| Metric | Before | After |
+|---|---|---|
+| Root collector CPU (10 min) | 4.52 CPU-s/min | **0.95 CPU-s/min** |
+| Collector memory | 55–73 MiB | 50–197 MiB; the high end is page cache (52 MB anon, 90 MB file, reclaimable), 0 `max` events |
+| Round interval, once a minute | 9.1–9.2 s | **6.85–7.4 s** (normal rounds 5.02 s, as before) |
+| Detail file interval | ~64.3 s | ~62.1 s |
+| Collector minute, security round + SSH details (unprivileged run, same journal) | 3.85 + 1.47 s wall, 4.06 CPU-s | 1.55 + 0.03 s wall, 0.38 CPU-s |
+| Dash container CPU | 1.19% of a core | **0.72%** |
+| Dash container memory | 40–51 MiB | 25–39 MiB |
+| Dash container network received | 37.6 MB/min | **1.77 MB/min** (the torrent feed ~0.3 MB of it; the rest is the 54 health checks) |
+| `/api/system` per response | 13.8 KB | 3.2 KB (gzip) |
+| Wall display's own Chrome (real GPU) | 5.3% | 5.6% (same) |
+
+Headless Chrome, wall 1920×1080, 180 s:
+
+| Run | Before | After |
+|---|---|---|
+| Live data, Gura: CPU / KB per min / first load | 52.0% / 337 / 1.63 MB | 48.0% / 101 / 1.52 MB (fonts 204 → 96 KB, CSS 68 → 18 KB gzipped; the rest is the service icons from the CDN) |
+| Demo, Bubbles, all up | 18.7% | (unchanged look and cost) |
+| Demo, Miku, all up | 27.9%, 3,606 restyles/min | **18.8%**, 50 restyles/min |
+| Demo, Bubbles, one service down | 26.3%, 3,606 restyles/min | **17.7%**, 48 restyles/min |
+| Demo, Gura, all up | 47.1% | 47.1%: the swaying light rays (a large masked layer) are re-composited every frame. Look-alike variants (stepped, smaller layer, rotation only) cost the same; only static rays reach 18.9% |
