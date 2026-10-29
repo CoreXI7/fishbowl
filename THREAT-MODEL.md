@@ -69,14 +69,16 @@ Written for the reference setup (a home server behind a reverse proxy with SSO),
 
 | Source | Sink | Control |
 |---|---|---|
-| qBittorrent / Seerr / Tautulli JSON | page `innerHTML` | the server passes on only typed, clipped fields (`num()`, `text()`; ids must be ints); the page escapes every value, numbers included; CSP `script-src 'self'` with no inline script or handlers |
+| qBittorrent / Seerr / Tautulli JSON | page `innerHTML` | the server passes on only typed, clipped fields (`num()`, `text()`; ids must be ints); the page escapes every integration value, numbers included (the collector's own numbers are typed by the collector); CSP `script-src 'self'` with no inline script or handlers |
+| Tautulli poster art | `/api/plexart` on the dash's origin | raster image types only, `Content-Security-Policy: default-src 'none'` |
 | NPM `server_name`, settings text | page `innerHTML`, attributes | `esc()`; settings validated server-side |
 | Log lines, process names, cron lines | `hw.json` / `sec-detail.json` → page | `clip()` (length, control and bidi characters), `redact()` (secrets), `esc()` in the page |
 | Request path, headers | dash container log | `log_safe()`: control characters shown as `\xNN`, clipped; `X-Real-IP` and the user header count only from the proxy |
 | Authelia SQLite file | root collector's SQLite | bytes read with `O_NOFOLLOW`/`O_NONBLOCK`, size cap, in-memory copy, defensive mode, real tables only, parameter-free fixed queries, row + time limits |
 | `req/cron-approve` | root collector | read with `O_NOFOLLOW`/`O_NONBLOCK`, regular files only, 100 bytes; must be 64 hex chars and equal the live crontab hash |
 | Upstream redirects | dash outbound requests | never followed off-host (health checks count a 3xx as up; icons follow at most 3 on the same host; integrations none) |
-| Upstream answer size | dash memory | `read_capped()`: 32 MB qBittorrent, 8 MB Seerr/Tautulli |
+| Upstream answer size | dash memory | `read_json()`: 32 MB qBittorrent, 8 MB Seerr/Tautulli, at most 1,000,000 JSON values; the torrent state is capped at 20,000 |
+| SSH journal (log lines an attacker writes) | root collector | one bounded read a minute: lines over 1,100 bytes skipped without being held, ASCII only, newest 100,000 kept, process group killed on timeout; the card and the details use the same anchored parser |
 | Shell | none | every command is an argument list, never a shell string |
 
 ## What runs as root
@@ -112,7 +114,12 @@ Each with a test that failed before the fix (`tests/`):
 | Forgeable user/IP and raw control characters in the log; malformed request crashed the logger | `log_safe()`, proxy-only headers, `USER_HEADER` opt-in |
 | IPv6 known-IP prefixes never matched | canonical addresses + prefix matching |
 | Uploads unbounded in number | 200 files / 100 MB |
-| Source-IP-only proxy check on a shared Docker network | `LISTEN` + a network shared only with the proxy (opt-in: needs a compose and proxy change) |
+| Source-IP-only proxy check on a shared Docker network | `LISTEN` + a network shared only with the proxy (opt-in: needs a compose and proxy change); clients that aren't the proxy are dropped before a thread starts |
+
+Found by the reviewers of the fixes, also fixed and tested: poster art from a hostile Tautulli could serve script on the
+dash's origin; a crafted SSH user name could fake a login on the card (and "Add all" could then trust a whole /8);
+deeply nested JSON could exhaust memory under the byte caps; several ways a misbehaving journalctl could stall or
+bloat the collector.
 
 ## Still open
 
@@ -120,3 +127,5 @@ Each with a test that failed before the fix (`tests/`):
   default `NET_RAW` capability) can still reach the dash as the proxy, and read what the proxy sends it.
 - The page loads service icons from a public CDN (`cdn.jsdelivr.net`) and posters from TMDB when those are configured.
 - `style-src` still allows inline styles (the page sets widths and colours inline); styles can't run script.
+- A malicious `journalctl` (that is, root already compromised) whose child calls `setsid()` can keep the detail
+  thread's journal read open; the main loop isn't affected (it shows the last good SSH numbers, marked as old).
