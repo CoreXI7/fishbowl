@@ -345,6 +345,11 @@ def redact(line):
     line = re.sub(r"(?i)\b(\w*(pass(word|wd)?|token|secret|api_?key)\w*\s*[=:]\s*)" + val, r"\1***", line)   # PASSWORD=x
     line = re.sub(r"(?i)(--?[\w-]*(pass(word|wd)?|token|secret|api-?key|auth)[\w-]*[\s=]+)" + val, r"\1***", line)  # --password x
     line = re.sub(r"(\s-p)(?!\s)\S+", r"\1***", line)                                     # mysql -pSecret
+    line = re.sub(r"(\s-u\s+[^\s:]+:)\S+", r"\1***", line)                               # curl -u user:pass
+    line = re.sub(r"(sshpass\s+(?:-\w+\s+)*-p\s*)\S+", r"\1***", line)                   # sshpass -p pw
+    line = re.sub(r"(\s-U\s+[^\s%]+%)\S+", r"\1***", line)                               # smbclient -U user%pw
+    line = re.sub(r"(?i)((?:x-api-key|api-key|cookie|x-auth-token)\s*:\s*)[^\s'\"]+", r"\1***", line)
+    line = re.sub(r"(?i)([?&](?:k|key|token|apikey|api_key|auth|sig|signature|secret|pass(?:word)?)=)[^&\s'\"]+", r"\1***", line)
     line = re.sub(r"(?i)(authorization:\s*\w+\s+)\S+", r"\1***", line)
     return re.sub(r"[A-Za-z0-9_\-+=]{28,}", "…", line)[:220]   # long random-looking tokens
 
@@ -424,7 +429,7 @@ def security():
     if unit and have("journalctl"):
         units = ["-u", unit] + (["-u", "sshd"] if unit == "ssh" else [])   # Debian/Ubuntu call it ssh, others sshd
         logins = []
-        for line in run(["journalctl", *units, "--since", "-7d", "-o", "short-iso", "--no-pager", "-q"], 30).splitlines():
+        for line in run(["journalctl", *units, "--since", "-7d", "-n", "100000", "-o", "short-iso", "--no-pager", "-q"], 30).splitlines():
             m = re.search(r"^(\S+) .*Accepted (\w+) for (\S+) from (\S+)", line)
             if m:
                 logins.append({"time": m.group(1), "method": m.group(2), "user": m.group(3), "ip": m.group(4)})
@@ -444,7 +449,8 @@ def security():
     if SEC.get("process_watch", True):
         procs = run(["ps", "-eo", "pid=,pcpu=,comm=,args=", "--sort=-pcpu"]).splitlines()
         watch = tuple(SEC.get("bad_process_names", MINERS))
-        found = [p.split(None, 3)[2] for p in procs if any(m in p.lower() for m in watch) and "homelab-dash" not in p]
+        me = str(os.getpid())                                 # by PID: a name check could be dodged by a process naming itself
+        found = [p.split(None, 3)[2] for p in procs if any(m in p.lower() for m in watch) and p.split(None, 1)[0] != me]
         top = []
         snap = run(["top", "-b", "-n", "2", "-d", "1", "-o", "%CPU", "-w", "200"]).split("\n\n")
         rows = [l.split() for l in (snap[-1].splitlines() if snap else []) if re.match(r"\s*\d+ ", l)]
