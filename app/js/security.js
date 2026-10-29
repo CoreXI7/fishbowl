@@ -56,6 +56,7 @@ function renderSecurity(hw) {
         <span>${s.firewall ? ok(fwOk, fw, fw) : ""}</span></h3>
       ${s.f2b ? row(`Banned right now (${esc(s.f2b.jail)})`, s.f2b.banned_now) + row("Banned total (since restart)", s.f2b.banned_total) : ""}
       ${s.ssh ? row("SSH failures, 24h", s.ssh.failed_24h) : ""}
+      ${s.ssh && s.ssh.stale ? row("SSH log", `<span class="warn-t">${s.ssh.as_of ? "as of " + ago2(s.ssh.as_of) : "can't be read"}</span>`) : ""}
       ${s.f2b && s.f2b.ips.length ? `<details data-k="f2b-ips"><summary>banned IPs</summary><div class="mono">${s.f2b.ips.map(esc).join("<br>")}</div></details>` : ""}</div>`);
   }
   if (s.ssh) {

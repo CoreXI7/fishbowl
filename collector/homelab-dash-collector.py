@@ -450,8 +450,9 @@ def ssh_journal(units, timeout=60, wait=None):
     (1.5 s of CPU per read on a 2 GB journal); without it, it seeks to --since. The newest JOURNAL_MAX_LINES are
     kept while streaming, and lines over JOURNAL_LINE_MAX bytes (no real sshd line is) are skipped: at most ~110 MB,
     and only one copy at a time. On timeout journalctl's whole process group is killed (a child holding the pipe
-    can't keep the read open). wait: seconds to wait for a read already running in the other thread (then the
-    last lines are used). Raises CheckFailed like out()."""
+    can't keep the read open). wait: seconds to wait for a read already running in the other thread; after that
+    it raises CheckFailed("busy") (the old lines were let go for the re-read) and the card uses LAST_SSH.
+    Raises CheckFailed like out()."""
     if not _journal["lock"].acquire(timeout=-1 if wait is None else wait):
         if _journal["lines"] is not None:
             return _journal["lines"]
@@ -479,7 +480,8 @@ def ssh_journal(units, timeout=60, wait=None):
             lines = list(collections.deque(_journal_lines(p.stdout), maxlen=JOURNAL_MAX_LINES))
         finally:
             timer.cancel()
-            timer.join()
+            if timer.ident is not None:                   # start() itself can fail (no thread left)
+                timer.join()
             p.stdout.close()
             try:
                 rc = p.wait(5)
@@ -529,8 +531,9 @@ def security():
             if a and valid_ip(a["ip"]):
                 logins.append({"time": m[1], "method": a["method"], "user": clip(a["user"], 64), "ip": valid_ip(a["ip"])})
         if lines is not None:
-            LAST_SSH[0] = {"logins": logins[-8:][::-1], "failed_24h": failed}
-        s["ssh"] = LAST_SSH[0] or {"logins": [], "failed_24h": 0}      # a failed read keeps the last good numbers
+            LAST_SSH[0] = {"logins": logins[-8:][::-1], "failed_24h": failed, "as_of": int(time.time())}
+        # a failed read keeps the last good numbers, and says so (the card shows "as of …")
+        s["ssh"] = {**(LAST_SSH[0] or {"logins": [], "failed_24h": 0, "as_of": None}), "stale": lines is None}
     authelia = SEC.get("authelia_container", "")
     if authelia and have("docker"):
         fails = []

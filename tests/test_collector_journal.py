@@ -79,7 +79,11 @@ class Journal(unittest.TestCase):
         good = self.col.security()["ssh"]
         self.col._journal["at"] = float("-inf")
         os.environ["FAKE_MODE"] = "fail"
-        self.assertEqual(self.col.security()["ssh"], good)
+        again = self.col.security()["ssh"]
+        self.assertEqual(again["logins"], good["logins"])
+        self.assertEqual(again["failed_24h"], good["failed_24h"])
+        self.assertEqual((good["stale"], again["stale"]), (False, True), "the card is told the numbers are old")
+        self.assertEqual(again["as_of"], good["as_of"])
 
     def calls(self):
         return open(self.log).read().splitlines() if os.path.exists(self.log) else []
