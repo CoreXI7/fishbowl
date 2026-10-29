@@ -584,7 +584,13 @@ def plex_art(img):
         return None
     q = urllib.parse.urlencode({"apikey": TAUTULLI["secrets"][0], "cmd": "pms_image_proxy", "img": img, "width": 200, "height": 300})
     with STRICT.open(f"{TAUTULLI['url']}/api/v2?{q}", timeout=10) as r:
-        return r.read(2_000_000), r.headers.get("Content-Type", "image/jpeg")
+        ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype not in ART_TYPES:       # only raster images: an SVG or HTML answer could run script on our origin
+            return None
+        return r.read(2_000_000), ctype
+
+
+ART_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 # ---------- Seerr / Overseerr / Jellyseerr (same API) ----------
@@ -943,7 +949,7 @@ class Handler(BaseHTTPRequestHandler):
                 art = None
             if not art:
                 return self.send(404, {"error": "no art"})
-            self.send(200, art[0], art[1], "private, max-age=86400")
+            self.send(200, art[0], art[1], "private, max-age=86400", {"Content-Security-Policy": "default-src 'none'"})
         elif p == "/api/icon" and not DEMO:
             ico = favicon(query.get("host", [""])[0])
             if not ico:
