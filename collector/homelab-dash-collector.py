@@ -444,7 +444,7 @@ def security():
             m = re.search(r"^(\S+) .*Accepted (\w+) for (\S+) from (\S+)", line)
             if m:
                 logins.append({"time": m.group(1), "method": m.group(2), "user": m.group(3), "ip": m.group(4)})
-        day = run(["journalctl", *units, "--since", "-24h", "--no-pager", "-q"], 30)
+        day = run(["journalctl", *units, "--since", "-24h", "-n", "100000", "--no-pager", "-q"], 30)
         s["ssh"] = {"logins": logins[-8:][::-1],
                     "failed_24h": len(re.findall(r"Failed password|Invalid user|authentication failure", day))}
     authelia = SEC.get("authelia_container", "")
@@ -452,6 +452,8 @@ def security():
         fails = []
         out = subprocess.run(["docker", "logs", "--since", "24h", authelia], capture_output=True, text=True, timeout=30)
         for line in (out.stdout + out.stderr).splitlines():
+            if len(line) > 2000 or "Unsuccessful" not in line:      # crafted giant lines made the regex below crawl
+                continue
             m = re.search(r'time="([^"]+)".*Unsuccessful (\w+) authentication attempt by user \'([^\']*)\'.*remote_ip=(\S+)', line)
             if m:
                 fails.append({"time": m.group(1), "factor": m.group(2), "user": m.group(3), "ip": m.group(4)})
@@ -614,13 +616,16 @@ def read_regular(path, limit):
 def tail_lines(path, max_bytes=2_000_000):
     """The last max_bytes of a log file as lines (some logs can be grown at will by anyone who can reach the box)."""
     try:
-        with open(path, "rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - max_bytes))
-            data = f.read()
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError:
         return []
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):          # a FIFO would block the details thread for good
+            return []
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - max_bytes))
+        data = f.read()
     lines = data.decode("utf-8", "replace").splitlines()
     return lines[1:] if size > max_bytes else lines         # the first line was cut in the middle
 
@@ -702,7 +707,7 @@ def fail2ban_detail():
 
 
 SSH_LINE = re.compile(r"^(\S+) \S+ sshd(?:-session)?\[(\d+)\]: (.*)$")      # OpenSSH 9.8+ logs as sshd-session
-SSH_ACCEPT = re.compile(r"^Accepted (?P<method>[\w/-]+) for (?P<user>\S+) from (?P<ip>\S+) port \d+ ssh2(?:: \S+ (?P<fp>SHA256:\S+))?$")
+SSH_ACCEPT = re.compile(r"^Accepted (?P<method>[\w/-]+) for (?P<user>\S+) from (?P<ip>\S+) port \d+ ssh2(?:: \S+ (?P<fp>SHA256:\S+)(?: .*)?)?$")
 # User names can contain spaces (even "x from 192.168.1.5 port 1"), so the IP is taken from the END of the line.
 _END = r" port \d+(?: ssh2)?(?: \[preauth\])?$"
 SSH_FAIL = [re.compile(x + _END) for x in (               # someone tried to log in (with a user name)
@@ -824,9 +829,9 @@ def authelia_detail():
     now = int(time.time())
     if not no_symlink(db):
         raise CheckFailed("authelia_db goes through a symlink")
-    data = read_regular(db, 64 << 20)
+    data = bytearray(read_regular(db, 16 << 20))
     if data[18:20] == b"\x02\x02":                        # a WAL-mode header can't be used in memory: read it as rollback mode
-        data = data[:18] + b"\x01\x01" + data[20:]
+        data[18:20] = b"\x01\x01"                          # (sign-ins still in the -wal file show up after its next checkpoint)
     con = sqlite3.connect(":memory:")
     try:
         if hasattr(con, "setconfig"):                     # Python 3.12+
@@ -837,7 +842,7 @@ def authelia_detail():
         con.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
         deadline = time.monotonic() + 5
         con.set_progress_handler(lambda: time.monotonic() > deadline, 10_000)   # a true return stops the query
-        con.deserialize(data)
+        con.deserialize(bytes(data))
         con.execute("PRAGMA query_only = ON")
         kinds = dict(con.execute("SELECT name, type FROM sqlite_schema WHERE name IN (?, ?, ?)", AUTHELIA_TABLES).fetchall())
         if kinds.get("authentication_logs") != "table":
@@ -880,7 +885,8 @@ def authelia_detail():
                 g["last"] = max(g["last"], ts)
     events.sort(key=lambda e: -e["time"])                   # newest first
     top = lambda d: sorted(d.values(), key=lambda g: (-g["count"], -g["last"]))[:30]
-    return {"events": events[:60], **n, "fail_by_user": top(by_user), "fail_by_ip": top(by_ip), "bans": bans, "checked": now}
+    return {"events": events[:60], **n, "fail_by_user": top(by_user), "fail_by_ip": top(by_ip), "bans": bans,
+            "truncated": len(rows) >= 5000, "checked": now}
 
 
 def urlhost(uri):
@@ -1080,7 +1086,8 @@ def backup_detail():
                 first = today[0]                          # the whole step: from the line before its first hit to its last hit
                 job["took"] = last["time"] - first["time"] + (first["took"] or 0) if len(today) > 1 else last["took"]
                 need = int(j.get("min_count", 1))
-                if len(today) < need:
+                running = lday == time.strftime("%Y-%m-%d") and log_mtime and now - log_mtime < 900   # the run may still be going
+                if len(today) < need and not running:
                     problems.append(f"only {len(today)} of {need} done on {lday}")
             if j.get("fail_regex"):                       # its own failure line in the latest run (e.g. inside "ERRORS: ...")
                 bad = [l for l in run_lines if re.search(j["fail_regex"], l)]
