@@ -23,7 +23,13 @@ title, the 🎨 theme button, the ⚙ settings page and the wall-mode button)
 ### ⭐ Security audit and hardening (Oct 29)
 
 A full audit of the dashboard and the root collector: a [threat model](THREAT-MODEL.md), a working proof of concept for
-each problem found, then a fix with a test that failed before it (`tests/`, stdlib only). The big ones:
+each problem found, then a fix with a test that failed before it (68 tests in `tests/`, stdlib only). Five separate
+reviewers (security, correctness, UI, and two for the root collector, one of them only trying to break it) then
+checked the fixes, found a few more problems, and those are fixed and tested too.
+
+![Security audit: every problem found, its severity, all fixed](docs/security-audit-2026-10-29.png)
+
+The big ones:
 
 - **A taken-over qBittorrent or Seerr could run script in your dashboard.** A few numbers and ids from them went into
   the page unescaped, and the Content-Security-Policy allowed inline script, so a hostile answer could act as you
@@ -36,12 +42,19 @@ each problem found, then a fix with a test that failed before it (`tests/`, stdl
   Seerr's API key along. Redirects to another host are no longer followed (a redirect still counts as "up").
 - **Other containers can be locked out completely.** The "only my proxy" check is by source address, on a Docker
   network other containers share. The new `LISTEN` setting lets the dash answer only on a network that the proxy alone
-  shares with it ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)).
+  shares with it ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)), and a client that isn't the proxy is
+  now dropped before the server even starts a thread for it (no more tying up the dash with idle connections).
+- **Found by the reviewers:** poster art from a hostile Tautulli could carry script (now raster images only, with a
+  no-script policy); a crafted SSH user name could fake a login on the card and, through "Add all", trust a whole IP
+  range (the card now uses the same strict parser as the detail view, and only full addresses can be added);
+  deeply nested JSON could exhaust memory even under the size caps (answers with more values than any real one are
+  refused before parsing).
 - **The dashboard can't stall the root collector.** A FIFO or symlink planted in the dash's request folder used to
   freeze the collector's main loop (every tile goes stale) or make root open a file of the dash's choosing.
 - Smaller ones: answers from qBittorrent, Seerr and Tautulli are size-capped (a 150 MB answer pushed the dash past its
   memory cap); the container log escapes control characters and only believes the proxy about who sent a request;
-  IPv6 prefixes in the known-IP list now match; uploads are limited to 200 files / 100 MB.
+  IPv6 prefixes in the known-IP list now match however they're written; uploads are limited to 200 files / 100 MB;
+  if the SSH log can't be read, the card says "as of …" instead of looking like a quiet day.
 
 ### ⭐ Much lighter on the network and the CPU (Oct 29)
 
@@ -253,9 +266,20 @@ DEMO=1 python3 app/app.py          # Python 3.11+, then open http://localhost:80
    sudo systemctl restart homelab-dash-collector
    ```
    Needs Python 3.11+ on the host. Uses `smartctl` (smartmontools), and `nvidia-smi`, `fail2ban-client`,
-   `docker` if present. With every security check on, it costs about 4.5 s of CPU a minute (measured on a
-   32-thread box with a busy SSH log, ~0.2% of the machine). Uninstall: `sudo bash collector/install.sh --uninstall`.
+   `docker` if present. With every security check on, it costs well under a second of CPU a minute (measured on a
+   32-thread box with a busy 2 GB journal; it was 4.5 s before Oct 29). Uninstall: `sudo bash collector/install.sh --uninstall`.
    It's configured by file on purpose: it runs as root, so a web page shouldn't be able to change what it does.
+
+Every setting (settings page, environment, collector) is listed in [docs/SETTINGS.md](docs/SETTINGS.md).
+
+### Tests
+
+```sh
+python3 -m unittest discover -s tests       # stdlib only; the page tests use headless Chrome if it's installed
+```
+
+Each security fix has a test that failed before it; the fakes in `tests/helpers.py` stand in for qBittorrent, Seerr,
+Tautulli and any web app, so nothing real is contacted.
 
 ## Settings page
 
@@ -309,17 +333,18 @@ Then add a proxy host for it (forward to `homelab-demo:8000`), with no SSO.
   never on the settings page. So is everything about the root collector.
 - Everything typed into the settings page is validated on the server (lengths, URL schemes, icon names, IPs).
   Uploads must really be PNG/JPEG/GIF/WebP (checked by content, not name); SVG is refused because it can carry scripts.
-- `trusted_proxy` (default `nginx`) makes the app refuse any connection that isn't from your reverse proxy,
-  so another container on the same Docker network can't skip the SSO. With `LISTEN` it answers only on a network the
-  proxy alone shares with it, so a container that fakes the proxy's address can't reach it either
-  ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)).
+- `trusted_proxy` (default `nginx`; several names or IPs allowed) makes the app drop any connection that isn't from
+  your reverse proxy, before it starts a thread for it, so another container on the same Docker network can't skip
+  the SSO. With `LISTEN` it answers only on a network the proxy alone shares with it, so a container that fakes the
+  proxy's address can't reach it either ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)).
 - Every POST (saving settings, uploads, approve/decline, cron approval, adding a known IP) requires the browser's
   `Origin` to be the dashboard itself (`ORIGIN`, or its own Host if unset). That blocks other websites from acting for you (CSRF).
 - Everything from outside (torrent names, Plex titles, Seerr usernames, hostnames) is HTML-escaped before it's shown,
   numbers included, and the server passes on only typed, clipped fields. The Content-Security-Policy allows scripts
   only from the dashboard's own files (no inline script or event handlers), and fonts and styles only from itself.
 - Icons are fetched only from hosts the dashboard already knows (no open proxy). No outbound request follows a
-  redirect to another host, and answers are size-capped. Static files can't escape `app/static/`.
+  redirect to another host, and answers are capped in size and in number of JSON values. Poster art passes only as a
+  raster image under a no-script policy. Static files can't escape `app/static/`.
 - The container log escapes control characters and names the sender from the proxy's headers only when the request
   really came from the proxy.
 - The container runs as uid 1000 with a read-only filesystem, all capabilities dropped, and 256 MB / 128 process caps.
