@@ -26,7 +26,7 @@ def load_app(**env):
             "HW_FILE": os.path.join(tmp, "hw", "hw.json"), "REQ_DIR": os.path.join(tmp, "req"), "DEMO": "",
             "ORIGIN": "", "SETTINGS_UI": "1"}
     for k in ("QBIT_URL", "QBIT_USER", "QBIT_PASS", "SEERR_URL", "SEERR_KEY", "TAUTULLI_URL", "TAUTULLI_KEY",
-              "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER"):
+              "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER", "LISTEN"):
         os.environ.pop(k, None)
     os.environ.update({**base, **env})
     for m in ("settings", "demo"):

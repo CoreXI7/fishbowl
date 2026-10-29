@@ -40,18 +40,25 @@ NPM_DIR = INFRA["npm_dir"]
 TRUSTED_PROXY = INFRA["trusted_proxy"]      # e.g. "nginx" or "nginx 10.250.81.3": only those hosts may talk to us
 ALLOWED_ORIGINS = set(INFRA["origins"])
 USER_HEADER = os.environ.get("USER_HEADER", "")   # e.g. Remote-User: logged only if your proxy sets (overwrites) it
+LISTEN = os.environ.get("LISTEN", "")
+# Hosts the dashboard can't reach directly (e.g. on a network only the proxy shares) are checked through the proxy,
+# the way visitors reach them: "host" or "host/path" (path instead of /, useful when / sits behind the proxy's login).
+# Set on the settings page (Services → Advanced), or by env CHECK_VIA_PROXY="a.example.com b.example.com/health",
+# which then wins and locks the field.
+VIA_PROXY_ENV = os.environ.get("CHECK_VIA_PROXY", "").split()
 _cfg_lock = threading.Lock()
 
 
 def apply_settings():
     """(Re)build everything that depends on settings. Called at start and after every save from the GUI."""
-    global ED, STORE, SITE, SKIP_HOSTS, EXTRA_SERVICES, KNOWN_IPS, KNOWN, QBIT, SEERR, TAUTULLI, HOME_IP, SECRETS, qb
+    global ED, STORE, SITE, SKIP_HOSTS, EXTRA_SERVICES, KNOWN_IPS, KNOWN, QBIT, SEERR, TAUTULLI, HOME_IP, SECRETS, qb, VIA_PROXY
     ED, STORE = cfgstore.load(), cfgstore.load_secrets()
     SITE = ED["site"]
     SKIP_HOSTS = set(ED["skip_hosts"])
     EXTRA_SERVICES = ED["services"]                     # [{name, url}] for hosts not in NPM
     KNOWN_IPS = ED["known_ips"]
     KNOWN = known_matcher(KNOWN_IPS)
+    VIA_PROXY = dict((e.split("/", 1)[0], "/" + e.split("/", 1)[1] if "/" in e else "/") for e in VIA_PROXY_ENV or ED["via_proxy"])
 
     def integration(name):
         url, _ = cfgstore.url_of(name, ED)
@@ -168,13 +175,6 @@ def check(host):
     return r
 
 
-# Hosts the dashboard can't reach directly (e.g. on a network only the proxy shares): check them through the
-# proxy instead, the way visitors reach them. Env CHECK_VIA_PROXY="demo.example.com other.example.com/health".
-# An optional path is checked instead of / (useful when / sits behind a login the proxy enforces).
-VIA_PROXY = dict((e.split("/", 1)[0], "/" + e.split("/", 1)[1] if "/" in e else "/")
-                 for e in os.environ.get("CHECK_VIA_PROXY", "").split())
-
-
 class _SNIConnection(http.client.HTTPSConnection):
     """HTTPS to the proxy container while presenting the site's own name (proxies refuse unknown names)."""
     def __init__(self, host, sni, **kw):
@@ -186,11 +186,11 @@ class _SNIConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.sni)
 
 
-def check_via_proxy(host, timeout):
+def check_via_proxy(host, path, timeout):
     t0 = time.monotonic()
     conn = _SNIConnection((TRUSTED_PROXY.split() or ["nginx"])[0], host["name"], port=443, timeout=timeout, context=INSECURE)
     try:
-        conn.request("GET", VIA_PROXY[host["name"]], headers={"Host": host["name"], "User-Agent": UA})
+        conn.request("GET", path, headers={"Host": host["name"], "User-Agent": UA})
         code = conn.getresponse().status
     except Exception as e:
         return {"name": host["name"], "auth": host["auth"], "up": False, "code": None, "ms": None, "err": type(e).__name__}
@@ -203,8 +203,9 @@ def check_via_proxy(host, timeout):
 def check_once(host, timeout=5):
     """One GET / straight to the service's upstream (what NPM forwards to), timed. A redirect counts as an answer
     (it isn't followed: wherever it points, the service itself is up)."""
-    if host["name"] in VIA_PROXY:
-        return check_via_proxy(host, timeout)
+    path = VIA_PROXY.get(host["name"])   # one lookup: a save from the settings page may swap the dict meanwhile
+    if path:
+        return check_via_proxy(host, path, timeout)
     t0 = time.monotonic()
     req = urllib.request.Request(host["upstream"] + "/", method="GET", headers={"User-Agent": UA, "Host": host["name"]})
     try:
@@ -720,7 +721,112 @@ def settings_view():
         "discovered": sorted(set(names) | set(ED["skip_hosts"])), "collector": read_hw() is not None, "demo": DEMO,
         "themes": cfgstore.THEMES,   # built-in themes and their defaults (shown as placeholders in the editor)
         "panels": cfgstore.PANELS,
+        "via_proxy_env": VIA_PROXY_ENV,   # set in the environment: wins over the page and locks the field
+        "setup": setup_checks(),
+        "about": {"listen": LISTEN or "0.0.0.0 (all addresses)", "user_header": USER_HEADER or "", "data_dir": cfgstore.DATA_DIR,
+                  "npm_dir": NPM_DIR, "settings_ui": cfgstore.UI_ENABLED},
     }
+
+
+def _ago(secs):
+    secs = max(0, int(secs))
+    return f"{secs} s" if secs < 120 else f"{secs // 60} min" if secs < 7200 else f"{secs // 3600} h"
+
+
+def setup_checks():
+    """The settings page's Setup checklist: [{id, state, title, detail, steps: [{text, code}], link, optional}].
+    state: ok | problem (needs fixing) | warn (works, but worth fixing) | todo (optional, not set up).
+    Facts and fixes only: no secrets, no file contents. "%ORIGIN%" in a code line = the page's own address."""
+    out = []
+
+    def add(id, state, title, detail, steps=(), link="", optional=False):
+        out.append({"id": id, "state": state, "title": title, "detail": detail,
+                    "steps": [{"text": t, "code": c} for t, c in steps], "link": link, "optional": optional})
+
+    if DEMO:
+        add("proxy", "ok", "Only your reverse proxy can connect", "Demo: the real one accepts only the proxy's address.")
+        add("origin", "ok", "Changes only come from this page", "Demo: the real one checks every change's origin.")
+        add("saving", "ok", "Settings can be saved", "Demo: changes are checked but never saved.")
+        add("services", "ok", "Services found", f"{len(demo.SERVICES)} demo services.", link="#services")
+        add("collector", "ok", "Hardware & security collector", "Demo: fake drives, temperatures and security data.")
+        add("integrations", "ok", "Integrations", "Demo: torrents, requests and now playing are faked.", link="#integrations", optional=True)
+        return out
+
+    if not TRUSTED_PROXY:
+        add("proxy", "problem", "Anyone who can reach the dashboard can change it",
+            "TRUSTED_PROXY isn't set, so any device or container that can reach port 8000 gets in, without your sign-in.",
+            [("In docker-compose.yml, under environment, set your reverse proxy's container name, then run "
+              "docker compose up -d:", "TRUSTED_PROXY: nginx")])
+    elif not proxy_ips():
+        add("proxy", "warn", "The trusted proxy's address can't be looked up",
+            f"TRUSTED_PROXY is {TRUSTED_PROXY!r}, but that name doesn't resolve right now. Is the proxy container "
+            "running and on a network the dashboard shares?")
+    else:
+        add("proxy", "ok", "Only your reverse proxy can connect", f"Connections are accepted only from {TRUSTED_PROXY}.")
+
+    if ALLOWED_ORIGINS:
+        add("origin", "ok", "Changes only come from your dashboard's address", ", ".join(sorted(ALLOWED_ORIGINS)))
+    else:
+        add("origin", "warn", "Set the dashboard's address",
+            "ORIGIN isn't set, so a change is accepted from any page on whatever address the dashboard was opened with. "
+            "Setting it to the address you use is stricter.",
+            [("In docker-compose.yml, under environment:", "ORIGIN: %ORIGIN%")])
+
+    if not cfgstore.UI_ENABLED:
+        add("saving", "ok", "The settings page is read-only", "SETTINGS_UI=0: settings can only be changed in the files.")
+    elif os.access(cfgstore.DATA_DIR, os.W_OK):
+        add("saving", "ok", "Settings can be saved", f"Saved in {cfgstore.DATA_DIR} (settings.json, keys in secrets.json).")
+    else:
+        add("saving", "problem", "Settings can't be saved", f"The data folder ({cfgstore.DATA_DIR}) isn't writable by the container's user.",
+            [("On the host, in the folder with docker-compose.yml:", "sudo chown -R 1000:1000 ./data")])
+
+    npm_ok = os.path.isdir(NPM_DIR) and os.access(NPM_DIR, os.R_OK | os.X_OK)
+    found, extra = (len(read_npm_hosts()) if npm_ok else 0), len(EXTRA_SERVICES)
+    if found or extra:
+        add("services", "ok", "Services found",
+            (f"{found} from Nginx Proxy Manager" if npm_ok else "Nginx Proxy Manager isn't connected")
+            + (f", {extra} added by hand." if extra else "."), link="#services")
+    else:
+        add("services", "problem" if not npm_ok else "warn", "No services yet",
+            ("Nginx Proxy Manager's folder is mounted, but it has no proxy hosts yet." if npm_ok else
+             f"Services are read from Nginx Proxy Manager's proxy_host folder, which isn't mounted at {NPM_DIR}."),
+            [] if npm_ok else [("Using Nginx Proxy Manager? Add its folder under volumes in docker-compose.yml (the left side "
+                                "is your NPM data folder), then run docker compose up -d:", f"- ../nginx/data/nginx/proxy_host:{NPM_DIR}:ro"),
+                               ("No NPM? Add your services by hand in Services → Services not in NPM.", "")],
+            link="#services")
+
+    hw = read_hw()
+    install = [("On the host, in the homelab-dash folder (it runs as root, so this one step needs sudo):",
+                "sudo bash collector/install.sh"),
+               ("Keep these two lines under volumes in docker-compose.yml (they're there by default):",
+                "- /var/lib/homelab-dash:/hw:ro\n- /var/lib/homelab-dash/req:/req")]
+    if hw is None:
+        add("collector", "todo", "Drives, temperatures and security need the collector",
+            "Drives, disk health, the GPU and the Security & backups panels come from a small helper on the host. "
+            "It isn't installed (or its folder isn't mounted).", install, optional=True)
+    else:
+        age = time.time() - num(hw.get("updated"), 0)
+        sd_age = time.time() - (_mtime(SEC_DETAIL_FILE) or 0) / 1e9
+        details = f" Security details: updated {_ago(sd_age)} ago." if sd_age < 600 else " Security details aren't being written."
+        if age < 120:
+            add("collector", "ok", "Hardware & security collector", f"Connected: updated {_ago(age)} ago.{details}")
+        else:
+            add("collector", "problem", "The collector stopped updating", f"Its last update was {_ago(age)} ago.",
+                [("On the host, see why:", "sudo systemctl status homelab-dash-collector"),
+                 ("Its log:", "sudo journalctl -u homelab-dash-collector -n 30")])
+
+    on = {"Torrents": QBIT["on"], "Requests": SEERR["on"], "Now playing": TAUTULLI["on"]}
+    add("integrations", "ok" if any(on.values()) else "todo", "Integrations",
+        " · ".join(f"{k}: {'on' if v else 'off'}" for k, v in on.items()), link="#integrations", optional=True)
+
+    if TRUSTED_PROXY:
+        locked = bool(LISTEN.split()) and not any(a in ("0.0.0.0", "::", "*") for a in LISTEN.split())
+        add("listen", "ok" if locked else "todo", "Locked to the proxy" if locked else "Optional: lock the dashboard to the proxy",
+            "Other containers can't connect at all." if locked else
+            "Other containers on the same Docker network are refused, but one that fakes the proxy's address could get past "
+            "that. A network only the proxy shares closes it.",
+            [] if locked else [("Steps: \"Lock the dash to the proxy\" in docs/SETTINGS.md.", "")], optional=True)
+    return out
 
 
 def test_integration(name):
@@ -941,7 +1047,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             fn()
         except cfgstore.Invalid as e:
-            self.send(400, {"error": str(e)})
+            self.send(400, {"error": str(e), **({"section": e.section} if e.section else {})})
         except Exception as e:
             print(log_safe(f"error on {self.command} {self.path[:80]}: {scrub(f'{type(e).__name__}: {e}')}"), flush=True)
             try:
@@ -1015,7 +1121,7 @@ class Handler(BaseHTTPRequestHandler):
             d = self.json_body(256 * 1024)
             with _cfg_lock:
                 new = cfgstore.validate(d.get("settings"), ED)
-                store = cfgstore.apply_secret_changes(new, ED, d.get("secrets") or {}, STORE)
+                store = cfgstore._in("integrations", cfgstore.apply_secret_changes, new, ED, d.get("secrets") or {}, STORE)
                 if DEMO:                  # public demo: check everything, store nothing (visitors can't change it for others)
                     return self.send(200, {**settings_view(), "settings": new, "demo_not_saved": True})
                 cfgstore.save(new, store)

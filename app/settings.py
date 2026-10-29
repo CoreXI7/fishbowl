@@ -114,6 +114,7 @@ def _seed():
         "site": {k: t.get("site", {}).get(k, v) for k, v in DEFAULT_SITE.items()},
         "groups": t.get("groups", []), "apps": t.get("apps", {}), "services": t.get("services", []),
         "skip_hosts": t.get("proxy", {}).get("skip_hosts", []),
+        "via_proxy": t.get("proxy", {}).get("check_via_proxy", []),
         "known_ips": t.get("security", {}).get("known_ips", []),
         "qbittorrent": {"url": t.get("qbittorrent", {}).get("url", ""), "home_ip": t.get("qbittorrent", {}).get("home_ip", "")},
         "seerr": {"url": t.get("seerr", {}).get("url", "")},
@@ -146,7 +147,16 @@ def url_of(name, editable):
 # ---------- validation: everything from the browser is checked before it's saved ----------
 
 class Invalid(ValueError):
-    pass
+    section = None   # which part of the settings page it's about (set by validate()), so the page can point at it
+
+
+def _in(section, fn, *args):
+    """Run a validator; an error it raises is tagged with the settings page section it belongs to."""
+    try:
+        return fn(*args)
+    except Invalid as e:
+        e.section = e.section or section
+        raise
 
 
 def _s(v, n, what, pattern=None):
@@ -214,7 +224,7 @@ def _personality(src, where):
 
 def _site(site_in):
     """Title, the default theme, and the personality fields (top level = Bubbles; other themes under "themes")."""
-    site = {"title": _s(site_in.get("title"), 60, "title") or DEFAULT_SITE["title"], **_personality(site_in, "")}
+    site = {"title": _s(site_in.get("title"), 60, "title") or DEFAULT_SITE["title"], **_in("themes", _personality, site_in, "")}
     site["click_emoji"] = site["click_emoji"] or "🫧"
     theme = site_in.get("theme")
     site["theme"] = theme if isinstance(theme, str) and theme in THEMES else "bubbles"
@@ -226,7 +236,7 @@ def _site(site_in):
     site["themes"] = {}
     for tid, t in themes_in.items():
         if tid in THEMES and tid != "bubbles" and isinstance(t, dict):   # bubbles = the top-level fields above
-            t = {k: v for k, v in _personality(t, THEMES[tid]["label"] + " theme: ").items() if v}
+            t = {k: v for k, v in _in("themes", _personality, t, THEMES[tid]["label"] + " theme: ").items() if v}
             if t:                                                        # keep only what was actually set
                 site["themes"][tid] = t
     return site
@@ -272,6 +282,21 @@ def _services(services_in):
     return services
 
 
+VIA = r"[A-Za-z0-9.-]{1,253}(/[A-Za-z0-9._~%+,;=:@/-]{0,200})?"
+
+
+def _via_proxy(entries):
+    """Hosts checked through the reverse proxy instead of directly: "host" or "host/path" (path instead of /)."""
+    out = []
+    for e in _list(entries, 100, "check through the proxy"):
+        e = _s(e, 460, "check through the proxy", VIA)
+        if ".." in e.partition("/")[2]:
+            raise Invalid(f"check through the proxy: '{e[:60]}': a path can't contain '..'")
+        if e:
+            out.append(e)
+    return list(dict.fromkeys(out))
+
+
 def _home_ip(qbit_in):
     """Your real WAN IP: qBittorrent reporting it means the VPN isn't in use."""
     home = _s(_obj(qbit_in, "qbittorrent").get("home_ip"), 64, "home IP")
@@ -289,16 +314,18 @@ def validate(d, _old):
     if not isinstance(d, dict):
         raise Invalid("settings must be an object")
     out = {
-        "site": _site(_obj(d.get("site"), "site")),
-        "groups": _groups(d.get("groups")),
-        "apps": _apps(d.get("apps")),
-        "services": _services(d.get("services")),
-        "skip_hosts": [h for h in (_s(h, 253, "hidden host", HOST) for h in _list(d.get("skip_hosts"), 500, "hidden hosts")) if h],
-        "known_ips": [ip for ip in (_ip_or_prefix(v) for v in _list(d.get("known_ips"), 200, "known IPs")) if ip],
+        "site": _in("look", _site, _obj(d.get("site"), "site")),
+        "groups": _in("services", _groups, d.get("groups")),
+        "apps": _in("services", _apps, d.get("apps")),
+        "services": _in("services", _services, d.get("services")),
+        "skip_hosts": _in("services", lambda v: [h for h in (_s(h, 253, "hidden host", HOST) for h in _list(v, 500, "hidden hosts")) if h],
+                          d.get("skip_hosts")),
+        "via_proxy": _in("services", _via_proxy, d.get("via_proxy")),
+        "known_ips": _in("security", lambda v: [ip for ip in (_ip_or_prefix(x) for x in _list(v, 200, "known IPs")) if ip], d.get("known_ips")),
     }
     for name in INTEGRATIONS:
-        out[name] = {"url": _s(_obj(d.get(name), name).get("url"), 500, f"{name} URL", URL)}
-    out["qbittorrent"]["home_ip"] = _home_ip(d.get("qbittorrent"))
+        out[name] = {"url": _in("integrations", _s, _obj(d.get(name), name).get("url"), 500, f"{name} URL", URL)}
+    out["qbittorrent"]["home_ip"] = _in("integrations", _home_ip, d.get("qbittorrent"))
     return out
 
 
