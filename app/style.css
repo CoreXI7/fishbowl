@@ -409,7 +409,7 @@ button.mini .therm{width:.75em;height:1.2em;vertical-align:-.25em}
 
 /* Now Playing takes the whole row ("+N more" / the Plex tile in wall mode); Requests steps aside */
 .duo.plex-wide,body.wall .duo.plex-wide{grid-template-columns:minmax(0,1fr)}
-.duo.plex-wide #s-req{display:none}
+html:not(.no-plex) .duo.plex-wide #s-req{display:none}   /* a hidden Plex never takes Requests' space */
 body.wall .duo.plex-wide .streams{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
 /* the stream list scrolls inside its box on the wall (mouse wheel / touch) */
 body.wall #s-plex{display:flex;flex-direction:column}

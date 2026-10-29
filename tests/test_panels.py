@@ -32,6 +32,11 @@ class Panels(unittest.TestCase):
             self.assertTrue(shown("#k-disk"))
             req_w, main_w = b.js("[document.getElementById('s-req').offsetWidth, document.querySelector('.duo').offsetWidth]")
             self.assertGreater(req_w, main_w * 0.9, "Requests takes the whole row when Plex is hidden")
+            # a browser that had used "+N more" (Plex wide) must not lose Requests once Plex is hidden
+            b.js("localStorage.setItem('plexWide', '1')")
+            b.send("Page.reload")
+            self.assertTrue(b.wait_for("!!document.querySelector('#req .req')", 15))
+            self.assertTrue(shown("#s-req"), "Requests stays when Plex is hidden and was wide")
         finally:
             b.close()
             srv.shutdown()

@@ -102,7 +102,10 @@ html[data-theme="miku"] #bubbles i:nth-child(3n+1)::before{content:"♬";color:v
 html[data-theme="miku"] #bubbles i:nth-child(9n)::before{content:"🥬";font-size:70cqh}
 @keyframes miku-note{0%{transform:translate(0,0) rotate(-12deg)}50%{transform:translate(24px,-55vh) rotate(10deg)}100%{transform:translate(-16px,-115vh) rotate(-8deg);opacity:0}}
 
-@media (prefers-reduced-motion:reduce){html[data-theme="miku"] .eq i{animation:none}}
+@media (prefers-reduced-motion:reduce){html[data-theme="miku"] .eq i{animation:none}
+  html[data-theme="miku"] .eq i:nth-child(1){transform:scaleY(.4)}html[data-theme="miku"] .eq i:nth-child(2){transform:scaleY(.8)}
+  html[data-theme="miku"] .eq i:nth-child(3){transform:scaleY(.55)}html[data-theme="miku"] .eq i:nth-child(4){transform:scaleY(.95)}
+  html[data-theme="miku"] .eq i:nth-child(5){transform:scaleY(.3)}}
 
 /* ===== Gura: hood blue #33739d, silver hair with blue streaks, trident aqua, white shark teeth, pink blush =====
    Fan-made and unofficial; colours inspired by Gawr Gura (hololive production / COVER Corp). No artwork included:
