@@ -11,6 +11,7 @@ import glob
 import hashlib
 import http.client
 import http.cookiejar
+import ipaddress
 import json
 import os
 import re
@@ -42,12 +43,13 @@ _cfg_lock = threading.Lock()
 
 def apply_settings():
     """(Re)build everything that depends on settings. Called at start and after every save from the GUI."""
-    global ED, STORE, SITE, SKIP_HOSTS, EXTRA_SERVICES, KNOWN_IPS, QBIT, SEERR, TAUTULLI, HOME_IP, SECRETS, qb
+    global ED, STORE, SITE, SKIP_HOSTS, EXTRA_SERVICES, KNOWN_IPS, KNOWN, QBIT, SEERR, TAUTULLI, HOME_IP, SECRETS, qb
     ED, STORE = cfgstore.load(), cfgstore.load_secrets()
     SITE = ED["site"]
     SKIP_HOSTS = set(ED["skip_hosts"])
     EXTRA_SERVICES = ED["services"]                     # [{name, url}] for hosts not in NPM
     KNOWN_IPS = ED["known_ips"]
+    KNOWN = known_matcher(KNOWN_IPS)
 
     def integration(name):
         url, _ = cfgstore.url_of(name, ED)
@@ -399,8 +401,28 @@ def hwmon():
     return {"cpu": cpu, "cells": cells}
 
 
+def known_matcher(entries):
+    """Known-IP entries split for is_known(): full addresses in canonical form (IPv6 has many spellings), and
+    prefixes ("203.0.113." / "2001:db8:"), lower-cased."""
+    full, prefixes = set(), []
+    for k in entries:
+        try:
+            full.add(str(ipaddress.ip_address(k)))
+        except ValueError:
+            prefixes.append(k.lower())
+    return full, tuple(prefixes)
+
+
 def is_known(ip):
-    return any(ip == k or (k.endswith(".") and ip.startswith(k)) for k in KNOWN_IPS)
+    """Is this IP on your known list (an exact address, or inside one of the prefixes)?"""
+    if not isinstance(ip, str) or not ip:
+        return False
+    full, prefixes = KNOWN
+    try:
+        canon = str(ipaddress.ip_address(ip))
+    except ValueError:
+        canon = ""
+    return canon in full or ip.lower().startswith(prefixes) or bool(canon and canon.startswith(prefixes))
 
 
 ACKS_FILE = os.path.join(cfgstore.DATA_DIR, "acks.json")   # logins you marked "looks fine" on the dashboard
