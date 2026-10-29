@@ -37,7 +37,7 @@ HW_FILE = os.environ.get("HW_FILE", "/hw/hw.json")
 REQ_DIR = os.environ.get("REQ_DIR", "/req")
 INFRA = cfgstore.infra()
 NPM_DIR = INFRA["npm_dir"]
-TRUSTED_PROXY = INFRA["trusted_proxy"]      # e.g. "nginx": only that host may talk to us
+TRUSTED_PROXY = INFRA["trusted_proxy"]      # e.g. "nginx" or "nginx 10.250.81.3": only those hosts may talk to us
 ALLOWED_ORIGINS = set(INFRA["origins"])
 USER_HEADER = os.environ.get("USER_HEADER", "")   # e.g. Remote-User: logged only if your proxy sets (overwrites) it
 _cfg_lock = threading.Lock()
@@ -88,15 +88,26 @@ def log_safe(text, limit=300):
 
 
 def proxy_ips():
-    """Every address of the trusted reverse proxy (a container on two networks has one per network), looked up at
-    most once a minute: they can change when it's recreated. The last good answer is kept if a lookup fails."""
+    """Every address of the trusted reverse proxy: TRUSTED_PROXY may list several names or IPs (Docker's DNS answers
+    a container's name with its address on one shared network only, so a proxy on two networks may need its second
+    address listed). Looked up at most once a minute (addresses change when it's recreated); for a name whose lookup
+    fails, the last good answer is kept."""
     if time.monotonic() - _proxy_ip["at"] > 60:
-        try:
-            _proxy_ip["ips"] = {a[4][0] for a in socket.getaddrinfo(TRUSTED_PROXY, None)}
-        except OSError:
-            pass
-        _proxy_ip["at"] = time.monotonic()
+        ips = set()
+        for entry in TRUSTED_PROXY.split():
+            try:
+                found = {a[4][0] for a in socket.getaddrinfo(entry, None)}
+                _proxy_ip.setdefault("by", {})[entry] = found
+            except OSError:
+                found = _proxy_ip.get("by", {}).get(entry, set())
+            ips |= found
+        _proxy_ip.update(ips=ips, at=time.monotonic())
     return _proxy_ip["ips"]
+
+
+def allowed_ip(ip):
+    """May this client talk to us at all? Always when no proxy is configured (LAN use) or in the demo."""
+    return not TRUSTED_PROXY or DEMO or ip == "127.0.0.1" or ip in proxy_ips()
 
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -175,7 +186,7 @@ class _SNIConnection(http.client.HTTPSConnection):
 
 def check_via_proxy(host, timeout):
     t0 = time.monotonic()
-    conn = _SNIConnection(TRUSTED_PROXY or "nginx", host["name"], port=443, timeout=timeout, context=INSECURE)
+    conn = _SNIConnection((TRUSTED_PROXY.split() or ["nginx"])[0], host["name"], port=443, timeout=timeout, context=INSECURE)
     try:
         conn.request("GET", VIA_PROXY[host["name"]], headers={"Host": host["name"], "User-Agent": UA})
         code = conn.getresponse().status
@@ -856,10 +867,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(502, {"error": scrub(f"{type(e).__name__}: {e}")})
 
     def allowed(self):
-        if not TRUSTED_PROXY or DEMO:
-            return True
         ip = self.client_address[0]
-        if ip == "127.0.0.1" or ip in proxy_ips():
+        if allowed_ip(ip):
             return True
         print(log_safe(f"blocked direct request from {ip} {self.command} {self.path[:80]}"), flush=True)
         self.send(403, {"error": "forbidden"})
@@ -1062,13 +1071,37 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, {"ok": True})
 
 
+class Server(ThreadingHTTPServer):
+    """Refuses a client that isn't the proxy before a thread is started for it: otherwise any container on the
+    proxy's network could hold the dash's threads (pids_limit) with idle connections. Logged once a minute per IP."""
+    daemon_threads = True
+    _logged = {}
+
+    def verify_request(self, request, client_address):
+        ip = client_address[0]
+        if allowed_ip(ip):
+            return True
+        if time.monotonic() - self._logged.get(ip, float("-inf")) > 60:
+            self._logged[ip] = time.monotonic()
+            print(log_safe(f"blocked direct connection from {ip}"), flush=True)
+        return False
+
+
+class Server6(Server):
+    address_family = socket.AF_INET6
+
+
+def make_servers(listen, port):
+    """One server per LISTEN address (space-separated; IPv6 ones get an IPv6 socket; repeats count once)."""
+    return [(Server6 if ":" in a else Server)((a, port), Handler) for a in dict.fromkeys(listen.split())]
+
+
 if __name__ == "__main__":
     threading.stack_size(4 * 1024 * 1024)  # Alpine's default thread stack is tiny; give each request thread room
-    ThreadingHTTPServer.daemon_threads = True
     port = int(os.environ.get("PORT", "8000"))
     # LISTEN: the addresses to answer on (space-separated). Default: all. Set it to "127.0.0.1 <address on a network
     # only the proxy shares>" so other containers on the proxy's network can't reach the dash at all.
-    servers = [ThreadingHTTPServer((a, port), Handler) for a in (os.environ.get("LISTEN") or "0.0.0.0").split()]
+    servers = make_servers(os.environ.get("LISTEN") or "0.0.0.0", port)
     print(f"homelab-dash listening on {', '.join(f'{s.server_address[0]}:{port}' for s in servers)}"
           + (" (DEMO mode, fake data)" if DEMO else "") + f" · data folder {cfgstore.DATA_DIR}", flush=True)
     for s in servers[1:]:

@@ -60,8 +60,8 @@ Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes en
 
 | Variable | Default | What it does |
 |---|---|---|
-| `TRUSTED_PROXY` | (empty = anyone) | Your reverse proxy's container name or IP: the only client allowed (any of its addresses) |
-| `LISTEN` | `0.0.0.0` | Addresses to answer on, space-separated. With `"127.0.0.1 <address on a network only the proxy shares>"` other containers can't reach the dash at all |
+| `TRUSTED_PROXY` | (empty = anyone) | Your reverse proxy's container name(s) or IP(s), space-separated: the only clients allowed. Others are dropped before a thread is started for them |
+| `LISTEN` | `0.0.0.0` | Addresses to answer on, space-separated (IPv4 or IPv6). With `"127.0.0.1 <address on a network only the proxy shares>"` other containers can't reach the dash at all. Don't mix a wildcard (`0.0.0.0`, `::`) with specific addresses |
 | `ORIGIN` | (the address it's opened on) | The dashboard's public URL(s), space-separated: every POST must come from one (CSRF guard) |
 | `SETTINGS_UI` | `1` | `0` makes the settings page read-only |
 | `USER_HEADER` | (off) | A header naming the SSO user (e.g. `Remote-User`), logged with each change. Only if your proxy sets it itself, and only trusted on requests from `TRUSTED_PROXY` |
@@ -94,6 +94,7 @@ services:
   dash:
     environment:
       LISTEN: "127.0.0.1 10.250.81.2"       # 127.0.0.1 keeps the healthcheck working
+      TRUSTED_PROXY: "nginx 10.250.81.3"    # Docker's DNS gives only one of the proxy's addresses: list the new one
     networks:
       reverse_proxy: {}                    # still needed to reach the services it checks
       dash_front: {ipv4_address: 10.250.81.2}
