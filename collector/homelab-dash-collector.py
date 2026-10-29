@@ -426,32 +426,48 @@ JOURNAL_MAX_LINES = 100_000   # newest lines of the 7-day SSH journal kept (a fl
 _journal = {"at": float("-inf"), "lines": None, "lock": threading.Lock()}
 
 
-def ssh_journal(units, timeout=60):
+def ssh_journal(units, timeout=60, wait=None):
     """The SSH units' journal for the last 7 days (short-iso), shared by the card (main loop) and the detail views
     (their thread): read at most once every 50 s. No -n: with it journalctl walked the whole journal backwards
     (1.5 s of CPU per read on a 2 GB journal); without it, it seeks to --since. The newest JOURNAL_MAX_LINES are
-    kept while streaming, and lines over 2,000 characters (no real sshd line is) are skipped.
-    Raises CheckFailed like out()."""
-    with _journal["lock"]:
+    kept while streaming, and lines over 1,100 characters (no real sshd line is) are skipped: at most ~110 MB, and
+    only one copy at a time. wait: seconds to wait for a read already running in the other thread (then the last
+    lines are used). Raises CheckFailed like out()."""
+    if not _journal["lock"].acquire(timeout=-1 if wait is None else wait):
+        if _journal["lines"] is not None:
+            return _journal["lines"]
+        raise CheckFailed("journalctl is busy (still reading in the other thread)")
+    try:
         if _journal["lines"] is not None and time.monotonic() - _journal["at"] < 50:
             return _journal["lines"]
+        _journal["lines"] = None                          # let the old copy go before reading the new one
         try:
             p = subprocess.Popen(["journalctl", *units, "--since", "-7d", "-o", "short-iso", "--no-pager", "-q"],
                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
         except OSError as e:
             raise CheckFailed(f"journalctl: {e.strerror}")
-        timer = threading.Timer(timeout, p.kill)
-        timer.start()
+        killed = threading.Event()
+        timer = threading.Timer(timeout, lambda: (killed.set(), p.kill()))
         try:
-            lines = list(collections.deque((l.rstrip("\n") for l in p.stdout if len(l) <= 2000), maxlen=JOURNAL_MAX_LINES))
+            timer.start()
+            lines = list(collections.deque((l.rstrip("\n") for l in p.stdout if len(l) <= 1100), maxlen=JOURNAL_MAX_LINES))
         finally:
             timer.cancel()
+            timer.join()
             p.stdout.close()
-            rc = p.wait()
+            try:
+                rc = p.wait(5)
+            except subprocess.TimeoutExpired:             # closed its output but won't exit
+                p.kill()
+                rc = p.wait()
+        if killed.is_set():
+            raise CheckFailed(f"journalctl timed out after {timeout} s")
         if rc != 0:
-            raise CheckFailed(f"journalctl timed out after {timeout} s" if rc < 0 else f"journalctl failed (exit code {rc})")
+            raise CheckFailed(f"journalctl failed ({'signal ' + str(-rc) if rc < 0 else 'exit code ' + str(rc)})")
         _journal.update(at=time.monotonic(), lines=lines)
         return lines
+    finally:
+        _journal["lock"].release()
 
 
 MINERS = ("xmrig", "minerd", "cryptonight", "kdevtmpfsi", "kinsing", "kworkerds", "xmr-stak")
@@ -462,13 +478,6 @@ TOP_AT = [0]         # ... and when they were measured
 def security():
     """fail2ban, SSH logins/failures, Authelia failures, miner process watch, cron watch, immutable files, firewall."""
     s = {}
-    top_proc = None
-    if SEC.get("process_watch", True):
-        try:   # top samples for a second: start it first and read it after the other checks, instead of waiting on it
-            top_proc = subprocess.Popen(["top", "-b", "-n", "2", "-d", "1", "-o", "%CPU", "-w", "200"],
-                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        except OSError:
-            pass
     jail = SEC.get("fail2ban_jail", "sshd")
     if jail and have("fail2ban-client"):
         out = run(["fail2ban-client", "status", jail])
@@ -480,16 +489,19 @@ def security():
     if unit and have("journalctl"):
         units = ["-u", unit] + (["-u", "sshd"] if unit == "ssh" else [])   # Debian/Ubuntu call it ssh, others sshd
         try:
-            lines = ssh_journal(units, 30)
+            lines = ssh_journal(units, 30, wait=5)    # the main loop never waits long for the detail thread's read
         except CheckFailed:
             lines = []
         logins, failed, day_ago = [], 0, time.time() - 86400
         for line in lines:
-            m = re.search(r"^(\S+) .*Accepted (\w+) for (\S+) from (\S+)", line)
-            if m:
-                logins.append({"time": m.group(1), "method": m.group(2), "user": m.group(3), "ip": m.group(4)})
-            elif (n := len(SSH_FAILED.findall(line))) and (when(line) or 0) > day_ago:   # the last 24 h, same lines
+            if (n := len(SSH_FAILED.findall(line))) and (when(line) or 0) > day_ago:   # the last 24 h, same lines
                 failed += n
+            # anchored, like the details: a user name such as "Accepted publickey for root from 10.0.0.2" in a failed
+            # attempt must not show up as a login
+            m = SSH_LINE.match(line)
+            a = SSH_ACCEPT.match(m[3]) if m else None
+            if a and valid_ip(a["ip"]):
+                logins.append({"time": m[1], "method": a["method"], "user": a["user"], "ip": valid_ip(a["ip"])})
         s["ssh"] = {"logins": logins[-8:][::-1], "failed_24h": failed}
     authelia = SEC.get("authelia_container", "")
     if authelia and have("docker"):
@@ -509,12 +521,7 @@ def security():
         me = str(os.getpid())                                 # by PID: a name check could be dodged by a process naming itself
         found = [p.split(None, 3)[2] for p in procs if any(m in p.lower() for m in watch) and p.split(None, 1)[0] != me]
         top = []
-        try:
-            snap = top_proc.communicate(timeout=20)[0].split("\n\n") if top_proc else []
-        except subprocess.TimeoutExpired:
-            top_proc.kill()
-            top_proc.communicate()
-            snap = []
+        snap = run(["top", "-b", "-n", "2", "-d", "1", "-o", "%CPU", "-w", "200"]).split("\n\n")
         rows = [l.split() for l in (snap[-1].splitlines() if snap else []) if re.match(r"\s*\d+ ", l)]
         try:                              # for the Process watch details; never allowed to break this tile
             LAST_TOP[:] = [{"pid": int(f[0]), "user": f[1][:16], "cpu": float(f[8].replace(",", ".")), "mem": float(f[9].replace(",", ".")),
