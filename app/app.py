@@ -902,6 +902,7 @@ def test_integration(name):
 
 IMAGE_MAGIC = {"png": b"\x89PNG\r\n\x1a\n", "jpg": b"\xff\xd8\xff", "gif": b"GIF8", "webp": b"RIFF"}
 IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+MAX_UPLOADS, MAX_UPLOAD_TOTAL = 200, 100 * MB      # mascots and icons: plenty, but can't fill the disk
 
 
 def save_upload(data):
@@ -915,6 +916,11 @@ def save_upload(data):
     os.makedirs(cfgstore.UPLOAD_DIR, exist_ok=True)
     path = os.path.join(cfgstore.UPLOAD_DIR, name)
     if not os.path.exists(path):
+        files = [e for e in os.scandir(cfgstore.UPLOAD_DIR) if e.is_file(follow_symlinks=False)]
+        if len(files) >= MAX_UPLOADS:
+            raise cfgstore.Invalid(f"too many uploads ({MAX_UPLOADS}): delete some from the data folder's uploads/")
+        if sum(e.stat(follow_symlinks=False).st_size for e in files) + len(data) > MAX_UPLOAD_TOTAL:
+            raise cfgstore.Invalid(f"the uploads folder is full ({MAX_UPLOAD_TOTAL // MB} MB): delete some old images")
         with open(path, "wb") as f:
             f.write(data)
     return {"url": "/uploads/" + name}
