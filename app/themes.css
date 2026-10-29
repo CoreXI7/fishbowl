@@ -33,16 +33,22 @@ html[data-theme="miku"] #site-title{font-family:Orbitron,Fredoka,sans-serif;font
   background:linear-gradient(90deg,var(--ink),var(--acc) 60%,var(--eye));-webkit-background-clip:text;background-clip:text;color:transparent}
 html[data-theme="miku"] #site-title::after{content:"01";display:inline-block;margin-left:7px;padding:1px 5px 0;border-radius:5px;transform:rotate(-8deg) translateY(-2px);
   font:800 10px/1.4 Orbitron,sans-serif;color:#fff;background:var(--coat);-webkit-text-fill-color:#fff;box-shadow:0 2px 8px -2px var(--coat)}
-html[data-theme="miku"] #p-time::before{content:"";display:inline-block;width:23px;height:13px;margin-right:9px;vertical-align:-1px;
-  background:linear-gradient(var(--eye),var(--acc)) 0 100%/3px 40% no-repeat,linear-gradient(var(--eye),var(--acc)) 5px 100%/3px 80% no-repeat,
-  linear-gradient(var(--coat),var(--acc)) 10px 100%/3px 55% no-repeat,linear-gradient(var(--eye),var(--acc)) 15px 100%/3px 95% no-repeat,
-  linear-gradient(var(--eye),var(--acc)) 20px 100%/3px 30% no-repeat;animation:miku-eq 1.6s ease-in-out infinite alternate}
-@keyframes miku-eq{
-  0%{background-size:3px 40%,3px 80%,3px 55%,3px 95%,3px 30%}
-  25%{background-size:3px 85%,3px 35%,3px 100%,3px 50%,3px 70%}
-  50%{background-size:3px 55%,3px 100%,3px 40%,3px 75%,3px 95%}
-  75%{background-size:3px 95%,3px 60%,3px 80%,3px 30%,3px 50%}
-  100%{background-size:3px 30%,3px 90%,3px 65%,3px 100%,3px 40%}}
+/* the equalizer: five bars scaled with transform (compositor only; animating background-size restyled and repainted
+   it 60 times a second) */
+html[data-theme="miku"] #p-time .eq{display:inline-flex;align-items:flex-end;gap:2px;width:23px;height:13px;margin-right:9px;vertical-align:-1px}
+html[data-theme="miku"] .eq i{width:3px;height:100%;background:linear-gradient(var(--eye),var(--acc));transform-origin:50% 100%;
+  animation:1.6s ease-in-out infinite alternate}
+html[data-theme="miku"] .eq i:nth-child(3){background:linear-gradient(var(--coat),var(--acc))}
+html[data-theme="miku"] .eq i:nth-child(1){animation-name:miku-eq1}
+html[data-theme="miku"] .eq i:nth-child(2){animation-name:miku-eq2}
+html[data-theme="miku"] .eq i:nth-child(3){animation-name:miku-eq3}
+html[data-theme="miku"] .eq i:nth-child(4){animation-name:miku-eq4}
+html[data-theme="miku"] .eq i:nth-child(5){animation-name:miku-eq5}
+@keyframes miku-eq1{0%{transform:scaleY(.4)}25%{transform:scaleY(.85)}50%{transform:scaleY(.55)}75%{transform:scaleY(.95)}100%{transform:scaleY(.3)}}
+@keyframes miku-eq2{0%{transform:scaleY(.8)}25%{transform:scaleY(.35)}50%{transform:scaleY(1)}75%{transform:scaleY(.6)}100%{transform:scaleY(.9)}}
+@keyframes miku-eq3{0%{transform:scaleY(.55)}25%{transform:scaleY(1)}50%{transform:scaleY(.4)}75%{transform:scaleY(.8)}100%{transform:scaleY(.65)}}
+@keyframes miku-eq4{0%{transform:scaleY(.95)}25%{transform:scaleY(.5)}50%{transform:scaleY(.75)}75%{transform:scaleY(.3)}100%{transform:scaleY(1)}}
+@keyframes miku-eq5{0%{transform:scaleY(.3)}25%{transform:scaleY(.7)}50%{transform:scaleY(.95)}75%{transform:scaleY(.5)}100%{transform:scaleY(.4)}}
 html[data-theme="miku"] body.wall #p-time{font-family:Orbitron,Fredoka,sans-serif;font-weight:700;color:var(--ink);letter-spacing:.03em}
 
 /* cards: glassy panels with a teal → pink top ribbon and a soft teal rim */
@@ -96,7 +102,7 @@ html[data-theme="miku"] #bubbles i:nth-child(3n+1)::before{content:"♬";color:v
 html[data-theme="miku"] #bubbles i:nth-child(9n)::before{content:"🥬";font-size:70cqh}
 @keyframes miku-note{0%{transform:translate(0,0) rotate(-12deg)}50%{transform:translate(24px,-55vh) rotate(10deg)}100%{transform:translate(-16px,-115vh) rotate(-8deg);opacity:0}}
 
-@media (prefers-reduced-motion:reduce){html[data-theme="miku"] #p-time::before{animation:none}}
+@media (prefers-reduced-motion:reduce){html[data-theme="miku"] .eq i{animation:none}}
 
 /* ===== Gura: hood blue #33739d, silver hair with blue streaks, trident aqua, white shark teeth, pink blush =====
    Fan-made and unofficial; colours inspired by Gawr Gura (hololive production / COVER Corp). No artwork included:

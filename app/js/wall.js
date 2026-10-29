@@ -25,6 +25,6 @@ if (/[?&#]wall\b/.test(location.search + location.hash)) setWall(true);
 
 // header clock (wall mode shows weekday + minutes only, so it only really changes once a minute there)
 function tick() {
-  setText("p-time", isWall() ? new Date().toLocaleString([], {weekday: "short", hour: "numeric", minute: "2-digit"}) : new Date().toLocaleTimeString());
+  setText("p-clock", isWall() ? new Date().toLocaleString([], {weekday: "short", hour: "numeric", minute: "2-digit"}) : new Date().toLocaleTimeString());
 }
 
