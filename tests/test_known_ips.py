@@ -28,7 +28,19 @@ class KnownIPs(unittest.TestCase):
         self.assertFalse(k("2001:db80::1"))
 
     def test_ipv6_full_address_any_spelling(self):
-        self.assertTrue(self.app.is_known("2001:db8::1:0:0:9"))
+        app = load_app()             # without the 2001:db8: prefix, so only the full-address match can make it true
+        app.cfgstore.save(app.cfgstore.validate({**app.ED, "known_ips": ["2001:DB8:0:0:1::9"]}, app.ED), app.STORE)
+        app.apply_settings()
+        self.assertTrue(app.is_known("2001:db8::1:0:0:9"))
+        self.assertFalse(app.is_known("2001:db8::1:0:0:8"))
+
+    def test_ipv6_prefix_any_spelling(self):
+        app = load_app()
+        app.cfgstore.save(app.cfgstore.validate({**app.ED, "known_ips": ["2001:db8:0:", "2600:0abc:"]}, app.ED), app.STORE)
+        app.apply_settings()
+        self.assertTrue(app.is_known("2001:db8::5"))         # 2001:db8:0:0:...: zero groups compressed by sshd
+        self.assertTrue(app.is_known("2600:abc::1"))         # leading zeros in the prefix
+        self.assertFalse(app.is_known("2001:db8:1::5"))
 
     def test_junk(self):
         for v in ("", None, 5, "not an ip"):

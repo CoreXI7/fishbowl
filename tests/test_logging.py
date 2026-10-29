@@ -41,6 +41,22 @@ class Logging(unittest.TestCase):
         self.assertIn(b"400", reply.split(b"\r\n")[0])
         self.assertNotIn("Traceback", err)
 
+    def test_proxy_headers_trusted_from_the_proxy(self):
+        app = load_app(TRUSTED_PROXY="127.0.0.1", USER_HEADER="Remote-User")
+        srv, _ = serve(app.Handler)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), socket.create_connection(("127.0.0.1", srv.server_address[1]), timeout=5) as s:
+                port = srv.server_address[1]
+                s.sendall(b"POST /api/security/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://127.0.0.1:%d\r\n"
+                          b"Remote-User: alice\r\nX-Real-IP: 198.51.100.9\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}" % (port, port))
+                while s.recv(65536):
+                    pass
+            line = [l for l in out.getvalue().splitlines() if "marked as reviewed" in l][0]
+            self.assertIn("alice (198.51.100.9)", line)
+        finally:
+            srv.shutdown()
+
     def test_remote_user_header_is_not_trusted_by_default(self):
         body = b"{}"
         reply, out, err = self.raw(b"POST /api/security/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://127.0.0.1:%d\r\n"

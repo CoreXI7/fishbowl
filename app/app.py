@@ -296,6 +296,8 @@ def known_matcher(entries):
             full.add(str(ipaddress.ip_address(k)))
         except ValueError:
             prefixes.append(k.lower())
+            if ":" in k and "::" not in k:   # also in exploded form: "2001:db8:0:" must match sshd's "2001:db8::5"
+                prefixes.append(":".join(g.zfill(4) for g in k.lower().split(":")[:-1]) + ":")
     return full, tuple(prefixes)
 
 
@@ -313,10 +315,11 @@ def is_known(ip):
         return False
     full, prefixes = KNOWN
     try:
-        canon = str(ipaddress.ip_address(ip))
+        addr = ipaddress.ip_address(ip)
+        canon, exploded = str(addr), addr.exploded
     except ValueError:
-        canon = ""
-    return canon in full or ip.lower().startswith(prefixes) or bool(canon and canon.startswith(prefixes))
+        canon = exploded = ""
+    return canon in full or ip.lower().startswith(prefixes) or bool(canon and (canon.startswith(prefixes) or exploded.startswith(prefixes)))
 
 
 ACKS_FILE = os.path.join(cfgstore.DATA_DIR, "acks.json")   # logins you marked "looks fine" on the dashboard
@@ -799,12 +802,12 @@ COMPRESSIBLE = {"application/json", "text/html", "text/css", "text/javascript"}
 
 
 def accepts_gzip(header):
-    """Does an Accept-Encoding header allow gzip ("gzip;q=0" means no)?"""
+    """Does an Accept-Encoding header allow gzip ("gzip;q=0" means no; an explicit gzip entry beats "*")?"""
+    q = {}
     for part in (header or "").lower().split(","):
         name, _, params = part.strip().partition(";")
-        if name.strip() in ("gzip", "*"):
-            return not re.fullmatch(r"\s*q\s*=\s*0(\.0*)?\s*", params)
-    return False
+        q[name.strip()] = not re.fullmatch(r"\s*q\s*=\s*0(\.0*)?\s*", params)
+    return q.get("gzip", q.get("*", False))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -840,7 +843,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Encoding", "gzip")
         if ctype.split(";")[0] in COMPRESSIBLE:
             self.send_header("Vary", "Accept-Encoding")
-        self.send_header("Content-Length", str(len(body)))
+        if code != 304:                   # a 304's Content-Length would have to be the full body's
+            self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")

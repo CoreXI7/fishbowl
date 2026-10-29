@@ -26,6 +26,7 @@ class ETag(unittest.TestCase):
                 urllib.request.urlopen(urllib.request.Request(self.url + path, headers={"If-None-Match": tag}))
             self.assertEqual(e.exception.code, 304, path)
             self.assertEqual(e.exception.read(), b"", path)
+            self.assertIsNone(e.exception.headers["Content-Length"], "a 304 must not claim a 0-byte body")
 
     def test_other_tag_gets_the_file(self):
         r = urllib.request.urlopen(urllib.request.Request(self.url + "/style.css", headers={"If-None-Match": 'W/"nope"'}))

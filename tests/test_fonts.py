@@ -38,7 +38,8 @@ class Fonts(unittest.TestCase):
             self.assertEqual(r.read(4), b"wOF2")
 
     def test_uploads_never_serve_fonts_or_subfolders(self):
-        for path in ("/uploads/x.woff2", "/uploads/fonts/x.woff2", "/static/../app.py", "/static/fonts/../../app.py"):
+        for path in ("/uploads/x.woff2", "/uploads/fonts/x.woff2", "/static/../app.py", "/static/fonts/../../app.py",
+                     "/static/fonts/../favicon.svg", "/static/fonts/..%2ffavicon.svg", "/uploads/../static/favicon.svg"):
             with self.assertRaises(urllib.error.HTTPError, msg=path) as e:
                 urllib.request.urlopen(self.url + path)
             self.assertIn(e.exception.code, (400, 404), path)

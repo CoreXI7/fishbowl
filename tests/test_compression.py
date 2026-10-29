@@ -43,6 +43,8 @@ class Compression(unittest.TestCase):
         self.assertIsNone(h["Content-Encoding"])
         h, _ = self.get("/api/system", "gzip;q=0, identity")
         self.assertIsNone(h["Content-Encoding"])
+        h, _ = self.get("/api/system", "*;q=0, gzip")          # an explicit gzip beats the wildcard
+        self.assertEqual(h["Content-Encoding"], "gzip")
 
 
 if __name__ == "__main__":
