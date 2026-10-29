@@ -470,8 +470,9 @@ def add_known_ips(ip=None, everything=False):
     """Put IPs on the known list from the SSH detail view: one (ip), or every unknown one (everything=True, "Add all").
     Only IPs that really logged in over SSH (the server's own data, never failed attempts) can be added,
     so a forged request can't trust an attacker."""
-    seen = {l.get("ip") for l in (((read_hw() or {}).get("security") or {}).get("ssh") or {}).get("logins", [])}
-    ssh = security_detail().get("ssh") or {}
+    hw, detail = (demo.system(), demo.security_detail()) if DEMO else (read_hw(), security_detail())
+    seen = {l.get("ip") for l in (((hw or {}).get("security") or {}).get("ssh") or {}).get("logins", [])}
+    ssh = detail.get("ssh") or {}
     seen |= {x.get("ip") for x in ssh.get("logins", []) + ssh.get("sources", [])}
     if everything:
         want = sorted(i for i in seen if isinstance(i, str) and i and not is_known(i))
