@@ -105,9 +105,11 @@ def proxy_ips():
     return _proxy_ip["ips"]
 
 
-def allowed_ip(ip):
-    """May this client talk to us at all? Always when no proxy is configured (LAN use) or in the demo."""
-    return not TRUSTED_PROXY or DEMO or ip == "127.0.0.1" or ip in proxy_ips()
+def allowed_ip(ip, local=None):
+    """May this client talk to us at all? Always when no proxy is configured (LAN use) or in the demo, and when the
+    connection comes from the dash itself (its source address = the address it arrived on: the health check of the
+    dash's own proxy host connects to dash:8000)."""
+    return not TRUSTED_PROXY or DEMO or ip == "127.0.0.1" or ip == local or ip in proxy_ips()
 
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -872,7 +874,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def allowed(self):
         ip = self.client_address[0]
-        if allowed_ip(ip):
+        if allowed_ip(ip, self.connection.getsockname()[0]):
             return True
         print(log_safe(f"blocked direct request from {ip} {self.command} {self.path[:80]}"), flush=True)
         self.send(403, {"error": "forbidden"})
@@ -1083,7 +1085,7 @@ class Server(ThreadingHTTPServer):
 
     def verify_request(self, request, client_address):
         ip = client_address[0]
-        if allowed_ip(ip):
+        if allowed_ip(ip, request.getsockname()[0]):
             return True
         if time.monotonic() - self._logged.get(ip, float("-inf")) > 60:
             self._logged[ip] = time.monotonic()

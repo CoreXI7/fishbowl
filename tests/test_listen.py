@@ -79,6 +79,25 @@ class Listen(unittest.TestCase):
             srv.shutdown()
             srv.server_close()
 
+    def test_own_address_is_allowed(self):
+        """The dash health-checks its own proxy host (dash.example -> dash:8000), i.e. connects to itself from its
+        own address: that must still get an answer."""
+        app = load_app(TRUSTED_PROXY="10.250.81.3")
+        srv = app.make_servers("127.0.0.2", 0)[0]
+        import threading
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            c = socket.socket()
+            c.bind(("127.0.0.2", 0))
+            c.settimeout(3)
+            c.connect(("127.0.0.2", srv.server_address[1]))
+            c.sendall(b"GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            self.assertIn(b"200", c.recv(100))
+            c.close()
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
     def test_proxy_with_several_addresses(self):
         app = load_app(TRUSTED_PROXY="proxy.test")
         real = app.socket.getaddrinfo
