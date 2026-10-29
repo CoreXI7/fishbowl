@@ -661,7 +661,7 @@ def page_config():
         "greeting": SITE["greeting"], "quotes": SITE["quotes"], "click_emoji": SITE["click_emoji"],
         "groups": ED["groups"], "apps": ED["apps"],
         "features": {"qbit": QBIT["on"], "seerr": SEERR["on"], "plex": TAUTULLI["on"]},
-        "settings_ui": cfgstore.UI_ENABLED, "demo": DEMO,
+        "hidden_panels": SITE["hidden_panels"], "settings_ui": cfgstore.UI_ENABLED, "demo": DEMO,
         "repo": os.environ.get("REPO_URL", "") if re.fullmatch(r"https://[\w./-]+", os.environ.get("REPO_URL", "")) else "",
     }
 
@@ -683,6 +683,7 @@ def settings_view():
         "ui_enabled": cfgstore.UI_ENABLED, "writable": os.access(cfgstore.DATA_DIR, os.W_OK),
         "discovered": sorted(set(names) | set(ED["skip_hosts"])), "collector": read_hw() is not None, "demo": DEMO,
         "themes": cfgstore.THEMES,   # built-in themes and their defaults (shown as placeholders in the editor)
+        "panels": cfgstore.PANELS,
     }
 
 

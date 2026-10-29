@@ -353,6 +353,7 @@ textarea{min-height:84px;resize:vertical;font-family:inherit}
 .savebar .msg{margin-right:auto;font-size:13.5px}
 .savebar button.ok{padding:9px 22px;font-weight:700}
 .mascot-ed{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.panel-picks{display:flex;flex-wrap:wrap;gap:6px}.panel-picks .pill{cursor:pointer}
 .mascot-ed img{max-height:90px;max-width:140px;border-radius:10px;background:var(--bar)}
 .ro{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;font-size:13.5px}
 .ro span:nth-child(odd){color:var(--mute)}
@@ -535,3 +536,6 @@ body.wall .sd-open i{display:none}                       /* the wall's card stay
   .sd-t tr.bad{box-shadow:inset 3px 0 var(--down);background:color-mix(in srgb,var(--down) 8%,transparent)}
   .sd-t tr.bad td{background:none}
 }
+/* hidden panels (site.hidden_panels, set on the settings page): the summary tiles at the top stay */
+.no-services #s-svc,.no-system #s-sys,.no-temps #s-tmp,.no-gpu #s-gpu,.no-mascot #mascot,.no-plex #s-plex,.no-requests #s-req,
+.no-torrents #s-tor,.no-security #s-sec,.no-drives #s-drv{display:none!important}

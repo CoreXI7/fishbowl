@@ -33,6 +33,21 @@ function bindFields() {
   });
 }
 
+// ---------- panels (site.hidden_panels) ----------
+function renderPanels() {
+  const hidden = new Set(S.site.hidden_panels || []);
+  $("panels").innerHTML = Object.entries(V.panels || {}).map(([id, label]) =>
+    `<label class="pill"><input type="checkbox" data-panel="${esc(id)}"${hidden.has(id) ? "" : " checked"}${V.ui_enabled ? "" : " disabled"}> ${esc(label)}</label>`).join("");
+}
+$("panels").addEventListener("change", e => {
+  const id = e.target.dataset.panel;
+  if (!id) return;
+  const hidden = new Set(S.site.hidden_panels || []);
+  e.target.checked ? hidden.delete(id) : hidden.add(id);
+  S.site.hidden_panels = Object.keys(V.panels).filter(p => hidden.has(p));
+  setDirty();
+});
+
 // ---------- mascot ----------
 function renderMascot() {
   $("mascot-prev").hidden = !S.site.mascot; if (S.site.mascot) $("mascot-prev").src = S.site.mascot;
@@ -283,7 +298,7 @@ function render() {
   S = structuredClone(V.settings); SEC = {};
   if (V.settings.site.favicon) document.querySelector("link[rel=icon]").href = V.settings.site.favicon;
   document.title = "Settings · " + S.site.title; $("site-title").textContent = S.site.title; $("demo-tag").hidden = !V.demo;
-  renderInteg(); bindFields(); renderMascot(); renderFav(); renderThemes(); renderServices(); renderExtras(); renderInfra();
+  renderInteg(); bindFields(); renderPanels(); renderMascot(); renderFav(); renderThemes(); renderServices(); renderExtras(); renderInfra();
   $("banner").hidden = true; setDirty(false);
 }
 async function load() { V = await api("/api/settings"); render(); }

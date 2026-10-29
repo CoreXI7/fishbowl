@@ -105,9 +105,12 @@ function applyConfig() {
   }
   // hide panels for integrations that aren't set up; let a lone Plex/Requests panel take the full row
   document.querySelectorAll("[data-feature]").forEach(el => el.hidden = !CFG.features[el.dataset.feature]);
-  const duo = document.querySelector(".duo");
-  if (!CFG.features.plex && !CFG.features.seerr) duo.hidden = true;
-  else if (!CFG.features.plex || !CFG.features.seerr) duo.style.gridTemplateColumns = "minmax(0,1fr)";
+  // panels switched off on the settings page: a class per panel, the CSS hides it (style.css, "hidden panels")
+  const hidden = new Set(CFG.hidden_panels || []);
+  hidden.forEach(p => document.documentElement.classList.add("no-" + p));
+  const duo = document.querySelector(".duo"), plexOn = CFG.features.plex && !hidden.has("plex"), reqOn = CFG.features.seerr && !hidden.has("requests");
+  if (!plexOn && !reqOn) duo.hidden = true;
+  else if (!plexOn || !reqOn) duo.style.gridTemplateColumns = "minmax(0,1fr)";
   let saved = "";
   try { saved = localStorage.getItem("theme") || ""; } catch (e) {}
   setTheme(CFG.themes && CFG.themes[saved] ? saved : CFG.theme);
