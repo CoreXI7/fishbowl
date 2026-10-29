@@ -820,6 +820,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_revalidated(self, body, ctype):
+        """A page, CSS or JS file with an ETag: the browser revalidates every time (no-cache), and gets an empty
+        304 when it already has this version. Weak tag: the same content may go out gzipped or not."""
+        tag = 'W/"' + hashlib.sha256(body).hexdigest()[:20] + '"'
+        if tag in (self.headers.get("If-None-Match") or "").replace(" ", "").split(","):
+            return self.send(304, b"", ctype, "no-cache", {"ETag": tag})
+        self.send(200, body, ctype, "no-cache", {"ETag": tag})
+
     def safe(self, fn):
         try:
             self.send(200, fn())
@@ -914,11 +922,11 @@ class Handler(BaseHTTPRequestHandler):
             # default theme baked into <html> so the page paints in the right colours before any script runs
             page = open(os.path.join(HERE, PAGES[p]), "rb").read().replace(
                 b'<html lang="en">', f'<html lang="en" data-theme="{SITE["theme"]}">'.encode(), 1)
-            self.send(200, page, "text/html; charset=utf-8")
+            self.send_revalidated(page, "text/html; charset=utf-8")
         elif p in ("/style.css", "/themes.css", "/fonts.css"):
-            self.send(200, open(os.path.join(HERE, p[1:]), "rb").read(), "text/css; charset=utf-8", "no-cache")
+            self.send_revalidated(open(os.path.join(HERE, p[1:]), "rb").read(), "text/css; charset=utf-8")
         elif (m := re.fullmatch(r"/js/([a-z-]+)\.js", p)) and m[1] in SCRIPTS:
-            self.send(200, open(os.path.join(HERE, "js", m[1] + ".js"), "rb").read(), "text/javascript; charset=utf-8", "no-cache")
+            self.send_revalidated(open(os.path.join(HERE, "js", m[1] + ".js"), "rb").read(), "text/javascript; charset=utf-8")
         elif p in API:
             ttl, fn = API[p]
             if p in FEATURE and not FEATURE[p]()["on"]:
