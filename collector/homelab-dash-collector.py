@@ -431,7 +431,8 @@ LAST_SSH = [None]             # the card's last good SSH numbers: shown again wh
 
 def _journal_lines(stream):
     """Lines from journalctl's binary output: split on \\n only (a \\r can't start a fake line), at most
-    JOURNAL_LINE_MAX bytes read per line (the rest of a longer one is skipped without ever holding it)."""
+    JOURNAL_LINE_MAX bytes read per line (the rest of a longer one is skipped without ever holding it), kept as
+    ASCII (sshd escapes 8-bit bytes anyway; anything else becomes "?"), so 100,000 lines stay under ~110 MB."""
     while True:
         line = stream.readline(JOURNAL_LINE_MAX + 1)
         if not line:
@@ -440,7 +441,7 @@ def _journal_lines(stream):
             while line and not line.endswith(b"\n"):    # skip the rest of an over-long line
                 line = stream.readline(65536)
             continue
-        yield line.rstrip(b"\n").decode("utf-8", "replace")
+        yield line.rstrip(b"\n").decode("ascii", "replace").replace("\ufffd", "?")   # ASCII: 1 byte a character
 
 
 
