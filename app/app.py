@@ -66,7 +66,7 @@ def apply_settings():
     _npm["sig"] = _hw["key"] = _sd["key"] = None       # skip list / known IPs may have changed: re-read them
 
 
-_proxy_ip = {"ip": None, "at": 0}
+_proxy_ip = {"ips": set(), "at": float("-inf")}
 
 
 def scrub(text):
@@ -85,15 +85,16 @@ def log_safe(text, limit=300):
                    for c in str(text)[:limit])
 
 
-def proxy_ip():
-    """IP of the trusted reverse proxy container, looked up at most once a minute (it can change on recreate)."""
+def proxy_ips():
+    """Every address of the trusted reverse proxy (a container on two networks has one per network), looked up at
+    most once a minute: they can change when it's recreated. The last good answer is kept if a lookup fails."""
     if time.monotonic() - _proxy_ip["at"] > 60:
         try:
-            _proxy_ip["ip"] = socket.gethostbyname(TRUSTED_PROXY)
+            _proxy_ip["ips"] = {a[4][0] for a in socket.getaddrinfo(TRUSTED_PROXY, None)}
         except OSError:
             pass
         _proxy_ip["at"] = time.monotonic()
-    return _proxy_ip["ip"]
+    return _proxy_ip["ips"]
 
 
 CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -962,7 +963,7 @@ class Handler(BaseHTTPRequestHandler):
         """Who sent this request, for the log. The proxy's X-Real-IP (and USER_HEADER, if set) count only when the
         request really came from the proxy; anyone else could send those headers themselves."""
         ip, headers = self.client_address[0], getattr(self, "headers", None)
-        via_proxy = bool(TRUSTED_PROXY) and ip == proxy_ip() and headers is not None
+        via_proxy = bool(TRUSTED_PROXY) and ip in proxy_ips() and headers is not None
         who = (headers.get("X-Real-IP") if via_proxy else None) or ip
         user = headers.get(USER_HEADER) if via_proxy and USER_HEADER else None
         return log_safe(f"{user} ({who})" if user else who, 120)
@@ -994,7 +995,7 @@ class Handler(BaseHTTPRequestHandler):
         if not TRUSTED_PROXY or DEMO:
             return True
         ip = self.client_address[0]
-        if ip == "127.0.0.1" or ip == proxy_ip():
+        if ip == "127.0.0.1" or ip in proxy_ips():
             return True
         print(log_safe(f"blocked direct request from {ip} {self.command} {self.path[:80]}"), flush=True)
         self.send(403, {"error": "forbidden"})
@@ -1198,6 +1199,11 @@ if __name__ == "__main__":
     threading.stack_size(4 * 1024 * 1024)  # Alpine's default thread stack is tiny; give each request thread room
     ThreadingHTTPServer.daemon_threads = True
     port = int(os.environ.get("PORT", "8000"))
-    print(f"homelab-dash listening on :{port}" + (" (DEMO mode, fake data)" if DEMO else "")
-          + f" · data folder {cfgstore.DATA_DIR}", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    # LISTEN: the addresses to answer on (space-separated). Default: all. Set it to "127.0.0.1 <address on a network
+    # only the proxy shares>" so other containers on the proxy's network can't reach the dash at all.
+    servers = [ThreadingHTTPServer((a, port), Handler) for a in (os.environ.get("LISTEN") or "0.0.0.0").split()]
+    print(f"homelab-dash listening on {', '.join(f'{s.server_address[0]}:{port}' for s in servers)}"
+          + (" (DEMO mode, fake data)" if DEMO else "") + f" · data folder {cfgstore.DATA_DIR}", flush=True)
+    for s in servers[1:]:
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+    servers[0].serve_forever()
