@@ -588,6 +588,25 @@ def live():
     }
 
 
+# ---------- upstream data: attacker-controlled, so only the expected types get through ----------
+
+def num(v, default=0):
+    """A number from an upstream JSON field. Digit strings count (Tautulli sends many numbers as strings);
+    anything else becomes default, so the page never gets text where it expects a number."""
+    if isinstance(v, bool):
+        return default
+    if isinstance(v, (int, float)):
+        return v if v == v and abs(v) != float("inf") else default
+    if isinstance(v, str) and re.fullmatch(r"-?\d{1,18}(\.\d{1,9})?", v.strip()):
+        return float(v) if "." in v else int(v)
+    return default
+
+
+def text(v, limit=300):
+    """A string from an upstream JSON field, clipped; anything else (lists, objects, numbers) becomes ""."""
+    return v[:limit] if isinstance(v, str) else ""
+
+
 # ---------- qBittorrent ----------
 
 class Qbit:
@@ -616,29 +635,32 @@ class Qbit:
                     raise
 
 
-SLIM = ("name", "state", "progress", "dlspeed", "upspeed", "eta", "size", "num_seeds",
-        "num_leechs", "ratio", "category", "added_on", "uploaded")
+SLIM_TEXT = ("name", "state", "category")
+SLIM_NUM = ("progress", "dlspeed", "upspeed", "eta", "size", "num_seeds", "num_leechs", "ratio", "added_on", "uploaded")
 
 
 def qbit():
     """/api/qbit: speeds, the VPN check (external IP vs your home IP) and the torrent lists, trimmed to what the page shows."""
     t = qb.get("/api/v2/transfer/info")
     torrents = qb.get("/api/v2/torrents/info")
-    slim = lambda x: {k: x.get(k) for k in SLIM}
+    torrents = torrents if isinstance(torrents, list) else []
+    slim = [{**{k: text(x.get(k)) for k in SLIM_TEXT}, **{k: num(x.get(k)) for k in SLIM_NUM}}
+            for x in torrents if isinstance(x, dict)]
     dl_states = {"downloading", "stalledDL", "metaDL", "forcedDL", "queuedDL", "checkingDL", "pausedDL", "stoppedDL"}
-    downloading = [slim(x) for x in torrents if x["state"] in dl_states]
+    downloading = [x for x in slim if x["state"] in dl_states]
     downloading.sort(key=lambda x: (-x["dlspeed"], -x["progress"]))
-    seeding = [slim(x) for x in torrents if x["upspeed"] > 0 and x["state"] not in dl_states]
+    seeding = [x for x in slim if x["upspeed"] > 0 and x["state"] not in dl_states]
     seeding.sort(key=lambda x: -x["upspeed"])
-    ext = t.get("last_external_address_v4") or ""
+    t = t if isinstance(t, dict) else {}
+    ext = text(t.get("last_external_address_v4"), 64)
     return {
-        "connection": t.get("connection_status"),
+        "connection": text(t.get("connection_status"), 40),
         "external_ip": ext,
         "vpn_check": bool(HOME_IP),
         "vpn_leak": bool(HOME_IP and ext == HOME_IP),
-        "dl_speed": t.get("dl_info_speed"), "up_speed": t.get("up_info_speed"),
-        "dl_total": t.get("dl_info_data"), "up_total": t.get("up_info_data"),
-        "total": len(torrents),
+        "dl_speed": num(t.get("dl_info_speed")), "up_speed": num(t.get("up_info_speed")),
+        "dl_total": num(t.get("dl_info_data")), "up_total": num(t.get("up_info_data")),
+        "total": len(slim),
         "downloading": downloading, "seeding": seeding[:30], "seeding_active": len(seeding),
     }
 
@@ -651,24 +673,28 @@ def tautulli(cmd, **params):
         return json.load(r)["response"]["data"]
 
 
-PLEX_FIELDS = ("session_key", "friendly_name", "full_title", "title", "grandparent_title", "parent_media_index",
-               "media_index", "year", "media_type", "state", "progress_percent", "transcode_decision",
-               "video_decision", "audio_decision", "stream_video_full_resolution", "video_full_resolution",
-               "bandwidth", "product", "player", "platform", "location", "transcode_hw_encoding",
-               "transcode_hw_decoding", "duration", "view_offset")
+PLEX_TEXT = ("session_key", "friendly_name", "full_title", "title", "grandparent_title", "year", "media_type", "state",
+             "transcode_decision", "video_decision", "audio_decision", "stream_video_full_resolution",
+             "video_full_resolution", "product", "player", "platform", "location")
+PLEX_NUM = ("parent_media_index", "media_index", "progress_percent", "bandwidth", "duration", "view_offset")
+PLEX_FLAG = ("transcode_hw_encoding", "transcode_hw_decoding")
 
 
 def plex():
     """/api/plex: who's watching what, from Tautulli (so no Plex token is needed here)."""
     d = tautulli("get_activity")
     sessions = []
-    for s in d.get("sessions", []):
-        x = {k: s.get(k) for k in PLEX_FIELDS}
-        thumb = s.get("grandparent_thumb") if s.get("media_type") == "episode" else s.get("thumb")
-        x["art"] = "/api/plexart?img=" + urllib.parse.quote(thumb or "", safe="") if thumb else None
+    d = d if isinstance(d, dict) else {}
+    for s in d.get("sessions") or []:
+        if not isinstance(s, dict):
+            continue
+        x = {**{k: text(s.get(k) if k != "year" else str(s.get(k) or "")) for k in PLEX_TEXT}, **{k: num(s.get(k)) for k in PLEX_NUM},
+             **{k: 1 if s.get(k) in (1, "1", True) else 0 for k in PLEX_FLAG}}
+        thumb = text(s.get("grandparent_thumb") if s.get("media_type") == "episode" else s.get("thumb"))
+        x["art"] = "/api/plexart?img=" + urllib.parse.quote(thumb, safe="") if thumb else None
         sessions.append(x)
-    return {"stream_count": int(d.get("stream_count") or 0), "transcodes": int(d.get("stream_count_transcode") or 0),
-            "bandwidth": int(d.get("total_bandwidth") or 0), "sessions": sessions}
+    return {"stream_count": num(d.get("stream_count")), "transcodes": num(d.get("stream_count_transcode")),
+            "bandwidth": num(d.get("total_bandwidth")), "sessions": sessions}
 
 
 def plex_art(img):
@@ -696,13 +722,17 @@ _titles = {}
 def media_info(kind, tmdb):
     """Title/year/poster for a request. Cached forever: a movie's title doesn't change."""
     key = (kind, tmdb)
+    if kind not in ("movie", "tv") or not isinstance(tmdb, int) or isinstance(tmdb, bool):
+        return {"title": "unknown title", "year": "", "poster": None, "overview": ""}
     if key not in _titles:
         try:
             d = seerr(f"/{kind}/{tmdb}")
-            date = d.get("releaseDate") or d.get("firstAirDate") or ""
-            _titles[key] = {"title": d.get("title") or d.get("name") or f"TMDB {tmdb}",
-                            "year": date[:4], "poster": d.get("posterPath"),
-                            "overview": (d.get("overview") or "")[:280]}
+            date = text(d.get("releaseDate")) or text(d.get("firstAirDate"))
+            poster = text(d.get("posterPath"))
+            _titles[key] = {"title": text(d.get("title"), 200) or text(d.get("name"), 200) or f"TMDB {tmdb}",
+                            "year": date[:4] if re.fullmatch(r"\d{4}", date[:4]) else "",
+                            "poster": poster if re.fullmatch(r"/[\w-]{1,100}\.(jpg|jpeg|png|webp)", poster) else None,
+                            "overview": text(d.get("overview"), 280)}
         except Exception:
             return {"title": f"TMDB {tmdb}", "year": "", "poster": None, "overview": ""}
     return _titles[key]
@@ -712,13 +742,16 @@ def requests_pending():
     """/api/requests: pending Seerr requests with title, year, poster and who asked."""
     d = seerr("/request?take=50&filter=pending&sort=added")
     out = []
-    for r in d.get("results", []):
-        m = r.get("media") or {}
+    for r in d.get("results") or []:
+        # the id goes into approve/decline URLs and the type into Seerr API paths: anything unexpected is skipped
+        if not isinstance(r, dict) or type(r.get("id")) is not int or r.get("type") not in ("movie", "tv"):
+            continue
+        m = r.get("media") if isinstance(r.get("media"), dict) else {}
         info = media_info(r["type"], m.get("tmdbId"))
-        seasons = [s["seasonNumber"] for s in r.get("seasons") or []]
-        u = r.get("requestedBy") or {}
-        out.append({"id": r["id"], "type": r["type"], "is4k": r.get("is4k"), "created": r.get("createdAt"),
-                    "user": u.get("displayName") or u.get("plexUsername") or u.get("email"),
+        seasons = [s["seasonNumber"] for s in r.get("seasons") or [] if isinstance(s, dict) and type(s.get("seasonNumber")) is int]
+        u = r.get("requestedBy") if isinstance(r.get("requestedBy"), dict) else {}
+        out.append({"id": r["id"], "type": r["type"], "is4k": r.get("is4k") is True, "created": text(r.get("createdAt"), 40),
+                    "user": text(u.get("displayName"), 200) or text(u.get("plexUsername"), 200) or text(u.get("email"), 200),
                     "seasons": seasons, **info})
     return {"pending": out}
 
