@@ -8,6 +8,7 @@ app/static/*
 !app/static/favicon.svg
 !app/static/favicon-miku.svg
 !app/static/favicon-gura.svg
+!app/static/fonts/
 __pycache__/
 *.pyc
 *.bak*

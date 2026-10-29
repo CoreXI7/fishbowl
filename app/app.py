@@ -97,8 +97,8 @@ def proxy_ips():
     return _proxy_ip["ips"]
 
 
-CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-       "font-src https://fonts.gstatic.com; img-src 'self' data: https://cdn.jsdelivr.net https://image.tmdb.org; "
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "font-src 'self'; img-src 'self' data: https://cdn.jsdelivr.net https://image.tmdb.org; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 INSECURE = ssl.create_default_context()      # upstreams are on the LAN, often with self-signed certs
@@ -1080,7 +1080,7 @@ class Handler(BaseHTTPRequestHandler):
             page = open(os.path.join(HERE, PAGES[p]), "rb").read().replace(
                 b'<html lang="en">', f'<html lang="en" data-theme="{SITE["theme"]}">'.encode(), 1)
             self.send(200, page, "text/html; charset=utf-8")
-        elif p in ("/style.css", "/themes.css"):
+        elif p in ("/style.css", "/themes.css", "/fonts.css"):
             self.send(200, open(os.path.join(HERE, p[1:]), "rb").read(), "text/css; charset=utf-8", "no-cache")
         elif p in ("/js/index.js", "/js/settings.js", "/js/theme-boot.js"):
             self.send(200, open(os.path.join(HERE, p[1:]), "rb").read(), "text/javascript; charset=utf-8", "no-cache")
@@ -1108,15 +1108,16 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/favicon.ico":
             self.path = "/static/favicon.svg"
             return self.get()
-        elif m := re.fullmatch(r"/(static|uploads)/([\w.-]+\.(png|svg|webp|ico|jpg|gif))", p):
+        elif m := re.fullmatch(r"/(static|uploads)/((?:fonts/)?[\w-][\w.-]*\.(png|svg|webp|ico|jpg|gif|woff2))", p):
             folder = os.path.join(HERE, "static") if m[1] == "static" else cfgstore.UPLOAD_DIR
             f = os.path.join(folder, m[2])
             # Web uploads are raster-only (save_upload); an SVG in uploads/ was put there by the admin on disk.
             # Either way it's served with scripts blocked (CSP below), so even a hostile SVG can't run anything.
-            if not os.path.isfile(f) or (m[1] == "uploads" and m[3] == "ico"):
+            # Fonts and the fonts/ folder exist only in static/.
+            if not os.path.isfile(f) or (m[1] == "uploads" and (m[3] in ("ico", "woff2") or "/" in m[2])):
                 return self.send(404, {"error": "not found"})
             ctype = {"png": "image/png", "svg": "image/svg+xml", "webp": "image/webp", "ico": "image/x-icon",
-                     "jpg": "image/jpeg", "gif": "image/gif"}[m[3]]
+                     "jpg": "image/jpeg", "gif": "image/gif", "woff2": "font/woff2"}[m[3]]
             self.send(200, open(f, "rb").read(), ctype, "public, max-age=604800",
                       {"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"})
         elif p == "/healthz":
