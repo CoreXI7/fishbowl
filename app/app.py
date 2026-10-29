@@ -6,6 +6,7 @@ Services are read from Nginx Proxy Manager's proxy_host/*.conf (mounted read-onl
 hosts show up automatically. Hardware/security stats come from the optional root collector
 (see ../collector), which writes a JSON file this app reads.
 """
+import gzip
 import hashlib
 import http.client
 import http.cookiejar
@@ -762,6 +763,18 @@ SCRIPTS = {f[:-3] for f in os.listdir(os.path.join(HERE, "js")) if f.endswith(".
 apply_settings()
 
 
+COMPRESSIBLE = {"application/json", "text/html", "text/css", "text/javascript"}
+
+
+def accepts_gzip(header):
+    """Does an Accept-Encoding header allow gzip ("gzip;q=0" means no)?"""
+    for part in (header or "").lower().split(","):
+        name, _, params = part.strip().partition(";")
+        if name.strip() in ("gzip", "*"):
+            return not re.fullmatch(r"\s*q\s*=\s*0(\.0*)?\s*", params)
+    return False
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = UA
     sys_version = ""                      # don't advertise the Python version
@@ -784,8 +797,17 @@ class Handler(BaseHTTPRequestHandler):
     def send(self, code, body, ctype="application/json", cache="no-store", extra=None):
         if not isinstance(body, bytes):
             body = json.dumps(body).encode()
+        # gzip text answers (the proxy only compresses HTML): /api/system shrinks ~4x. No answer carries a secret,
+        # so compressing next to request-controlled text can't leak one (BREACH).
+        gz = len(body) > 1024 and ctype.split(";")[0] in COMPRESSIBLE and accepts_gzip(self.headers.get("Accept-Encoding"))
+        if gz:
+            body = gzip.compress(body, 6)
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+        if ctype.split(";")[0] in COMPRESSIBLE:
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
