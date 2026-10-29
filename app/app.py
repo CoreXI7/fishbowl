@@ -30,7 +30,7 @@ import settings as cfgstore             # noqa: E402  (settings.py: load / valid
 from hostinfo import (_live_prev, cpu_model, cpu_mhz, cpu_topology, cpu_usage,  # noqa: E402
                       disk_io, hwmon)
 from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _NoRedirect,  # noqa: E402
-                      fetch_same_host, num, read_capped, text)
+                      fetch_same_host, num, read_capped, read_json, text)
 
 DEMO = cfgstore.DEMO
 HW_FILE = os.environ.get("HW_FILE", "/hw/hw.json")
@@ -496,7 +496,7 @@ class Qbit:
             for attempt in (1, 2):
                 try:
                     with self.op.open(QBIT["url"] + path, timeout=10) as r:
-                        return json.loads(read_capped(r, QBIT_MAX))
+                        return read_json(r, QBIT_MAX)
                 except urllib.error.HTTPError as e:
                     if e.code == 403 and attempt == 1:
                         self.login()
@@ -514,11 +514,15 @@ class Qbit:
             if d.get("full_update") or not self.rid:
                 self.state = {}
             for h, fields in (d.get("torrents") or {}).items():
-                if isinstance(fields, dict):
-                    self.state.setdefault(h, {}).update((k, v) for k, v in fields.items() if k in SLIM_KEEP)
+                if isinstance(fields, dict):         # typed and clipped as they're stored: the map stays small
+                    self.state.setdefault(h, {}).update((k, text(v) if k in SLIM_TEXT else num(v))
+                                                        for k, v in fields.items() if k in SLIM_KEEP)
             for h in d.get("torrents_removed") or []:
                 if isinstance(h, str):
                     self.state.pop(h, None)
+            if len(self.state) > MAX_TORRENTS:       # a hostile qBittorrent adding torrents forever: start over
+                self.rid, self.state = 0, {}
+                raise ValueError(f"qBittorrent reports more than {MAX_TORRENTS} torrents")
             self.rid = d["rid"] if type(d.get("rid")) is int else 0
             return list(self.state.values())
 
@@ -526,6 +530,7 @@ class Qbit:
 SLIM_TEXT = ("name", "state", "category")
 SLIM_NUM = ("progress", "dlspeed", "upspeed", "eta", "size", "num_seeds", "num_leechs", "ratio", "added_on", "uploaded")
 SLIM_KEEP = frozenset(SLIM_TEXT + SLIM_NUM)
+MAX_TORRENTS = 20_000
 
 
 def qbit():
@@ -559,7 +564,7 @@ def qbit():
 def tautulli(cmd, **params):
     q = urllib.parse.urlencode({"apikey": TAUTULLI["secrets"][0], "cmd": cmd, **params})
     with STRICT.open(f"{TAUTULLI['url']}/api/v2?{q}", timeout=10) as r:
-        return json.loads(read_capped(r, API_MAX))["response"]["data"]
+        return read_json(r, API_MAX)["response"]["data"]
 
 
 PLEX_TEXT = ("session_key", "friendly_name", "full_title", "title", "grandparent_title", "year", "media_type", "state",
@@ -607,8 +612,7 @@ def seerr(path, method="GET"):
     req = urllib.request.Request(SEERR["url"] + "/api/v1" + path, method=method,
                                  headers={"X-Api-Key": SEERR["secrets"][0], "Accept": "application/json"})
     with STRICT.open(req, timeout=10) as r:
-        body = read_capped(r, API_MAX)
-        return json.loads(body) if body else {}
+        return read_json(r, API_MAX)
 
 
 _titles = {}
@@ -620,6 +624,8 @@ def media_info(kind, tmdb):
     if kind not in ("movie", "tv") or not isinstance(tmdb, int) or isinstance(tmdb, bool):
         return {"title": "unknown title", "year": "", "poster": None, "overview": ""}
     if key not in _titles:
+        if len(_titles) > 2000:          # a movie's title never changes, but a hostile Seerr could invent endless ids
+            _titles.clear()
         try:
             d = seerr(f"/{kind}/{tmdb}")
             date = text(d.get("releaseDate")) or text(d.get("firstAirDate"))

@@ -1,5 +1,6 @@
 """Talking to upstream services safely: openers that never follow redirects off-host, and helpers that only let
 the expected types through from upstream JSON (it is attacker-controlled: a taken-over container can answer anything)."""
+import json
 import re
 import ssl
 import urllib.error
@@ -63,12 +64,25 @@ MB = 1 << 20
 QBIT_MAX, API_MAX = 32 * MB, 8 * MB   # biggest answer read from qBittorrent (~15,000 torrents) / Seerr and Tautulli
 
 
+JSON_MAX_VALUES = 1_000_000   # a 1,500-torrent qBittorrent list has ~100,000; each value costs ~60 bytes once parsed
+
+
 def read_capped(r, limit):
     """A response body, but at most limit bytes: a hostile upstream could send gigabytes (the container has 256 MB)."""
     data = r.read(limit + 1)
     if len(data) > limit:
         raise ValueError(f"answer bigger than {limit // MB} MB")
     return data
+
+
+def read_json(r, limit):
+    """Parsed JSON from a response, read with read_capped(). The byte cap alone doesn't bound memory (8 MB of "[],"
+    parses into ~180 MB of objects), so an answer with more values than JSON_MAX_VALUES is refused before parsing
+    (a cheap upper bound: every value but the first follows a comma, opens a bracket or is a key)."""
+    data = read_capped(r, limit)
+    if data.count(b",") + data.count(b"[") + data.count(b"{") > JSON_MAX_VALUES:
+        raise ValueError("answer has too many values")
+    return json.loads(data) if data else {}
 
 
 def text(v, limit=300):
