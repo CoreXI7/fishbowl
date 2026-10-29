@@ -10,6 +10,7 @@ SMART uses `-n standby` so sleeping drives are never woken.
 Config: /etc/homelab-dash/collector.toml (see collector.example.toml). Every key is optional.
 """
 import base64
+import collections
 import datetime
 import glob
 import hashlib
@@ -421,6 +422,38 @@ def handle_cron_approval():
 
 # ---------- security checks (each one can be switched off in the config) ----------
 
+JOURNAL_MAX_LINES = 100_000   # newest lines of the 7-day SSH journal kept (a flood of log lines can't fill memory)
+_journal = {"at": float("-inf"), "lines": None, "lock": threading.Lock()}
+
+
+def ssh_journal(units, timeout=60):
+    """The SSH units' journal for the last 7 days (short-iso), shared by the card (main loop) and the detail views
+    (their thread): read at most once every 50 s. No -n: with it journalctl walked the whole journal backwards
+    (1.5 s of CPU per read on a 2 GB journal); without it, it seeks to --since. The newest JOURNAL_MAX_LINES are
+    kept while streaming, and lines over 2,000 characters (no real sshd line is) are skipped.
+    Raises CheckFailed like out()."""
+    with _journal["lock"]:
+        if _journal["lines"] is not None and time.monotonic() - _journal["at"] < 50:
+            return _journal["lines"]
+        try:
+            p = subprocess.Popen(["journalctl", *units, "--since", "-7d", "-o", "short-iso", "--no-pager", "-q"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+        except OSError as e:
+            raise CheckFailed(f"journalctl: {e.strerror}")
+        timer = threading.Timer(timeout, p.kill)
+        timer.start()
+        try:
+            lines = list(collections.deque((l.rstrip("\n") for l in p.stdout if len(l) <= 2000), maxlen=JOURNAL_MAX_LINES))
+        finally:
+            timer.cancel()
+            p.stdout.close()
+            rc = p.wait()
+        if rc != 0:
+            raise CheckFailed(f"journalctl timed out after {timeout} s" if rc < 0 else f"journalctl failed (exit code {rc})")
+        _journal.update(at=time.monotonic(), lines=lines)
+        return lines
+
+
 MINERS = ("xmrig", "minerd", "cryptonight", "kdevtmpfsi", "kinsing", "kworkerds", "xmr-stak")
 LAST_TOP = []        # the 10 busiest processes from the latest security() round (shown in the Process watch details)
 TOP_AT = [0]         # ... and when they were measured
@@ -429,6 +462,13 @@ TOP_AT = [0]         # ... and when they were measured
 def security():
     """fail2ban, SSH logins/failures, Authelia failures, miner process watch, cron watch, immutable files, firewall."""
     s = {}
+    top_proc = None
+    if SEC.get("process_watch", True):
+        try:   # top samples for a second: start it first and read it after the other checks, instead of waiting on it
+            top_proc = subprocess.Popen(["top", "-b", "-n", "2", "-d", "1", "-o", "%CPU", "-w", "200"],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except OSError:
+            pass
     jail = SEC.get("fail2ban_jail", "sshd")
     if jail and have("fail2ban-client"):
         out = run(["fail2ban-client", "status", jail])
@@ -439,14 +479,18 @@ def security():
     unit = SEC.get("ssh_unit", "ssh")
     if unit and have("journalctl"):
         units = ["-u", unit] + (["-u", "sshd"] if unit == "ssh" else [])   # Debian/Ubuntu call it ssh, others sshd
-        logins = []
-        for line in run(["journalctl", *units, "--since", "-7d", "-n", "100000", "-o", "short-iso", "--no-pager", "-q"], 30).splitlines():
+        try:
+            lines = ssh_journal(units, 30)
+        except CheckFailed:
+            lines = []
+        logins, failed, day_ago = [], 0, time.time() - 86400
+        for line in lines:
             m = re.search(r"^(\S+) .*Accepted (\w+) for (\S+) from (\S+)", line)
             if m:
                 logins.append({"time": m.group(1), "method": m.group(2), "user": m.group(3), "ip": m.group(4)})
-        day = run(["journalctl", *units, "--since", "-24h", "-n", "100000", "--no-pager", "-q"], 30)
-        s["ssh"] = {"logins": logins[-8:][::-1],
-                    "failed_24h": len(re.findall(r"Failed password|Invalid user|authentication failure", day))}
+            elif (n := len(SSH_FAILED.findall(line))) and (when(line) or 0) > day_ago:   # the last 24 h, same lines
+                failed += n
+        s["ssh"] = {"logins": logins[-8:][::-1], "failed_24h": failed}
     authelia = SEC.get("authelia_container", "")
     if authelia and have("docker"):
         fails = []
@@ -465,7 +509,12 @@ def security():
         me = str(os.getpid())                                 # by PID: a name check could be dodged by a process naming itself
         found = [p.split(None, 3)[2] for p in procs if any(m in p.lower() for m in watch) and p.split(None, 1)[0] != me]
         top = []
-        snap = run(["top", "-b", "-n", "2", "-d", "1", "-o", "%CPU", "-w", "200"]).split("\n\n")
+        try:
+            snap = top_proc.communicate(timeout=20)[0].split("\n\n") if top_proc else []
+        except subprocess.TimeoutExpired:
+            top_proc.kill()
+            top_proc.communicate()
+            snap = []
         rows = [l.split() for l in (snap[-1].splitlines() if snap else []) if re.match(r"\s*\d+ ", l)]
         try:                              # for the Process watch details; never allowed to break this tile
             LAST_TOP[:] = [{"pid": int(f[0]), "user": f[1][:16], "cpu": float(f[8].replace(",", ".")), "mem": float(f[9].replace(",", ".")),
@@ -706,6 +755,7 @@ def fail2ban_detail():
             "checked": int(time.time())}
 
 
+SSH_FAILED = re.compile(r"Failed password|Invalid user|authentication failure")   # the card's "SSH failures, 24h"
 SSH_LINE = re.compile(r"^(\S+) \S+ sshd(?:-session)?\[(\d+)\]: (.*)$")      # OpenSSH 9.8+ logs as sshd-session
 SSH_ACCEPT = re.compile(r"^Accepted (?P<method>[\w/-]+) for (?P<user>\S+) from (?P<ip>\S+) port \d+ ssh2(?:: \S+ (?P<fp>SHA256:\S+)(?: .*)?)?$")
 # User names can contain spaces (even "x from 192.168.1.5 port 1"), so the IP is taken from the END of the line.
@@ -752,7 +802,7 @@ def ssh_detail():
     if not unit or not have("journalctl"):
         return None
     units = ["-u", unit] + (["-u", "sshd"] if unit == "ssh" else [])
-    lines = out(["journalctl", *units, "--since", "-7d", "-n", "100000", "-o", "short-iso", "--no-pager", "-q"], 60).splitlines()
+    lines = ssh_journal(units, 60)
     logins, by_ip, seen, sources, keys = [], {}, set(), {}, {}
     day_ago = time.time() - 86400
     for line in lines:
