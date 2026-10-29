@@ -146,8 +146,9 @@ function setText(el, text) {
 }
 
 // ---------- number / time formatting ----------
+// The formatters coerce to a number first: whatever an upstream sends, they only ever return digits and units.
 const size = b => {                       // bytes -> "1.5 GB"
-  if (b == null) return "–";
+  if (b == null || !isFinite(b = +b)) return "–";
   const u = ["B", "KB", "MB", "GB", "TB", "PB"];
   let i = 0;
   while (b >= 1024 && i < 5) { b /= 1024; i++; }
@@ -162,7 +163,7 @@ const bits = b => {                       // bytes/s -> "12 Mb/s"
   return v.toFixed(v < 10 && i ? 1 : 0) + " " + u[i];
 };
 const eta = s => {                        // seconds -> "2d 4h" / "3h 10m" / "5m"
-  if (!s || s >= 8640000) return "∞";
+  if (!(s = +s) || !isFinite(s) || s >= 8640000) return "∞";
   const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
 };
@@ -321,10 +322,10 @@ function torTab(which) {
 }
 
 function torRow(t, dl) {
-  const pct = (t.progress * 100).toFixed(1);
+  const pct = (+t.progress * 100 || 0).toFixed(1);
   const stats = dl
-    ? `<span>${pct}% of ${size(t.size)}</span><span>↓ ${speed(t.dlspeed)}</span><span>ETA ${eta(t.eta)}</span><span>${esc(TOR_STATE[t.state] || t.state)}</span><span>${t.num_seeds} seeds</span>`
-    : `<span>↑ ${speed(t.upspeed)}</span><span>${t.num_leechs} peers</span><span>ratio ${t.ratio.toFixed(2)}</span><span>${size(t.size)}</span>`;
+    ? `<span>${pct}% of ${size(t.size)}</span><span>↓ ${speed(t.dlspeed)}</span><span>ETA ${eta(t.eta)}</span><span>${esc(TOR_STATE[t.state] || t.state)}</span><span>${esc(t.num_seeds)} seeds</span>`
+    : `<span>↑ ${speed(t.upspeed)}</span><span>${esc(t.num_leechs)} peers</span><span>ratio ${(+t.ratio || 0).toFixed(2)}</span><span>${size(t.size)}</span>`;
   return `<div class="tor"><div class="t" title="${esc(t.name)}">${esc(t.name)}</div>
     ${dl ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
     <div class="s">${stats}${t.category ? `<span>${esc(t.category)}</span>` : ""}</div></div>`;
@@ -355,14 +356,19 @@ async function loadQbit() {
 // ---------- Seerr requests (approve / decline right from the dashboard) ----------
 function requestCard(r) {
   const poster = r.poster && r.poster.startsWith("data:") ? r.poster : "https://image.tmdb.org/t/p/w154" + r.poster;
-  return `<div class="req" id="r${r.id}">
+  const id = esc(r.id);                   // ids go into attributes only; the click handler reads data-id
+  return `<div class="req" id="r${id}">
     ${r.poster ? `<img loading="lazy" src="${esc(poster)}" alt="">` : `<div class="ph"></div>`}
     <div class="b"><div><b>${esc(r.title)}</b> ${r.year ? `<span class="mute">(${esc(r.year)})</span>` : ""}<span class="tag">${r.type === "tv" ? "TV" : "Movie"}</span>${r.is4k ? '<span class="tag">4K</span>' : ""}</div>
-      <div class="mute" style="font-size:12px">${esc(r.user)} · ${ago(r.created)}${r.seasons.length ? " · season " + r.seasons.join(", ") : ""}</div>
+      <div class="mute" style="font-size:12px">${esc(r.user)} · ${ago(r.created)}${r.seasons.length ? " · season " + r.seasons.map(esc).join(", ") : ""}</div>
       <div class="ov">${esc(r.overview)}</div>
-      <button class="ok" onclick="act(${r.id},'approve',this)">Approve</button> <button class="no" onclick="act(${r.id},'decline',this)">Decline</button>
-      <span class="err" id="e${r.id}"></span></div></div>`;
+      <button class="ok" data-act="approve" data-id="${id}">Approve</button> <button class="no" data-act="decline" data-id="${id}">Decline</button>
+      <span class="err" id="e${id}"></span></div></div>`;
 }
+$("req").addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]");
+  if (b) act(b.dataset.id, b.dataset.act, b);
+});
 
 async function loadRequests() {
   if (!CFG.features.seerr) return;
@@ -382,7 +388,7 @@ async function act(id, action, btn) {
   const buttons = btn.parentElement.querySelectorAll("button");
   buttons.forEach(b => b.disabled = true);
   try {
-    await postJSON(`/api/requests/${id}/${action}`);
+    await postJSON(`/api/requests/${encodeURIComponent(id)}/${action}`);
     $("r" + id).style.opacity = .4;
     setTimeout(loadRequests, 600);
   } catch (e) {
@@ -515,7 +521,7 @@ async function loadPlex() {
   if (!CFG.features.plex) return;
   try {
     const d = await getJSON("/api/plex");
-    const summary = `${(d.bandwidth / 1000).toFixed(1)} Mbps · ${d.transcodes} transcoding`;
+    const summary = `${(+d.bandwidth / 1000 || 0).toFixed(1)} Mbps · ${esc(d.transcodes)} transcoding`;
     // Only a VIDEO transcode can use the GPU; audio-only transcodes (e.g. AC3 -> AAC) are always CPU and cheap.
     const cpuTranscode = d.sessions.some(s => s.video_decision === "transcode" && !s.transcode_hw_encoding);
     kpi("k-plex", cpuTranscode ? "warn" : "ok", d.stream_count ? `${d.stream_count} watching` : "idle", d.stream_count ? summary : "nobody streaming");
