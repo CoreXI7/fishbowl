@@ -6,8 +6,6 @@ Services are read from Nginx Proxy Manager's proxy_host/*.conf (mounted read-onl
 hosts show up automatically. Hardware/security stats come from the optional root collector
 (see ../collector), which writes a JSON file this app reads.
 """
-import functools
-import glob
 import hashlib
 import http.client
 import http.cookiejar
@@ -17,7 +15,6 @@ import os
 import re
 import socket
 import sys
-import ssl
 import threading
 import time
 import urllib.error
@@ -29,6 +26,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import settings as cfgstore             # noqa: E402  (settings.py: load / validate / save)
+from hostinfo import (_live_prev, cpu_model, cpu_mhz, cpu_topology, cpu_usage,  # noqa: E402
+                      disk_io, hwmon)
+from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _NoRedirect,  # noqa: E402
+                      fetch_same_host, num, read_capped, text)
 
 DEMO = cfgstore.DEMO
 HW_FILE = os.environ.get("HW_FILE", "/hw/hw.json")
@@ -101,43 +102,6 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
        "font-src 'self'; img-src 'self' data: https://cdn.jsdelivr.net https://image.tmdb.org; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
-INSECURE = ssl.create_default_context()      # upstreams are on the LAN, often with self-signed certs
-INSECURE.check_hostname = False
-INSECURE.verify_mode = ssl.CERT_NONE
-UA = "homelab-dash"
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Never follow a redirect: the 3xx comes back as an HTTPError. A service could otherwise send the dash to an
-    internal address (and the integrations' API keys with it)."""
-    def redirect_request(self, *args, **kwargs):
-        return None
-
-
-NOFOLLOW = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=INSECURE))   # LAN upstreams
-STRICT = urllib.request.build_opener(_NoRedirect)                                                    # integrations
-
-
-def fetch_same_host(url, base, name, limit, timeout=5):
-    """(content type, body) of a GET, following at most 3 redirects and only while they stay on base's scheme and
-    host:port. None if it fails or leaves that host."""
-    origin = urllib.parse.urlparse(base)[:2]
-    for _ in range(4):
-        if urllib.parse.urlparse(url)[:2] != origin:
-            return None
-        req = urllib.request.Request(url, headers={"User-Agent": UA, "Host": name})
-        try:
-            with NOFOLLOW.open(req, timeout=timeout) as r:
-                return r.headers.get("Content-Type", ""), r.read(limit)
-        except urllib.error.HTTPError as e:
-            loc = e.headers.get("Location") if 300 <= e.code < 400 else None
-            e.close()
-            if not loc:
-                return None
-            url = urllib.parse.urljoin(url, loc)
-        except Exception:
-            return None
-    return None
 
 
 # ---------- services (from NPM + config) ----------
@@ -309,97 +273,6 @@ def services():
     return {"checked": int(time.time()), "services": results}
 
 
-# ---------- host system (container sees host /proc + /sys/class/hwmon; the rest comes from the collector) ----------
-
-_cpu_prev = {}          # previous /proc/stat counters for /api/system
-_live_prev = {}         # ... and a separate set for /api/live, so the two endpoints don't skew each other's deltas
-
-
-def cpu_usage(prev=_cpu_prev):
-    """Per-CPU busy % since the previous call with the same prev dict (first call: since boot)."""
-    out = {}
-    for line in open("/proc/stat"):
-        if not line.startswith("cpu"):
-            break
-        f = line.split()
-        vals = list(map(int, f[1:9]))
-        idle, total = vals[3] + vals[4], sum(vals)
-        p_idle, p_total = prev.get(f[0], (0, 0))
-        prev[f[0]] = (idle, total)
-        dt = total - p_total
-        out[f[0]] = round(100 * (1 - (idle - p_idle) / dt), 1) if dt > 0 else 0.0
-    return out
-
-
-@functools.lru_cache(maxsize=1)                 # the CPU doesn't change while we run
-def cpu_model():
-    """Short CPU name for the System panel, e.g. "Ryzen 9 9950X"."""
-    try:
-        for line in open("/proc/cpuinfo"):
-            if line.startswith("model name"):
-                name = line.split(":", 1)[1].strip()
-                name = re.sub(r"\s+\d+-Core Processor|\(R\)|\(TM\)|CPU @.*", "", name)
-                return re.sub(r"^(AMD|Intel)\s+", "", name.strip())
-    except OSError:
-        pass
-    return ""
-
-
-_sensors = {"at": float("-inf"), "list": []}   # [(chip, label, path of its temp*_input)], rescanned every 5 min
-
-
-def sensor_files():
-    """Find every temperature sensor once (chip names and labels don't change), then just read the values."""
-    if time.monotonic() - _sensors["at"] > 300:
-        found = []
-        for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
-            try:
-                with open(d + "/name") as f:
-                    chip = f.read().strip()
-            except OSError:
-                continue
-            for inp in sorted(glob.glob(d + "/temp*_input")):
-                try:
-                    with open(inp.replace("_input", "_label")) as f:
-                        label = f.read().strip()
-                except OSError:
-                    label = os.path.basename(inp).split("_")[0]   # no label file: "temp1"
-                found.append((chip, label, inp))
-        _sensors.update(at=time.monotonic(), list=found)
-    return _sensors["list"]
-
-
-def hwmon():
-    """Temperature cells from whatever sensors this machine has (AMD k10temp/zenpower, Intel coretemp, DDR5, NVMe, amdgpu)."""
-    raw = {}                                   # chip -> [(label, °C)]
-    for chip, lbl, inp in sensor_files():
-        try:
-            with open(inp) as f:
-                v = int(f.read()) / 1000
-        except (OSError, ValueError):
-            continue
-        raw.setdefault(chip, []).append((lbl, v))
-    cells, cpu = [], None
-    for chip in ("k10temp", "zenpower"):
-        for lbl, v in raw.get(chip, []):
-            if lbl in ("Tctl", "Tdie") and cpu is None:
-                cpu = v
-                cells.append({"label": "CPU", "c": v, "warn": 80, "crit": 90})
-            elif lbl.startswith("Tccd"):
-                cells.append({"label": "CPU CCD" + lbl[4:], "c": v, "warn": 80, "crit": 90})
-    for lbl, v in raw.get("coretemp", []):
-        if lbl.startswith("Package") and cpu is None:
-            cpu = v
-            cells.append({"label": "CPU", "c": v, "warn": 80, "crit": 95})
-    for i, (lbl, v) in enumerate(raw.get("amdgpu", [])[:1]):
-        cells.append({"label": "GPU", "c": v, "warn": 80, "crit": 95})
-    nvmes = [v for lbl, v in raw.get("nvme", []) if lbl in ("Composite", "temp1")]
-    for i, v in enumerate(nvmes):
-        cells.append({"label": "NVMe" + (f" {i + 1}" if len(nvmes) > 1 else ""), "c": v, "warn": 65, "crit": 75})
-    ram = [v for chip in ("spd5118", "jc42") for _, v in raw.get(chip, [])]
-    for i, v in enumerate(ram):
-        cells.append({"label": f"RAM {i + 1}", "c": v, "warn": 70, "crit": 80})
-    return {"cpu": cpu, "cells": cells}
 
 
 def known_matcher(entries):
@@ -564,60 +437,6 @@ def system():
 
 # ---------- live panel (/api/live, polled every second while the "live" window is open) ----------
 
-@functools.lru_cache(maxsize=1)
-def cpu_topology():
-    """Per CPU thread: which group it belongs to (CCD / L3 cache cluster on AMD, package elsewhere), which core
-    (= the core's first thread number) and whether it is an SMT sibling (not that first thread). Read once from /sys;
-    [] if the folders aren't there."""
-    out, groups = [], {}
-    n = 0
-    while os.path.isdir(f"/sys/devices/system/cpu/cpu{n}"):
-        base = f"/sys/devices/system/cpu/cpu{n}"
-        def rd(path, default=""):
-            try:
-                with open(f"{base}/{path}") as f:
-                    return f.read().strip()
-            except OSError:
-                return default
-        key = rd("cache/index3/id") or rd("topology/physical_package_id", "0")
-        group = groups.setdefault(key, len(groups))
-        siblings = rd("topology/thread_siblings_list", str(n))
-        first = int(siblings.replace("-", ",").split(",")[0]) if siblings else n
-        out.append({"group": group, "core": first, "smt": first != n})
-        n += 1
-    return out
-
-
-def cpu_mhz():
-    """Current clock of every thread, in /proc/cpuinfo order (= thread number)."""
-    mhz = []
-    for line in open("/proc/cpuinfo"):
-        if line.startswith("cpu MHz"):
-            mhz.append(int(float(line.split(":", 1)[1])))
-    return mhz
-
-
-_io_prev = {"t": None, "stats": {}}
-DISK_RE = re.compile(r"(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+|mmcblk\d+)")   # whole disks, not partitions
-
-
-def disk_io(names):
-    """Read/write MB/s and % busy per physical disk since the previous call. names: {"sdb": "disk1"}."""
-    now, stats = time.monotonic(), {}
-    for line in open("/proc/diskstats"):
-        f = line.split()
-        if len(f) >= 13 and DISK_RE.fullmatch(f[2]):
-            stats[f[2]] = (int(f[5]), int(f[9]), int(f[12]))   # sectors read, sectors written, ms busy
-    prev, dt = _io_prev["stats"], (now - _io_prev["t"]) if _io_prev["t"] else 0
-    _io_prev.update(t=now, stats=stats)
-    disks = []
-    for dev, (r, w, busy) in stats.items():
-        if dev in prev and dt > 0:
-            pr, pw, pb = prev[dev]
-            disks.append({"dev": dev, "name": names.get(dev, dev), "read_bps": (r - pr) * 512 / dt,
-                          "write_bps": (w - pw) * 512 / dt, "busy": min(100.0, (busy - pb) / (dt * 10))})
-    disks.sort(key=lambda d: -d["busy"])
-    return {"read_bps": sum(d["read_bps"] for d in disks), "write_bps": sum(d["write_bps"] for d in disks), "disks": disks}
 
 
 def live():
@@ -643,35 +462,6 @@ def live():
     }
 
 
-# ---------- upstream data: attacker-controlled, so only the expected types get through ----------
-
-def num(v, default=0):
-    """A number from an upstream JSON field. Digit strings count (Tautulli sends many numbers as strings);
-    anything else becomes default, so the page never gets text where it expects a number."""
-    if isinstance(v, bool):
-        return default
-    if isinstance(v, (int, float)):
-        return v if v == v and abs(v) != float("inf") else default
-    if isinstance(v, str) and re.fullmatch(r"-?\d{1,18}(\.\d{1,9})?", v.strip()):
-        return float(v) if "." in v else int(v)
-    return default
-
-
-MB = 1 << 20
-QBIT_MAX, API_MAX = 32 * MB, 8 * MB   # biggest answer read from qBittorrent (~15,000 torrents) / Seerr and Tautulli
-
-
-def read_capped(r, limit):
-    """A response body, but at most limit bytes: a hostile upstream could send gigabytes (the container has 256 MB)."""
-    data = r.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError(f"answer bigger than {limit // MB} MB")
-    return data
-
-
-def text(v, limit=300):
-    """A string from an upstream JSON field, clipped; anything else (lists, objects, numbers) becomes ""."""
-    return v[:limit] if isinstance(v, str) else ""
 
 
 # ---------- qBittorrent ----------
