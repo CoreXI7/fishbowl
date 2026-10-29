@@ -97,3 +97,103 @@ html[data-theme="miku"] #bubbles i:nth-child(9n)::before{content:"🥬";font-siz
 @keyframes miku-note{0%{transform:translate(0,0) rotate(-12deg)}50%{transform:translate(24px,-55vh) rotate(10deg)}100%{transform:translate(-16px,-115vh) rotate(-8deg);opacity:0}}
 
 @media (prefers-reduced-motion:reduce){html[data-theme="miku"] #p-time::before{animation:none}}
+
+/* ===== Gura: hood blue #33739d, silver hair with blue streaks, trident aqua, white shark teeth, pink blush =====
+   Fan-made and unofficial; colours inspired by Gawr Gura (hololive production / COVER Corp). No artwork included:
+   add your own mascot per theme on the settings page. Light = a sunlit lagoon, dark = the deep. Silly on purpose. */
+.cutie.logo-gura{display:none}
+html[data-theme="gura"] .cutie.logo-bubbles{display:none}
+html[data-theme="gura"] .cutie.logo-gura{display:block}
+html[data-theme="gura"]{--bg:#e6f1f8;--card:rgba(255,255,255,.70);--fg:#13283a;--mute:#4f6b80;--line:#cddfeb;--up:#0f7a49;--down:#cf2834;
+  --warn:#8f5b00;--acc:#33739d;--acc2:#8ec3dc;--ink:#1e5a82;--bar:#d5e5ef;--coat:#3cc7d3;--eye:#5fa8de;--blush:#ff7fa0;--teeth:#fff;
+  --outline:#fff;--ray:rgba(255,255,255,.55);--glow:rgba(51,115,157,.32);--shadow:0 8px 24px -12px rgba(18,60,100,.35)}
+@media (prefers-color-scheme:dark){html[data-theme="gura"]{--bg:#06121e;--card:rgba(13,33,52,.72);--fg:#e4f2fb;--mute:#8eb0c7;--line:#17344d;
+  --up:#3ed68b;--down:#ff5f6b;--warn:#ffc43d;--acc:#5aa6d8;--acc2:#1d4e73;--ink:#8fd3ef;--bar:#10283d;--coat:#3cc7d3;--eye:#7cc4ee;
+  --blush:#ff8fab;--teeth:#e9f2f8;--outline:#0a1f33;--ray:rgba(124,196,238,.16);--glow:rgba(90,166,216,.30);--shadow:0 10px 28px -14px rgba(0,0,0,.8)}}
+
+/* the water: surface light fading into depth, light rays from the top-left (the one always-on animation: a slow
+   transform on one layer), a blush of pink in light mode, and a seabed with seaweed, a starfish and a lost trident */
+html[data-theme="gura"] body{background:
+  radial-gradient(900px 520px at 100% 0%,color-mix(in srgb,var(--acc) 14%,transparent),transparent 65%),
+  radial-gradient(700px 420px at 0% 100%,color-mix(in srgb,var(--blush) 13%,transparent),transparent 70%),
+  linear-gradient(180deg,color-mix(in srgb,var(--bg) 70%,#fff) 0%,var(--bg) 45%,color-mix(in srgb,var(--bg) 82%,var(--acc)) 100%);background-attachment:fixed}
+@media (prefers-color-scheme:dark){html[data-theme="gura"] body{background:
+  radial-gradient(1100px 600px at 12% -14%,color-mix(in srgb,var(--coat) 20%,transparent),transparent 62%),
+  linear-gradient(180deg,#0c2438 0%,var(--bg) 48%,#030a12 100%);background-attachment:fixed}}
+html[data-theme="gura"] body::before{content:"";position:fixed;left:-15%;right:-15%;top:-25vh;height:105vh;pointer-events:none;z-index:0;
+  background:repeating-conic-gradient(from 150deg at 22% 0,transparent 0deg,var(--ray) 2.5deg,transparent 5deg,transparent 9deg);
+  -webkit-mask:linear-gradient(180deg,#000 10%,transparent 78%);mask:linear-gradient(180deg,#000 10%,transparent 78%);
+  transform-origin:22% 0;animation:gura-rays 16s ease-in-out infinite alternate;will-change:transform}
+@keyframes gura-rays{from{transform:rotate(-2deg);opacity:.75}to{transform:rotate(2deg);opacity:1}}
+html[data-theme="gura"] body::after{content:"";position:fixed;left:0;right:0;bottom:0;height:150px;pointer-events:none;z-index:0;
+  background:color-mix(in srgb,var(--acc) 16%,transparent);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 150' preserveAspectRatio='none'%3E%3Cpath d='M0 150V112c90-24 150 8 240-10s170-26 260 4 180 14 270-12 200-18 290 8 190 18 280-6 170-20 260 2v52z'/%3E%3Cpath d='M180 104c-14-30 12-46-2-76M196 102c10-26-10-40 4-66M1310 104c-12-28 10-44-4-72M1330 106c14-24-8-38 6-62' fill='none' stroke='%23000' stroke-width='7' stroke-linecap='round'/%3E%3Cpath d='M1040 110 1100 22M1086 16l20 4-6 20M1072 34c-10-14-6-24 4-30M1110 46c12-6 22-2 26 10' fill='none' stroke='%23000' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M620 118l6-12 6 12 12 2-9 8 3 12-12-6-12 6 3-12-9-8z'/%3E%3Ccircle cx='430' cy='112' r='7'/%3E%3Ccircle cx='446' cy='116' r='4'/%3E%3C/svg%3E") bottom/100% 100% no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 150' preserveAspectRatio='none'%3E%3Cpath d='M0 150V112c90-24 150 8 240-10s170-26 260 4 180 14 270-12 200-18 290 8 190 18 280-6 170-20 260 2v52z'/%3E%3Cpath d='M180 104c-14-30 12-46-2-76M196 102c10-26-10-40 4-66M1310 104c-12-28 10-44-4-72M1330 106c14-24-8-38 6-62' fill='none' stroke='%23000' stroke-width='7' stroke-linecap='round'/%3E%3Cpath d='M1040 110 1100 22M1086 16l20 4-6 20M1072 34c-10-14-6-24 4-30M1110 46c12-6 22-2 26 10' fill='none' stroke='%23000' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M620 118l6-12 6 12 12 2-9 8 3 12-12-6-12 6 3-12-9-8z'/%3E%3Ccircle cx='430' cy='112' r='7'/%3E%3Ccircle cx='446' cy='116' r='4'/%3E%3C/svg%3E") bottom/100% 100% no-repeat}
+
+/* header: the hood's rim (blue band) with big white shark teeth under it, and a little shark on patrol behind the title */
+html[data-theme="gura"] header{border-bottom:3px solid var(--acc)}
+html[data-theme="gura"] header::after{left:0;width:100%;bottom:-12px;height:10px;animation:none;will-change:auto;
+  background:conic-gradient(from -40deg at 50% 100%,var(--teeth) 80deg,transparent 0) 0 0/18px 10px repeat-x;
+  filter:drop-shadow(0 1px 0 color-mix(in srgb,var(--acc) 65%,transparent))}
+html[data-theme="gura"] header::before{content:"";position:absolute;left:0;bottom:5px;width:40px;height:23px;z-index:-1;pointer-events:none;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 26'%3E%3Cpath d='M3 15c3-7 13-11 24-9 5 1 9 4 11 7l6-6-1 8 3 7-7-4c-4 4-12 6-20 5-8-1-14-3-16-8z' fill='%234a92c4' stroke='%2324587c' stroke-width='1.1' stroke-linejoin='round'/%3E%3Cpath d='M6 17.5c7 3.6 18 4.4 28 1-4 3.6-11 4.6-18 3.8-5-.6-8-2-10-4.8z' fill='%23f4f8fb'/%3E%3Cpath d='M18 7.5l5-6.5 3 7.5z' fill='%232f6f98' stroke='%2324587c' stroke-width='1.1' stroke-linejoin='round'/%3E%3Ccircle cx='11' cy='12.6' r='2' fill='%2310263a'/%3E%3Ccircle cx='10.3' cy='11.9' r='.7' fill='%23fff'/%3E%3Cpath d='M4.6 16.4l1.3 1.8 1.3-1.8 1.3 1.8 1.3-1.8' fill='none' stroke='%23fff' stroke-width='1' stroke-linejoin='round'/%3E%3Cellipse cx='15' cy='15.6' rx='2.2' ry='1.2' fill='%23ff8fab' opacity='.85'/%3E%3C/svg%3E") center/contain no-repeat;animation:gura-patrol 38s linear infinite;will-change:transform}
+@keyframes gura-patrol{0%{transform:translate(-50px,0) scaleX(-1)}12%{transform:translate(12vw,-4px) scaleX(-1)}25%{transform:translate(25vw,0) scaleX(-1)}
+  37%{transform:translate(37vw,-4px) scaleX(-1)}49.9%{transform:translate(calc(100vw + 10px),0) scaleX(-1)}50%{transform:translate(calc(100vw + 10px),0) scaleX(1)}
+  62%{transform:translate(63vw,-4px) scaleX(1)}75%{transform:translate(50vw,0) scaleX(1)}87%{transform:translate(25vw,-4px) scaleX(1)}100%{transform:translate(-50px,0) scaleX(1)}}
+/* the title is a sticker (outlined, with a drop), the "a" badge is candy pink and wiggles when you point at it */
+html[data-theme="gura"] #site-title{font-family:Fredoka,sans-serif;font-weight:700;letter-spacing:.01em;color:var(--acc);white-space:nowrap;
+  text-shadow:1.6px 0 var(--outline),-1.6px 0 var(--outline),0 1.6px var(--outline),0 -1.6px var(--outline),1.2px 1.2px var(--outline),
+  -1.2px -1.2px var(--outline),1.2px -1.2px var(--outline),-1.2px 1.2px var(--outline),0 3.5px 0 color-mix(in srgb,var(--acc) 35%,transparent)}
+@media (prefers-color-scheme:dark){html[data-theme="gura"] #site-title{color:#a6e0f7}}
+html[data-theme="gura"] #site-title::after{content:"a";display:inline-block;margin-left:7px;padding:0 7px 1px;border-radius:10px 10px 10px 3px;
+  transform:rotate(-10deg) translateY(-3px);font:700 13px/1.3 Fredoka,sans-serif;color:#fff;text-shadow:none;
+  background:linear-gradient(135deg,var(--blush),color-mix(in srgb,var(--blush) 70%,#fff));border:1.5px solid #fff;box-shadow:0 2px 6px -2px var(--blush)}
+html[data-theme="gura"] #title:hover #site-title::after{animation:gura-wiggle .5s ease-in-out}
+html[data-theme="gura"] #title:hover .logo-gura{animation:gura-chomp .45s ease-in-out}
+@keyframes gura-wiggle{0%,100%{transform:rotate(-10deg) translateY(-3px)}30%{transform:rotate(12deg) translateY(-5px)}60%{transform:rotate(-18deg) translateY(-2px)}}
+@keyframes gura-chomp{0%,100%{transform:none}40%{transform:scale(1.15,.88)}70%{transform:scale(.94,1.08)}}
+html[data-theme="gura"] body.wall #p-time{color:var(--ink)}
+
+/* cards: glassy water panels with a wavy hoodie-fade ribbon; h2 markers are shark fins (every third a trident) */
+html[data-theme="gura"] section{border-color:color-mix(in srgb,var(--acc) 20%,var(--line));
+  box-shadow:var(--shadow),inset 0 1px 0 color-mix(in srgb,#fff 40%,transparent)}
+html[data-theme="gura"] section::before{height:6px;background:linear-gradient(90deg,var(--acc) 0 25%,var(--eye) 55%,var(--coat) 80%,transparent);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 6'%3E%3Cpath d='M0 1.5Q6-1.5 12 1.5T24 1.5V4.5Q18 7.5 12 4.5T0 4.5Z'/%3E%3C/svg%3E") 0 0/24px 6px repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 6'%3E%3Cpath d='M0 1.5Q6-1.5 12 1.5T24 1.5V4.5Q18 7.5 12 4.5T0 4.5Z'/%3E%3C/svg%3E") 0 0/24px 6px repeat-x}
+html[data-theme="gura"] h2::before{width:16px;height:16px;top:1px;border-radius:0;background:linear-gradient(160deg,var(--eye),var(--acc) 70%);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 15C5 13 8 7 13 1c-1 5-.5 10 2 14z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 15C5 13 8 7 13 1c-1 5-.5 10 2 14z'/%3E%3C/svg%3E") center/contain no-repeat}
+html[data-theme="gura"] section:nth-of-type(3n) h2::before{background:linear-gradient(180deg,var(--coat),var(--acc));-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.4 2.6 2.8 0l1.4 2.6H3.6v2.9c0 .6.4.9.9.9h2.7V2.6h-.9L8 0l1.7 2.6h-.9v3.8h2.7c.5 0 .9-.3.9-.9V2.6h-.6L13.2 0l1.4 2.6H14v2.9c0 1.4-1.1 2.5-2.5 2.5H8.8v8H7.2V8H4.5C3.1 8 2 6.9 2 5.5V2.6z'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.4 2.6 2.8 0l1.4 2.6H3.6v2.9c0 .6.4.9.9.9h2.7V2.6h-.9L8 0l1.7 2.6h-.9v3.8h2.7c.5 0 .9-.3.9-.9V2.6h-.6L13.2 0l1.4 2.6H14v2.9c0 1.4-1.1 2.5-2.5 2.5H8.8v8H7.2V8H4.5C3.1 8 2 6.9 2 5.5V2.6z'/%3E%3C/svg%3E")}
+html[data-theme="gura"] section:hover h2::before{animation:gura-fin .6s ease-in-out}
+@keyframes gura-fin{0%,100%{transform:none}35%{transform:translateX(3px) rotate(8deg)}70%{transform:translateX(-1px) rotate(-5deg)}}
+/* KPI tiles: the status bar has a row of teeth (still green/amber/red for the status) */
+html[data-theme="gura"] .kpi{border-color:color-mix(in srgb,var(--acc) 20%,var(--line))}
+html[data-theme="gura"] .kpi::before{width:9px;
+  -webkit-mask:linear-gradient(#000,#000) 0 0/4px 100% no-repeat,conic-gradient(from 225deg at 100% 50%,#000 90deg,transparent 0) 4px 0/5px 8px repeat-y;
+  mask:linear-gradient(#000,#000) 0 0/4px 100% no-repeat,conic-gradient(from 225deg at 100% 50%,#000 90deg,transparent 0) 4px 0/5px 8px repeat-y}
+html[data-theme="gura"] .kpi.ok::before{background:linear-gradient(180deg,var(--acc),var(--coat))}
+html[data-theme="gura"] .meter i{background:linear-gradient(180deg,rgba(255,255,255,.35),transparent 55%),linear-gradient(90deg,var(--acc),var(--coat))}
+html[data-theme="gura"] .bar i{background:linear-gradient(90deg,var(--acc),var(--eye) 60%,var(--coat))}
+html[data-theme="gura"] .cores i b{background:linear-gradient(0deg,var(--acc),var(--eye) 70%,var(--coat))}
+html[data-theme="gura"] .app .ic .lt{background:linear-gradient(135deg,var(--acc),var(--coat))}
+html[data-theme="gura"] .app:hover{transform:translateY(-3px) rotate(-3deg);background:color-mix(in srgb,var(--acc) 13%,transparent);border-color:color-mix(in srgb,var(--acc) 50%,transparent)}
+html[data-theme="gura"] button.ok,html[data-theme="gura"] .tabs button.on,html[data-theme="gura"] #wall-btn[aria-pressed=true]{
+  background:linear-gradient(135deg,var(--acc),color-mix(in srgb,var(--acc) 70%,var(--coat)));color:#fff}
+html[data-theme="gura"] ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--acc),var(--eye));background-clip:padding-box}
+html[data-theme="gura"] ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--blush),var(--acc));background-clip:padding-box}
+
+/* the mascot gets the spotlight: bigger, and on the wall she stands on the seabed in the corner */
+html[data-theme="gura"] .mascot img{width:min(250px,82%);filter:drop-shadow(0 10px 14px rgba(20,70,110,.35))}
+html[data-theme="gura"] .mascot .say{border-color:color-mix(in srgb,var(--acc) 75%,var(--line));box-shadow:var(--shadow),0 0 18px -8px var(--glow)}
+html[data-theme="gura"] body.wall .mascot img{max-height:min(240px,22vh)}
+
+/* bubbles stay bubbles; every seventh is a little shark, one is an "a" and one is a shrimp */
+html[data-theme="gura"] #bubbles i{opacity:.7;background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.95) 0 9%,transparent 12%),
+  radial-gradient(circle,transparent 56%,color-mix(in srgb,var(--eye) 65%,#fff) 67%,transparent 72%),radial-gradient(circle,color-mix(in srgb,var(--eye) 14%,transparent),transparent 70%)}
+@media (prefers-color-scheme:dark){html[data-theme="gura"] #bubbles i{opacity:.42}}
+html[data-theme="gura"] #bubbles i:nth-child(7n){border-radius:0;opacity:.32;background:var(--acc);animation-name:gura-swim;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'%3E%3Cpath d='M2 12c6-6 17-8 28-4l6-6-1 8 4 7-7-3c-8 4-21 4-30-2zM16 6l5-6 2 7z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'%3E%3Cpath d='M2 12c6-6 17-8 28-4l6-6-1 8 4 7-7-3c-8 4-21 4-30-2zM16 6l5-6 2 7z'/%3E%3C/svg%3E") center/contain no-repeat}
+@keyframes gura-swim{0%{transform:translate(0,0) rotate(-24deg) scaleX(-1)}50%{transform:translate(30px,-55vh) rotate(-18deg) scaleX(-1)}
+  100%{transform:translate(-10px,-115vh) rotate(-26deg) scaleX(-1);opacity:0}}
+html[data-theme="gura"] #bubbles i:nth-child(11),html[data-theme="gura"] #bubbles i:nth-child(13){background:none;border-radius:0;container-type:size;opacity:.6}
+html[data-theme="gura"] #bubbles i:nth-child(11)::before{content:"a";display:block;text-align:center;font:700 32px/1 Fredoka,sans-serif;font-size:90cqh;color:var(--acc)}
+html[data-theme="gura"] #bubbles i:nth-child(13)::before{content:"🦐";display:block;text-align:center;font-size:70cqh;line-height:1}
+
+@media (prefers-reduced-motion:reduce){html[data-theme="gura"] body::before,html[data-theme="gura"] header::before{animation:none}
+  html[data-theme="gura"] header::before{display:none}}

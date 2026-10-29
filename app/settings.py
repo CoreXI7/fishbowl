@@ -50,6 +50,14 @@ THEMES = {
              "quotes": ["All services in tune 🎵", "Encore! Everything's still up 🎤", "39! Thanks for keeping me running 💙",
                         "Leek break? The servers are fine 🥬", "Turning the volume up on uptime ♪", "Mic check… 1, 2… 01!",
                         "Singing in harmony: nothing down 🎶", "Twin-tails spinning, disks spinning 💫"]},
+    "gura": {"label": "Gura", "click_emoji": "🦈🔱🫧🌊🦐", "favicon": "/static/favicon-gura.svg",
+             "tagline": "everything's swimming 🫧", "tagline_down": "something sank! 🌊",
+             "greeting": "a! Welcome back to Atlantis, chumbud 🦈",
+             "quotes": ["a", "Shaaark! Zero downtime spotted 🦈", "Shrimp check: all servers present 🦐",
+                        "Atlantis status: still not sunk 🔱", "Bloop ate a bug. The software kind 🐛",
+                        "I'm a smart shark. Look at this uptime 🦈", "Low on shrimp, never on uptime 🦐",
+                        "Sharks never stop swimming. Neither does Plex 🌊", "chomp chomp, logs eaten 🦷",
+                        "Blub blub… that means \"all good\" in shark 🫧"]},
 }
 THEME_FIELDS = ("mascot", "mascot_credit", "greeting", "quotes", "click_emoji", "tagline", "tagline_down", "favicon")
 
