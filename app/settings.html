@@ -24,92 +24,105 @@
   <a class="pill" href="/" style="margin-left:auto;text-decoration:none;color:inherit">← Dashboard</a>
 </header>
 <div id="bubbles" aria-hidden="true"></div>
-<div class="set-wrap">
-  <div class="banner" id="banner" hidden></div>
+<div class="set-layout">
+  <nav class="set-nav" aria-label="Settings sections">
+    <div class="set-search"><label for="set-q" class="vh">Search settings</label>
+      <input type="search" id="set-q" placeholder="Search settings" autocomplete="off" spellcheck="false"></div>
+    <ul>
+      <li><a href="#setup">Setup<span class="nb" id="nb-setup" hidden></span></a></li>
+      <li><a href="#look">Look &amp; feel</a></li>
+      <li><a href="#themes">Themes</a></li>
+      <li><a href="#services">Services</a></li>
+      <li><a href="#integrations">Integrations</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#about">About</a></li>
+    </ul>
+  </nav>
 
-  <section>
-    <h2>Look &amp; feel</h2>
-    <div class="fgrid">
-      <label class="field"><span>Title</span><input type="text" data-k="site.title" maxlength="60"></label>
-      <label class="field"><span>Tagline (all good)</span><input type="text" data-k="site.tagline" maxlength="120"></label>
-      <label class="field"><span>Tagline (something down)</span><input type="text" data-k="site.tagline_down" maxlength="120"></label>
-      <label class="field"><span>Click emoji</span><input type="text" data-k="site.click_emoji" maxlength="16"><small>Rains down when you click the title or mascot.</small></label>
-      <div class="field"><span>Browser tab icon</span>
-        <span style="display:flex;gap:8px;align-items:center"><img id="fav-prev" alt="" style="width:28px;height:28px;border-radius:6px" hidden>
-          <label class="pill" style="cursor:pointer">Upload… <input type="file" id="fav-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
-          <button class="ibtn danger" id="fav-rm" hidden>Default</button></span>
-        <small>A square PNG works best. Default: the bubbles.</small></div>
-    </div>
-    <div class="field" style="margin-top:12px"><span>Panels on the dashboard</span><div class="panel-picks" id="panels"></div>
-      <small>Untick a panel to hide it. Its summary tile at the top stays (so a VPN leak still shows with Torrents hidden).</small></div>
-    <h3 style="font:600 14px Fredoka,sans-serif;margin:16px 0 8px">Mascot <small class="mute" style="font-weight:400">(optional, left column · Bubbles theme; other themes have their own below)</small></h3>
-    <div class="mascot-ed">
-      <img id="mascot-prev" alt="" hidden>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <span><label class="pill" style="cursor:pointer">Upload image… <input type="file" id="mascot-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
-          <button class="ibtn danger" id="mascot-rm" hidden>Remove</button></span>
-        <small class="mute">PNG, JPEG, WebP or GIF, up to 2 MB. A transparent PNG looks best.</small>
+  <main class="set-main">
+    <div class="err-sum" id="err-sum" role="alert" tabindex="-1" hidden></div>
+
+    <section id="setup" aria-labelledby="h-setup">
+      <h2 id="h-setup">Setup</h2>
+      <p class="hint">What's working and what isn't. Each item says how to fix it.</p>
+      <div id="setup-list"></div>
+      <button type="button" class="ibtn" id="setup-again">Check again</button>
+    </section>
+
+    <section id="look" aria-labelledby="h-look">
+      <h2 id="h-look">Look &amp; feel</h2>
+      <div class="form">
+        <div class="field"><label for="f-title">Title</label>
+          <input type="text" id="f-title" data-k="site.title" maxlength="60" aria-describedby="d-title">
+          <small id="d-title">In the header and the browser tab.</small></div>
+        <div class="field"><label for="theme-default">Default theme</label>
+          <select id="theme-default" aria-describedby="d-theme"></select>
+          <small id="d-theme">What every browser shows until someone picks another one with 🎨 (or T) on the dashboard. Each browser remembers its own pick.</small></div>
+        <fieldset class="field"><legend>Panels on the dashboard</legend>
+          <div class="panel-picks" id="panels"></div>
+          <small>Untick a panel to hide it. Its summary tile at the top stays, so a VPN leak still shows with Torrents hidden.</small></fieldset>
       </div>
-    </div>
-    <div class="fgrid" style="margin-top:10px">
-      <label class="field"><span>Art credit</span><input type="text" data-k="site.mascot_credit" maxlength="80" placeholder="art: …"></label>
-      <label class="field"><span>Greeting</span><input type="text" data-k="site.greeting" maxlength="200" placeholder="Hi! Everything's up."></label>
-    </div>
-    <label class="field" style="margin-top:10px"><span>Things the mascot says (one per line)</span><textarea data-k="site.quotes" data-list></textarea></label>
-  </section>
+    </section>
 
-  <section>
-    <h2>Themes <small>🎨 on the dashboard (or T) switches; each browser remembers its own pick</small></h2>
-    <div class="fgrid">
-      <label class="field"><span>Default theme</span><select id="theme-default"></select>
-        <small>What every browser shows until someone picks another one with 🎨.</small></label>
-    </div>
-    <p class="hint" style="margin-top:12px">Each theme can have its own mascot and lines. Leave a field empty to use the theme's built-in default
-      (shown faded). Picking a tab previews that theme on this page.</p>
-    <div class="tabs" id="theme-tabs"></div>
-    <div id="theme-ed"></div>
-  </section>
+    <section id="themes" aria-labelledby="h-themes">
+      <h2 id="h-themes">Themes</h2>
+      <p class="hint">Each theme's mascot, tab icon and what it says. Leave a field empty to use the theme's own text (shown faded).
+        Picking a theme here previews it on this page.</p>
+      <div class="tabs" id="theme-tabs" role="group" aria-label="Theme to edit"></div>
+      <div id="theme-ed"></div>
+    </section>
 
-  <section>
-    <h2>Services <small id="svc-count"></small></h2>
-    <p class="hint">Found automatically from Nginx Proxy Manager. Group them, rename them and pick icons. Icons are names from
-      <a href="https://dashboard-icons.homarr.dev" target="_blank" rel="noopener">dashboard-icons</a> (e.g. <code>plex</code>, <code>sonarr</code>);
-      leave empty to use the site's own favicon. Services you haven't grouped show up under "New / other" on the dashboard.</p>
-    <div id="groups"></div>
-    <button id="add-group">+ Add group</button>
-    <div id="unassigned"></div>
-    <div id="hidden-wrap" style="margin-top:14px"></div>
-  </section>
+    <section id="services" aria-labelledby="h-services">
+      <h2 id="h-services">Services <small id="svc-count"></small></h2>
+      <p class="hint">Found automatically from Nginx Proxy Manager. Group them, rename them and pick icons: an icon is a name from
+        <a href="https://dashboard-icons.homarr.dev" target="_blank" rel="noopener">dashboard-icons</a> (like <code>plex</code> or <code>sonarr</code>),
+        or leave it empty for the site's own icon. Services you haven't grouped show under "New / other" on the dashboard.</p>
+      <div id="svc-empty" class="empty" hidden></div>
+      <div id="groups"></div>
+      <button type="button" id="add-group">+ Add group</button>
+      <div id="unassigned"></div>
+      <div id="hidden-wrap"></div>
+      <h3 id="h-extras">Services not in NPM</h3>
+      <p class="hint">Anything else you want health-checked: a NAS, a router, a box on another network.</p>
+      <div id="extras"></div>
+      <button type="button" id="add-extra">+ Add service</button>
+      <details class="adv" id="adv-services">
+        <summary>Advanced</summary>
+        <div class="field"><label for="f-via">Check these through the proxy (one per line)</label>
+          <textarea id="f-via" data-k="via_proxy" data-list rows="3" spellcheck="false" aria-describedby="d-via"></textarea>
+          <small id="d-via">For services on a Docker network the dashboard isn't on: it asks your reverse proxy instead, the way a visitor would.
+            Write the host name; add a path (<code>vault.example.com/alive</code>) when <code>/</code> needs a sign-in.</small></div>
+      </details>
+    </section>
 
-  <section>
-    <h2>Extra services <small>not in NPM</small></h2>
-    <p class="hint">Anything else you want health-checked: a NAS, a router, a box on another network.</p>
-    <div id="extras"></div>
-    <button id="add-extra">+ Add service</button>
-  </section>
+    <section id="integrations" aria-labelledby="h-integrations">
+      <h2 id="h-integrations">Integrations</h2>
+      <p class="hint">Keys are kept on the server and never shown again (you'll only see "saved"). Changing an address means typing its key again,
+        so a key can't be sent to a new server by accident. <b>Test</b> uses what's saved, so save first.</p>
+      <form class="integ-grid" id="integ" autocomplete="off"></form>
+    </section>
 
-  <section>
-    <h2>Integrations</h2>
-    <p class="hint">Keys are stored on the server and never shown again (you'll only see "saved"). Changing an address means typing its key again,
-      so a key can't be sent to a new server by accident. <b>Test</b> checks what's saved, so save first.</p>
-    <form class="fgrid" id="integ" autocomplete="off"></form>
-  </section>
+    <section id="security" aria-labelledby="h-security">
+      <h2 id="h-security">Security</h2>
+      <div class="form">
+        <div class="field"><label for="f-known">Trusted IPs (one per line)</label>
+          <textarea id="f-known" data-k="known_ips" data-list rows="4" spellcheck="false" aria-describedby="d-known"></textarea>
+          <small id="d-known">A full address, or a prefix ending in a dot (<code>192.168.1.</code>) or a colon (<code>2001:db8:</code>).
+            SSH and sign-in logins from anywhere else are flagged red. This list stays on the server.</small></div>
+      </div>
+    </section>
 
-  <section>
-    <h2>Security</h2>
-    <label class="field"><span>Trusted IPs (one per line; a prefix ends with a dot, like <code>192.168.1.</code>)</span>
-      <textarea data-k="known_ips" data-list placeholder="192.168.1.&#10;203.0.113.7"></textarea>
-      <small>SSH and SSO logins from anywhere else are flagged red. This list stays on the server.</small></label>
-  </section>
-
-  <section>
-    <h2>Fixed settings <small>change these in docker-compose.yml / .env</small></h2>
-    <p class="hint">These protect the dashboard itself, so they can't be changed from a web page.</p>
-    <div class="ro" id="infra"></div>
-  </section>
+    <section id="about" aria-labelledby="h-about">
+      <h2 id="h-about">About</h2>
+      <p class="hint">These are set in <code>docker-compose.yml</code> because they protect the dashboard itself, so a web page can't change them.
+        Every setting is described in <code>docs/SETTINGS.md</code>.</p>
+      <div class="ro" id="infra"></div>
+    </section>
+    <p class="q-none" id="q-none" hidden></p>
+  </main>
 </div>
 
-<div class="savebar"><span class="msg" id="msg">Loading…</span><button id="reload">Discard changes</button><button class="ok" id="save" disabled>Save</button></div>
+<div class="savebar"><span class="msg" id="msg" role="status">Loading…</span><button type="button" id="reload">Discard changes</button><button type="button" class="ok" id="save" disabled>Save</button></div>
 
 <script src="/js/settings.js"></script>
 </body>

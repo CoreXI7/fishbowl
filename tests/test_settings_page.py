@@ -7,6 +7,7 @@ import unittest
 import urllib.error
 import urllib.request
 
+from browser import CHROME, Browser
 from helpers import load_app, serve
 
 
@@ -136,6 +137,28 @@ class Setup(unittest.TestCase):
         st = self.states(app)
         self.assertNotIn("problem", st.values(), "the public demo shows a working setup")
         self.assertIn("collector", st)
+
+
+@unittest.skipUnless(CHROME, "needs Chrome or Chromium")
+class Page(unittest.TestCase):
+    def test_page(self):
+        app = load_app()
+        srv, url = serve(app.Handler)
+        b = Browser(1440, 900)
+        try:
+            b.send("Page.navigate", {"url": url + "/settings"})
+            self.assertTrue(b.wait_for("!!document.querySelector('.chk')", 15), "the Setup checklist renders")
+            self.assertEqual(b.js("document.getElementById('nb-setup').textContent"), "3")
+            self.assertEqual(b.js("document.querySelector('.set-nav a[aria-current]').hash"), "#setup")
+            b.js("(el => { el.value = '10.0.0'; el.dispatchEvent(new Event('input', {bubbles: true})); })(document.getElementById('f-known'))")
+            b.js("document.getElementById('save').click()")
+            self.assertTrue(b.wait_for("!document.getElementById('err-sum').hidden", 10), "a refused save shows the summary")
+            self.assertEqual(b.js("document.querySelector('#err-sum a').getAttribute('href')"), "#security")
+            self.assertEqual(b.js("document.getElementById('f-known').getAttribute('aria-invalid')"), "true")
+            self.assertEqual(b.csp_violations(), [])
+        finally:
+            b.close()
+            srv.shutdown()
 
 
 if __name__ == "__main__":
