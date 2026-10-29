@@ -20,6 +20,7 @@ services:
       TRUSTED_PROXY: nginx                # your reverse proxy's container name; empty = accept anyone (LAN-only use)
       NPM_DIR: /npm
       # SETTINGS_UI: "0"                  # make the settings page read-only
+      # USER_HEADER: Remote-User          # name the SSO user in the log; ONLY if your proxy sets this header itself
       # CHECK_VIA_PROXY: demo.example.com vault.example.com/alive # hosts on networks the dash can't reach: health-check them through the proxy (optional path instead of /)
     volumes:
       - ./app:/app:ro

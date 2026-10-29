@@ -85,6 +85,7 @@ class Upstream:
             do_GET = do_POST = answer
 
         self.server, self.url = serve(H)
+        self.server.handle_error = lambda *a: None     # a client hanging up mid-answer is expected in these tests
 
     def close(self):
         self.server.shutdown()

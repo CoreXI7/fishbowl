@@ -36,6 +36,7 @@ INFRA = cfgstore.infra()
 NPM_DIR = INFRA["npm_dir"]
 TRUSTED_PROXY = INFRA["trusted_proxy"]      # e.g. "nginx": only that host may talk to us
 ALLOWED_ORIGINS = set(INFRA["origins"])
+USER_HEADER = os.environ.get("USER_HEADER", "")   # e.g. Remote-User: logged only if your proxy sets (overwrites) it
 _cfg_lock = threading.Lock()
 
 
@@ -73,6 +74,13 @@ def scrub(text):
         text = text.replace(v, "***").replace(urllib.parse.quote_plus(v), "***").replace(urllib.parse.quote(v, safe=""), "***")
     text = re.sub(r"(?i)(api_?key|token|pass(word)?|secret)=[^&\s'\"]*", r"\1=***", text)
     return re.sub(r"(https?://[^\s'\"?]*)\?[^\s'\"]*", r"\1?…", text)[:300]
+
+
+def log_safe(text, limit=300):
+    """Text for the container log: clipped, with control and other unprintable characters shown as \\xNN,
+    so a request path or header can't put terminal escape sequences or fake lines into the log."""
+    return "".join(c if c.isprintable() else f"\\x{ord(c):02x}" if ord(c) < 256 else f"\\u{ord(c):04x}"
+                   for c in str(text)[:limit])
 
 
 def proxy_ip():
@@ -892,8 +900,18 @@ class Handler(BaseHTTPRequestHandler):
     timeout = 60                          # drop idle/stuck connections so threads can't pile up
 
     def log_message(self, fmt, *args):
-        if not self.path.startswith("/api/") or self.command == "POST":
-            print(f"{self.headers.get('X-Real-IP') or self.client_address[0]} {fmt % args}", flush=True)
+        path, cmd = getattr(self, "path", None) or "", getattr(self, "command", None) or ""   # unset on a malformed request
+        if not path.startswith("/api/") or cmd == "POST":
+            print(log_safe(f"{self.client()} {fmt % args}", 500), flush=True)
+
+    def client(self):
+        """Who sent this request, for the log. The proxy's X-Real-IP (and USER_HEADER, if set) count only when the
+        request really came from the proxy; anyone else could send those headers themselves."""
+        ip, headers = self.client_address[0], getattr(self, "headers", None)
+        via_proxy = bool(TRUSTED_PROXY) and ip == proxy_ip() and headers is not None
+        who = (headers.get("X-Real-IP") if via_proxy else None) or ip
+        user = headers.get(USER_HEADER) if via_proxy and USER_HEADER else None
+        return log_safe(f"{user} ({who})" if user else who, 120)
 
     def send(self, code, body, ctype="application/json", cache="no-store", extra=None):
         if not isinstance(body, bytes):
@@ -924,7 +942,7 @@ class Handler(BaseHTTPRequestHandler):
         ip = self.client_address[0]
         if ip == "127.0.0.1" or ip == proxy_ip():
             return True
-        print(f"blocked direct request from {ip} {self.command} {self.path[:80]}", flush=True)
+        print(log_safe(f"blocked direct request from {ip} {self.command} {self.path[:80]}"), flush=True)
         self.send(403, {"error": "forbidden"})
         return False
 
@@ -991,7 +1009,7 @@ class Handler(BaseHTTPRequestHandler):
         except cfgstore.Invalid as e:
             self.send(400, {"error": str(e)})
         except Exception as e:
-            print(f"error on {self.command} {self.path[:80]}: {scrub(f'{type(e).__name__}: {e}')}", flush=True)
+            print(log_safe(f"error on {self.command} {self.path[:80]}: {scrub(f'{type(e).__name__}: {e}')}"), flush=True)
             try:
                 self.send(502, {"error": "upstream error (see container log)"})
             except Exception:
@@ -1054,7 +1072,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self.same_origin():
             return self.send(403, {"error": "bad origin: open the dashboard by its own address (or set ORIGIN)"})
-        who = self.headers.get("Remote-User") or self.headers.get("X-Real-IP") or self.client_address[0]
+        who = self.client()
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/settings":
             d = self.json_body(256 * 1024)
