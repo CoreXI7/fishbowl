@@ -10,8 +10,17 @@ import unittest
 from test_collector_requests import load_collector
 
 FAKE = """#!{python}
-import os, sys
+import os, subprocess, sys, time
 open(os.environ["FAKE_JOURNAL_LOG"], "a").write(" ".join(sys.argv[1:]) + "\\n")
+mode = os.environ.get("FAKE_MODE", "")
+if mode == "fail":
+    sys.exit(1)
+if mode == "noline":                 # endless output without a newline
+    while True:
+        sys.stdout.write("x" * 65536)
+if mode == "grandchild":             # a child keeps the pipe open after journalctl itself exits
+    subprocess.Popen(["sleep", "30"])
+    sys.exit(0)
 sys.stdout.write(open(os.environ["FAKE_JOURNAL"]).read())
 """
 
@@ -47,6 +56,30 @@ class Journal(unittest.TestCase):
 
     def tearDown(self):
         os.environ["PATH"] = os.environ["PATH"].split(os.pathsep, 1)[1]
+        os.environ.pop("FAKE_MODE", None)
+
+    def read_fails(self, mode, timeout=2):
+        import time
+        os.environ["FAKE_MODE"] = mode
+        t0 = time.monotonic()
+        with self.assertRaises(self.col.CheckFailed):
+            self.col.ssh_journal(["-u", "ssh"], timeout)
+        return time.monotonic() - t0
+
+    def test_endless_line_is_bounded_and_times_out(self):
+        import resource
+        before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        self.assertLess(self.read_fails("noline"), 10)
+        self.assertLess(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before, 50_000, "KB: the line was never held")
+
+    def test_grandchild_holding_the_pipe_is_killed(self):
+        self.assertLess(self.read_fails("grandchild"), 10)
+
+    def test_failed_read_keeps_the_last_numbers(self):
+        good = self.col.security()["ssh"]
+        self.col._journal["at"] = float("-inf")
+        os.environ["FAKE_MODE"] = "fail"
+        self.assertEqual(self.col.security()["ssh"], good)
 
     def calls(self):
         return open(self.log).read().splitlines() if os.path.exists(self.log) else []

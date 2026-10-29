@@ -20,6 +20,7 @@ import os
 import pwd
 import re
 import shutil
+import signal
 import sqlite3
 import stat
 import subprocess
@@ -423,16 +424,34 @@ def handle_cron_approval():
 # ---------- security checks (each one can be switched off in the config) ----------
 
 JOURNAL_MAX_LINES = 100_000   # newest lines of the 7-day SSH journal kept (a flood of log lines can't fill memory)
+JOURNAL_LINE_MAX = 1100       # bytes; no real sshd line is longer (longer ones are skipped)
 _journal = {"at": float("-inf"), "lines": None, "lock": threading.Lock()}
+LAST_SSH = [None]             # the card's last good SSH numbers: shown again when a read fails, not "all quiet"
+
+
+def _journal_lines(stream):
+    """Lines from journalctl's binary output: split on \\n only (a \\r can't start a fake line), at most
+    JOURNAL_LINE_MAX bytes read per line (the rest of a longer one is skipped without ever holding it)."""
+    while True:
+        line = stream.readline(JOURNAL_LINE_MAX + 1)
+        if not line:
+            return
+        if len(line) > JOURNAL_LINE_MAX:
+            while line and not line.endswith(b"\n"):    # skip the rest of an over-long line
+                line = stream.readline(65536)
+            continue
+        yield line.rstrip(b"\n").decode("utf-8", "replace")
+
 
 
 def ssh_journal(units, timeout=60, wait=None):
     """The SSH units' journal for the last 7 days (short-iso), shared by the card (main loop) and the detail views
     (their thread): read at most once every 50 s. No -n: with it journalctl walked the whole journal backwards
     (1.5 s of CPU per read on a 2 GB journal); without it, it seeks to --since. The newest JOURNAL_MAX_LINES are
-    kept while streaming, and lines over 1,100 characters (no real sshd line is) are skipped: at most ~110 MB, and
-    only one copy at a time. wait: seconds to wait for a read already running in the other thread (then the last
-    lines are used). Raises CheckFailed like out()."""
+    kept while streaming, and lines over JOURNAL_LINE_MAX bytes (no real sshd line is) are skipped: at most ~110 MB,
+    and only one copy at a time. On timeout journalctl's whole process group is killed (a child holding the pipe
+    can't keep the read open). wait: seconds to wait for a read already running in the other thread (then the
+    last lines are used). Raises CheckFailed like out()."""
     if not _journal["lock"].acquire(timeout=-1 if wait is None else wait):
         if _journal["lines"] is not None:
             return _journal["lines"]
@@ -443,14 +462,21 @@ def ssh_journal(units, timeout=60, wait=None):
         _journal["lines"] = None                          # let the old copy go before reading the new one
         try:
             p = subprocess.Popen(["journalctl", *units, "--since", "-7d", "-o", "short-iso", "--no-pager", "-q"],
-                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
         except OSError as e:
             raise CheckFailed(f"journalctl: {e.strerror}")
         killed = threading.Event()
-        timer = threading.Timer(timeout, lambda: (killed.set(), p.kill()))
+
+        def kill_group():
+            killed.set()
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        timer = threading.Timer(timeout, kill_group)
         try:
             timer.start()
-            lines = list(collections.deque((l.rstrip("\n") for l in p.stdout if len(l) <= 1100), maxlen=JOURNAL_MAX_LINES))
+            lines = list(collections.deque(_journal_lines(p.stdout), maxlen=JOURNAL_MAX_LINES))
         finally:
             timer.cancel()
             timer.join()
@@ -458,7 +484,7 @@ def ssh_journal(units, timeout=60, wait=None):
             try:
                 rc = p.wait(5)
             except subprocess.TimeoutExpired:             # closed its output but won't exit
-                p.kill()
+                kill_group()
                 rc = p.wait()
         if killed.is_set():
             raise CheckFailed(f"journalctl timed out after {timeout} s")
@@ -491,23 +517,30 @@ def security():
         try:
             lines = ssh_journal(units, 30, wait=5)    # the main loop never waits long for the detail thread's read
         except CheckFailed:
-            lines = []
+            lines = None
         logins, failed, day_ago = [], 0, time.time() - 86400
-        for line in lines:
-            if (n := len(SSH_FAILED.findall(line))) and (when(line) or 0) > day_ago:   # the last 24 h, same lines
-                failed += n
+        for line in lines or []:
+            if SSH_FAILED.search(line) and (when(line) or 0) > day_ago:    # the last 24 h, from the same lines
+                failed += 1                                                 # one per line, however it's worded
             # anchored, like the details: a user name such as "Accepted publickey for root from 10.0.0.2" in a failed
             # attempt must not show up as a login
             m = SSH_LINE.match(line)
             a = SSH_ACCEPT.match(m[3]) if m else None
             if a and valid_ip(a["ip"]):
-                logins.append({"time": m[1], "method": a["method"], "user": a["user"], "ip": valid_ip(a["ip"])})
-        s["ssh"] = {"logins": logins[-8:][::-1], "failed_24h": failed}
+                logins.append({"time": m[1], "method": a["method"], "user": clip(a["user"], 64), "ip": valid_ip(a["ip"])})
+        if lines is not None:
+            LAST_SSH[0] = {"logins": logins[-8:][::-1], "failed_24h": failed}
+        s["ssh"] = LAST_SSH[0] or {"logins": [], "failed_24h": 0}      # a failed read keeps the last good numbers
     authelia = SEC.get("authelia_container", "")
     if authelia and have("docker"):
         fails = []
-        out = subprocess.run(["docker", "logs", "--since", "24h", authelia], capture_output=True, text=True, timeout=30)
-        for line in (out.stdout + out.stderr).splitlines():
+        try:                    # a hung dockerd must not take the whole security card (fail2ban, SSH, firewall) with it
+            out = subprocess.run(["docker", "logs", "--since", "24h", authelia], capture_output=True, text=True,
+                                 errors="replace", timeout=30)
+            text_out = out.stdout + out.stderr
+        except (subprocess.TimeoutExpired, OSError):
+            text_out = ""
+        for line in text_out.splitlines():
             if len(line) > 2000 or "Unsuccessful" not in line:      # crafted giant lines made the regex below crawl
                 continue
             m = re.search(r'time="([^"]+)".*Unsuccessful (\w+) authentication attempt by user \'([^\']*)\'.*remote_ip=(\S+)', line)
@@ -656,7 +689,7 @@ def read_regular(path, limit):
         if not stat.S_ISREG(st.st_mode):
             raise CheckFailed(f"{name} isn't a regular file")
         if st.st_size > limit:
-            raise CheckFailed(f"{name} is bigger than {limit >> 20} MB")
+            raise CheckFailed(f"{name} is bigger than {limit >> 20} MB" if limit >= 1 << 20 else f"{name} is bigger than {limit} bytes")
         chunks, left = [], st.st_size
         while left > 0:
             b = os.read(fd, min(left, 1 << 20))
@@ -869,7 +902,7 @@ def ssh_detail():
     return {"logins": logins[-30:][::-1], "login_count": len(logins), "sources": src[:100], "failed_ips": fails[:60],
             "failed_ip_count": len(fails), "attempts_7d": sum(g["attempts"] for g in fails),
             "attempts_24h": sum(g["attempts_24h"] for g in fails), "probes_7d": sum(g["probes"] for g in fails),
-            "truncated": len(lines) >= 100000, "checked": int(time.time())}
+            "truncated": len(lines) >= JOURNAL_MAX_LINES, "checked": int(time.time())}
 
 
 AUTHELIA_TABLES = ("authentication_logs", "banned_user", "banned_ip")
