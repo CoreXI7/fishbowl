@@ -37,3 +37,26 @@ class KnownIPs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AddKnown(unittest.TestCase):
+    """Adding known IPs from the SSH view: only full addresses that the detail view shows as real logins, never
+    something the card's data held (a crafted log line once made "6." look like a login IP: a whole /8)."""
+    def setUp(self):
+        import json
+        self.app = load_app()
+        hw = {"updated": 9e9, "security": {"ssh": {"logins": [{"time": "t1", "user": "root", "ip": "6."},
+                                                              {"time": "t2", "user": "a", "ip": "198.51.100.7"}]}}}
+        det = {"updated": 9e9, "ssh": {"logins": [{"raw": "t2", "user": "a", "ip": "198.51.100.7"}],
+                                       "sources": [{"user": "a", "ip": "198.51.100.7"}, {"user": "b", "ip": "203.0.113."}]}}
+        json.dump(hw, open(self.app.HW_FILE, "w"))
+        json.dump(det, open(self.app.SEC_DETAIL_FILE, "w"))
+
+    def test_add_all_only_full_addresses_from_the_details(self):
+        self.assertEqual(self.app.add_known_ips(everything=True)["added"], ["198.51.100.7"])
+        self.assertFalse(self.app.is_known("6.6.6.6"))
+
+    def test_single_prefix_refused(self):
+        for ip in ("6.", "203.0.113."):
+            with self.assertRaises(self.app.cfgstore.Invalid):
+                self.app.add_known_ips(ip)

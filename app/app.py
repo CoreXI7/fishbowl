@@ -288,6 +288,14 @@ def known_matcher(entries):
     return full, tuple(prefixes)
 
 
+def is_address(v):
+    """A full IPv4/IPv6 address (not a prefix, not anything else)."""
+    try:
+        return isinstance(v, str) and bool(ipaddress.ip_address(v))
+    except ValueError:
+        return False
+
+
 def is_known(ip):
     """Is this IP on your known list (an exact address, or inside one of the prefixes)?"""
     if not isinstance(ip, str) or not ip:
@@ -399,10 +407,10 @@ def add_known_ips(ip=None, everything=False):
     """Put IPs on the known list from the SSH detail view: one (ip), or every unknown one (everything=True, "Add all").
     Only IPs that really logged in over SSH (the server's own data, never failed attempts) can be added,
     so a forged request can't trust an attacker."""
-    hw, detail = (demo.system(), demo.security_detail()) if DEMO else (read_hw(), security_detail())
-    seen = {l.get("ip") for l in (((hw or {}).get("security") or {}).get("ssh") or {}).get("logins", [])}
+    detail = demo.security_detail() if DEMO else security_detail()
     ssh = detail.get("ssh") or {}
-    seen |= {x.get("ip") for x in ssh.get("logins", []) + ssh.get("sources", [])}
+    # only what the detail view shows (its parser is the strict one), and only full addresses, never a prefix
+    seen = {x.get("ip") for x in ssh.get("logins", []) + ssh.get("sources", []) if is_address(x.get("ip"))}
     if everything:
         want = sorted(i for i in seen if isinstance(i, str) and i and not is_known(i))
     elif not isinstance(ip, str) or ip not in seen:
