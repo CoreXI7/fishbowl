@@ -115,6 +115,16 @@ class Files(unittest.TestCase):
         self.assertNotEqual(self.col.cron_files(), before, "the changed line must show as changed")
         self.assertEqual(self.col.card_lines([f"line {i}" for i in range(25)])[-1], "… and 5 more lines", "nothing approved unseen")
 
+    def test_a_tail_reads_a_bounded_amount(self):
+        # (it read from max_bytes before the end to wherever the end was by then: a log that keeps growing was read until
+        # the collector was killed; and 4 MB of one-character lines made ~4 million lines; audit round 3)
+        log = os.path.join(self.tmp, "growing.log")
+        with open(log, "w") as f:
+            f.write("x\n" * 2_000_000)
+        lines = self.col.tail_lines(log, 4_000_000)
+        self.assertLessEqual(len(lines), self.col.TAIL_LINES_MAX)
+        self.assertGreater(len(lines), 1000)
+
     def test_a_long_line_is_redacted_quickly(self):
         import time
         t = time.monotonic()

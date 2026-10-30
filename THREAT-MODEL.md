@@ -98,7 +98,7 @@ afterwards, the level removed again if it stops updating): no IP traffic at all 
 except the output folder (`ProtectSystem=strict`), kernel tunables/modules/logs/cgroups/clock protected, no new
 namespaces, SUID or realtime, and, at the strictest level, only the capabilities it uses (`CAP_DAC_READ_SEARCH`,
 `CAP_CHOWN`, `CAP_FOWNER`, `CAP_SYS_RAWIO`, `CAP_NET_ADMIN`, `CAP_NET_RAW`), `MemoryDenyWriteExecute` and the
-`@system-service` syscall set (an unexpected call fails with EPERM instead of killing the collector). Commands: `journalctl`, `docker ps/logs`, `ps`, `top`, `fail2ban-client`, `ufw`, `lsattr`,
+`@system-service` syscall set (an unexpected call fails with EPERM instead of killing the collector). Commands: `journalctl`, `docker ps/logs`, `ps`, `top`, `fail2ban-client`, `ufw`,
 `smartctl`, `nvidia-smi`, `findmnt`, `systemctl list-timers`, `du` (idle priority). Files: `/proc`, `/sys`, crontabs,
 `authorized_keys`, Authelia's database (as above), configured log files (tails), the attributes of the files you
 listed as immutable (an ioctl, not `lsattr`). Every one of these is reached part

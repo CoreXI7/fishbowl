@@ -960,9 +960,13 @@ def tail_lines(path, max_bytes=2_000_000, key=None):
         f.seek(0, 2)
         size = f.tell()
         f.seek(max(0, size - max_bytes))
-        data = f.read()
+        data = f.read(max_bytes)                            # (not to the end: a log that keeps growing has none)
     lines = [l[:8192] for l in data.decode("utf-8", "replace").splitlines()]   # (no log line needs more; regexes stay quick)
-    return lines[1:] if size > max_bytes else lines         # the first line was cut in the middle
+    lines = lines[1:] if size > max_bytes else lines        # the first line was cut in the middle
+    return lines[-TAIL_LINES_MAX:]                          # (4 MB of one-character lines would be 2 million of them)
+
+
+TAIL_LINES_MAX = 50_000
 
 
 def valid_ip(text):
