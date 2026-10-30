@@ -1619,6 +1619,8 @@ class Audit(Base):
             self.app.read_npm_hosts()
         host("")
         self.assertEqual(ids().get("npm-headers", {}).get("state"), "warn")
+        host("  include conf.d/include/force-ssl.conf;\n  set_real_ip_from 0.0.0.0/0;\n")
+        self.assertIn("npm-headers", ids(), "a list that trusts everyone (or a private range) isn't the fix")
         host("  include conf.d/include/force-ssl.conf;\n  set_real_ip_from 127.0.0.2/32;\n")
         self.assertNotIn("npm-headers", ids())
 

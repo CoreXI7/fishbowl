@@ -282,9 +282,22 @@ def parse_npm_conf(path):
         "caches": bool(re.search(r"^\s*include\s+conf\.d/include/assets\.conf\s*;", txt, re.M)),
         # NPM believes a visitor's own X-Real-IP from any private address unless the host sets its own trusted list
         # (Advanced: set_real_ip_from), and passes on a visitor's X-Forwarded-Proto unless plain HTTP is redirected
-        "real_ip": bool(re.search(r"^\s*set_real_ip_from\s+\S+\s*;", txt, re.M)),
+        "real_ip": real_ip_pinned(re.findall(r"^\s*set_real_ip_from\s+([^\s;]+)\s*;", txt, re.M)),
         "force_ssl": bool(re.search(r"^\s*include\s+conf\.d/include/force-ssl\.conf\s*;", txt, re.M)),
     }
+
+
+def real_ip_pinned(sources):
+    """Does a proxy host's own set_real_ip_from list stop visitors from choosing X-Real-IP? Only if it has entries and
+    none of them covers a private range or everyone (those are what NPM's stock list trusts: containers, hairpinned
+    visitors and Docker's userland proxy all come from there)."""
+    private = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7", "fe80::/10")]
+    try:
+        nets = [ipaddress.ip_network(x, strict=False) for x in sources]
+    except ValueError:
+        return False
+    return bool(nets) and not any(n.prefixlen == 0 or any(n.version == p.version and n.overlaps(p) for p in private)
+                                   for n in nets)
 
 
 def has_login(txt):
