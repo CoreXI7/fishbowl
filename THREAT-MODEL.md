@@ -291,6 +291,10 @@ bloat the collector.
 
 ## Still open
 
+- Plain-HTTP sign-in is refused when a visitor arrives straight from the container's IPv4 gateway (every visitor
+  looks alike there). An IPv6 gateway, or a gateway address the proxy passes on as X-Real-IP (Docker's userland
+  proxy in front of the proxy), isn't recognised: behind such a setup, use HTTPS.
+
 - Over plain HTTP, another web app on the dashboard's address receives its cookies (browsers send them to every
   port). Sessions and half-finished sign-ins only work from the address they were made on, but a trusted-device cookie
   isn't bound to an address (so a laptop that changes networks stays trusted): a hostile app next to the dashboard can
