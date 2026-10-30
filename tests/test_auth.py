@@ -1627,6 +1627,14 @@ class Audit(Base):
         self.assertIn("npm-headers", ids(), "nor one inside a location: only the server-level list replaces NPM's")
         host("  include conf.d/include/force-ssl.conf;\n  set_real_ip_from 127.0.0.2/32;\n")
         self.assertNotIn("npm-headers", ids())
+        # (braces were counted per line: a quoted "}" or a dropped long line made a location's list look server-level)
+        for extra in ('  location /admin {\n    add_header X-Note "}";\n    set_real_ip_from 127.0.0.2/32;\n  }\n',
+                      "  location /admin { add_header X-Pad " + "a" * 5000 + ";\n    set_real_ip_from 127.0.0.2/32;\n  }\n",
+                      "  location /admin {\n    return 200 'a}b';\n    # }\n    set_real_ip_from 127.0.0.2/32;\n  }\n"):
+            host("  include conf.d/include/force-ssl.conf;\n" + extra)
+            self.assertIn("npm-headers", ids(), extra[:40])
+        host('  include conf.d/include/force-ssl.conf;\n  add_header X-Note "${host}}";\n  set_real_ip_from 127.0.0.2/32;\n')
+        self.assertNotIn("npm-headers", ids(), "${...} and a quoted } don't change the block")
 
     def test_a_new_browser_kept_waiting_is_told_why(self):
         # Someone else's guessing makes every new browser wait (on purpose: it stops guessing from many addresses);

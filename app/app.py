@@ -309,10 +309,10 @@ def parse_npm_conf(path):
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_size > 256 * 1024:
             return None
-        txt = os.read(fd, 256 * 1024).decode("utf-8", "replace")
+        raw = os.read(fd, 256 * 1024).decode("utf-8", "replace")
         # NPM's own lines are short: comments and lines over 4 KB (an Advanced box can hold anything) are dropped before
-        # the patterns run (one 250 KB comment took 28 s to parse)
-        txt = "\n".join(l for l in txt.splitlines() if len(l) <= 4096 and not l.lstrip().startswith("#"))
+        # the patterns run (one 250 KB comment took 28 s to parse); the block structure is read from all of it
+        txt = "\n".join(l for l in raw.splitlines() if len(l) <= 4096 and not l.lstrip().startswith("#"))
     except OSError:
         return None
     finally:
@@ -334,20 +334,48 @@ def parse_npm_conf(path):
         "caches": bool(re.search(r"^[ \t]*include\s+conf\.d/include/assets\.conf\s*;", txt, re.M)),
         # NPM believes a visitor's own X-Real-IP from any private address unless the host sets its own trusted list
         # (Advanced: set_real_ip_from), and passes on a visitor's X-Forwarded-Proto unless plain HTTP is redirected
-        "real_ip": real_ip_pinned(re.findall(r"^[ \t]*set_real_ip_from\s+([^\s;]+)\s*;", server_level(txt), re.M)),
+        "real_ip": real_ip_pinned(re.findall(r"^[ \t]*set_real_ip_from\s+([^\s;]+)\s*;", server_level(raw), re.M)),
         "force_ssl": bool(re.search(r"^[ \t]*include\s+conf\.d/include/force-ssl\.conf\s*;", txt, re.M)),
     }
 
 
 def server_level(txt):
-    """The lines of an NPM proxy-host file that sit directly in its server block (not in a location): only a list
-    there replaces NPM's own trusted ranges for the whole host."""
-    out, depth = [], 0
-    for line in txt.splitlines():
-        code = line.split("#", 1)[0]
-        if depth == 1:
-            out.append(code)
-        depth = max(0, depth + code.count("{") - code.count("}"))
+    """The lines of an NPM proxy-host file that start directly in its server block (not in a location): only a list
+    there replaces NPM's own trusted ranges for the whole host. Braces are read the way nginx reads them: not in
+    quotes, comments or ${...}, and a } only where a word could start (in add_header X-Note "}" it is text)."""
+    out, depth, line_depth, start = [], 0, 0, 0
+    word = comment = var = escaped = False
+    quote = ""
+    for i, ch in enumerate(txt + "\n"):
+        if ch == "\n":
+            if line_depth == 1:
+                out.append(txt[start:i].split("#", 1)[0])
+            start, line_depth = i + 1, depth
+        if escaped:
+            escaped = False
+        elif comment:
+            comment = ch != "\n"
+        elif quote or word:
+            if ch == "{" and var:
+                continue
+            var = ch == "$"
+            if ch == "\\":
+                escaped = True
+            elif quote:
+                quote = "" if ch == quote else quote
+            elif ch in " \t\r\n;{":
+                word = False
+                depth += ch == "{"
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth = max(0, depth - 1)
+        elif ch == "#":
+            comment = True
+        elif ch in "\"'":
+            quote = ch
+        elif ch not in " \t\r\n;":
+            word, var, escaped = True, ch == "$", ch == "\\"
     return "\n".join(out)
 
 
