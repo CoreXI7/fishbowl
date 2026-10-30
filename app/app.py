@@ -469,6 +469,8 @@ def favicon(name):
     slow icons held a request thread, and its connection slot, for many minutes."""
     if name in _icons:
         return _icons[name]
+    if not any(h["name"] == name for h in read_npm_hosts()):   # (unknown names leave nothing behind: no lock, no entry)
+        return None
     with _lock:
         one = _icon_locks.setdefault(name, threading.Lock())
     with one:
@@ -1614,6 +1616,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")   # other sites can't load (or probe) our answers
         if ctype.startswith("text/html"):
             self.send_header("Content-Security-Policy", CSP)
+            self.send_header("Cross-Origin-Opener-Policy", "same-origin")   # a site that opened it can't steer its window
         elif "Content-Security-Policy" not in (extra or {}):   # never framed, never a document with powers
             self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; sandbox")
         for k, v in (extra or {}).items():
@@ -1983,7 +1986,8 @@ class Handler(BaseHTTPRequestHandler):
                                    "signin": True}, cookies=(self.make_cookie("fishbowl", "", clear=True),))
         if wait < 0:
             return self.send(423, {"error": f"Sign-ins from new browsers are locked after {auth.LOCK_AT} wrong tries in a row. "
-                                            "A browser that signed in here before can still sign in; or unlock it on the host: "
+                                            "A browser that signed in here before (and hasn't had 10 wrong tries of its own) can still sign in; "
+                                            "or unlock it on the host: "
                                             "docker exec -it <container> python /app/auth.py unlock"})
         if new_browser:
             return self.send(429, {"error": f"Too many wrong tries (anyone's count). Wait {fmt_wait(wait)}, or sign in from a "
@@ -2443,7 +2447,13 @@ class Handler(BaseHTTPRequestHandler):
     def get(self):
         url = urllib.parse.urlsplit(self.path)
         p, query = url.path, urllib.parse.parse_qs(url.query)
-        if not self.allowed() or not self.gate(p, q=url.query):
+        if not self.allowed():
+            return
+        # Only the dashboard's own pages read its API: a page on a sibling subdomain (same-site, so the SameSite=Strict
+        # cookie goes along) or any other site can't make the owner's browser load or time it.
+        if p.startswith("/api/") and (self.headers.get("Sec-Fetch-Site") or "").strip().lower() in ("same-site", "cross-site"):
+            return self.send(403, {"error": "the dashboard's API answers only its own pages"})
+        if not self.gate(p, q=url.query):
             return
         if p == "/login":
             return self.login_page(query)

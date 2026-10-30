@@ -231,7 +231,8 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   HTTP are only accepted for a Host no website can own (an IP address, a name without dots, `.lan`, `.local`,
   `.home.arpa`, `.internal`, `.localhost`): this stops DNS rebinding.
 - **Headers**: `Cache-Control: no-store` on the sign-in API and on pages; CSP on every answer
-  (`frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`), `X-Frame-Options: DENY`; every POST (sign-in
+  (`frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`), `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin` on pages; API reads the browser marks
+  same-site or cross-site are refused (a sibling subdomain's page can't make the owner's browser load or time them); every POST (sign-in
   included) must carry the dashboard's Origin, be JSON, and not be marked cross-site by the browser.
 - **Connections**: at most 80 at once for the whole process (every `LISTEN` address), 32 per address (IPv6 per /64;
   through the proxy, per browser address when the proxy sends X-Real-IP); when all 80 are taken, or an address's 32 are, the
@@ -286,6 +287,12 @@ deeply nested JSON could exhaust memory under the byte caps; several ways a misb
 bloat the collector.
 
 ## Still open
+
+- Over plain HTTP, another web app on the dashboard's address receives its cookies (browsers send them to every
+  port). Sessions and half-finished sign-ins only work from the address they were made on, but a trusted-device cookie
+  isn't bound to an address (so a laptop that changes networks stays trusted): a hostile app next to the dashboard can
+  use up that browser's own 10 tries, after which someone guessing can keep it waiting like a new one. Use HTTPS, or
+  only run apps you trust on the same address.
 
 - A signed-in user (with `AUTH=proxy`, anyone past the SSO) can add services, so the dashboard GETs any URL it can
   reach and shows the status code and timing: a stolen session is also a way to probe your LAN and Docker networks

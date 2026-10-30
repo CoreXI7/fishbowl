@@ -51,6 +51,35 @@ class Icons(unittest.TestCase):
         self.assertIn("sandbox", r.getheader("Content-Security-Policy"))
         self.assertEqual(r.getheader("Cross-Origin-Resource-Policy"), "same-origin", "other sites can't load it")
 
+    def test_unknown_names_leave_nothing_behind(self):
+        # (each unknown host= added a lock that was never removed: a page in the owner's browser could fill the
+        # memory with /api/icon?host=<random>; audit round 2)
+        before = len(self.app._icon_locks)
+        for i in range(500):
+            self.app.favicon(f"nope-{i}.example")
+        self.assertEqual(len(self.app._icon_locks), before)
+
+    def test_api_reads_from_other_sites_are_refused(self):
+        # a sibling subdomain's page (same-site: the SameSite=Strict cookie goes along) or any other site can't make
+        # the owner's browser read or time the API (audit round 2)
+        srv, url = serve(self.app.Handler)
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
+        for site, want in (("same-site", 403), ("cross-site", 403), ("same-origin", 200), ("none", 200), (None, 200)):
+            c = http.client.HTTPConnection(url.split("//")[1])
+            c.request("GET", "/api/icon?host=nice.example", headers={"Sec-Fetch-Site": site} if site else {})
+            r = c.getresponse()
+            r.read()
+            self.assertEqual(r.status, want, site)
+
+    def test_pages_keep_their_window_to_themselves(self):
+        srv, url = serve(self.app.Handler)
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
+        c = http.client.HTTPConnection(url.split("//")[1])
+        c.request("GET", "/")
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.getheader("Cross-Origin-Opener-Policy"), "same-origin")
+
 
 if __name__ == "__main__":
     unittest.main()
