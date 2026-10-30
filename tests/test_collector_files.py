@@ -67,6 +67,24 @@ class Files(unittest.TestCase):
         art = self.col.backups()["artifacts"][0]
         self.assertEqual((art["count"], art["size"]), (1, 10), "a link's target (its size, its date) isn't a backup file")
 
+    def test_files_are_private_while_written(self):
+        # (the crontab snapshot holds every cron line unredacted: the dash's uid could catch it with inotify)
+        modes, real = [], self.col.json.dump
+
+        def spy(obj, f, *a, **k):
+            modes.append(os.fstat(f.fileno()).st_mode & 0o777)
+            return real(obj, f, *a, **k)
+        self.col.json.dump = spy
+        self.addCleanup(lambda: setattr(self.col.json, "dump", real))
+        old = os.umask(0o022)
+        self.addCleanup(lambda: os.umask(old))
+        os.makedirs(self.col.OUT_DIR, exist_ok=True)
+        self.col.save_approved(["* * * * * root backup --password=x"])
+        self.col.write_output({"x": 1}, os.path.join(self.col.OUT_DIR, "hw.json"))
+        self.assertEqual(modes, [0o600, 0o600], "nobody else can read them before they're finished")
+        self.assertEqual(stat.S_IMODE(os.stat(self.col.CRON_APPROVED).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.col.OUT_DIR, "hw.json")).st_mode), 0o640)
+
 
 if __name__ == "__main__":
     unittest.main()

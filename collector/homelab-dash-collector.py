@@ -397,9 +397,15 @@ def load_approved():
         return None
 
 
+def create_private(path):
+    """A new file for writing, readable by root alone from its first byte (chmod afterwards left a moment when the
+    unredacted crontab snapshot was readable by everyone, the dash's uid included)."""
+    return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "w")
+
+
 def save_approved(snap):
     tmp = CRON_APPROVED + ".tmp"
-    with open(tmp, "w") as f:
+    with create_private(tmp) as f:
         json.dump({"snap": snap, "hash": cron_hash(snap), "approved_at": int(time.time())}, f)
     os.chmod(tmp, 0o600)
     os.replace(tmp, CRON_APPROVED)
@@ -1367,7 +1373,7 @@ def detail_round():
 def write_output(data, path=OUT):
     """Atomically replace hw.json (or sec-detail.json), readable by root + the dash container's group only."""
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    with create_private(tmp) as f:
         json.dump(data, f)
     try:
         os.chown(tmp, 0, DASH_UID)
@@ -2680,6 +2686,7 @@ def selftest():
 
 
 if __name__ == "__main__":
+    os.umask(0o077)       # whatever else it writes: root's alone unless it says otherwise (chmod)
     if sys.argv[1:] == ["--selftest"]:
         selftest()
     elif sys.argv[1:] in (["--apply"], ["--apply", "--undo"]):

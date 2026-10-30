@@ -16,6 +16,7 @@ ProtectHome=read-only
 ProtectSystem=full
 PrivateTmp=yes
 NoNewPrivileges=yes
+UMask=0077
 MemoryMax=200M
 TasksMax=64
 
