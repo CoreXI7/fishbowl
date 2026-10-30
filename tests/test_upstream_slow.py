@@ -2,6 +2,7 @@
 sends one byte every few seconds (in its headers or its body) used to keep a request thread, and the browser's
 connection slot, until it stopped; enough of them and the dashboard answered nobody (audit 2026-10-30).
 Every outbound request now has an overall deadline."""
+import os
 import threading
 import time
 import unittest
@@ -72,6 +73,51 @@ class SlowUpstream(unittest.TestCase):
                 return e
         r, took = self.finishes(plex, 15)
         self.assertIsInstance(r, Exception)
+
+class SlowManyLookups(unittest.TestCase):
+    """The per-request deadline isn't enough when one answer asks for many requests: a service page listing 50 icons,
+    or Seerr naming 50 titles to look up (audit round 2)."""
+
+    @classmethod
+    def setUpClass(cls):
+        slow = trickle(b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 100000\r\n\r\n")
+        links = "".join(f'<link rel="icon" href="/i{i}.png">' for i in range(50))
+        cls.up = Upstream({"/": (200, {"Content-Type": "text/html"}, links), **{f"/i{i}.png": slow for i in range(50)},
+                           "/favicon.ico": slow,
+                           "/api/v1/request": (200, {}, {"results": [{"id": i, "type": "movie", "media": {"tmdbId": i}}
+                                                                     for i in range(50)]}),
+                           **{f"/api/v1/movie/{i}": slow for i in range(50)}})
+        cls.app = load_app(SEERR_URL=cls.up.url, SEERR_KEY="k")
+        import upstream
+        cls.upstream, cls.factor = upstream, upstream.DEADLINE_FACTOR
+        upstream.DEADLINE_FACTOR = 0.3
+        with open(os.path.join(cls.app.NPM_DIR, "slow.conf"), "w") as f:
+            host, port = cls.up.url.split("//")[1].split(":")
+            f.write(f'server {{\n  server_name slow.example;\n  set $forward_scheme http;\n  set $server "{host}";\n  set $port {port};\n}}\n')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.up.close()
+        cls.upstream.DEADLINE_FACTOR = cls.factor
+
+    def finishes(self, fn, within):
+        t = threading.Thread(target=fn, daemon=True)
+        t0 = time.monotonic()
+        t.start()
+        t.join(within)
+        self.assertFalse(t.is_alive(), f"still going after {within} s")
+        return time.monotonic() - t0
+
+    def test_an_icon_lookup_has_an_overall_budget(self):
+        self.finishes(lambda: self.app.favicon("slow.example"), 30)
+        self.assertLessEqual(sum(1 for h in self.up.hits if h[1].startswith("/i")), 4, "a few candidates, not 50")
+
+    def test_seerr_titles_have_an_overall_budget(self):
+        self.finishes(self.app.requests_pending, 40)
+
+    def test_a_url_urllib_refuses_shows_as_down(self):
+        r = self.app.check_once({"name": "odd.example", "upstream": "http://[127.0.0.1]:8080", "auth": False})
+        self.assertFalse(r["up"])
 
 
 if __name__ == "__main__":

@@ -396,8 +396,8 @@ def check_once(host, timeout=5):
     if path:
         return check_via_proxy(host, path, timeout)
     t0 = time.monotonic()
-    req = urllib.request.Request(host["upstream"] + "/", method="GET", headers={"User-Agent": UA, "Host": host["name"]})
     try:
+        req = urllib.request.Request(host["upstream"] + "/", method="GET", headers={"User-Agent": UA, "Host": host["name"]})
         with NOFOLLOW.open(req, timeout=timeout) as r:
             code = r.status
     except urllib.error.HTTPError as e:
@@ -451,9 +451,24 @@ _icons = {}
 
 
 def favicon(name):
-    """Fetch a service's own favicon via its upstream (only for known hosts; no arbitrary URLs)."""
+    """Fetch a service's own favicon via its upstream (only for known hosts; no arbitrary URLs). One lookup per name at a
+    time, at most 4 of the icons its page lists (plus /favicon.ico) and ICON_BUDGET seconds in all: a page listing 50
+    slow icons held a request thread, and its connection slot, for many minutes."""
     if name in _icons:
         return _icons[name]
+    with _lock:
+        one = _icon_locks.setdefault(name, threading.Lock())
+    with one:
+        if name in _icons:
+            return _icons[name]
+        return _favicon(name, time.monotonic() + ICON_BUDGET)
+
+
+ICON_BUDGET = 20
+_icon_locks = {}
+
+
+def _favicon(name, deadline):
     host = next((h for h in read_npm_hosts() if h["name"] == name), None)
     if not host:
         return None
@@ -468,9 +483,11 @@ def favicon(name):
                 href = re.search(r'href=["\']([^"\']+)', tag, re.I)
                 if href and not href.group(1).startswith("data:"):
                     cands.append(urllib.parse.urljoin(base + "/", href.group(1)))
-    cands.append(base + "/favicon.ico")
+    cands = cands[:4] + [base + "/favicon.ico"]
     result = None
     for url in cands:
+        if time.monotonic() > deadline:
+            break
         got = fetch_same_host(url, base, name, 512_000)
         ctype = got[0].split(";")[0].strip().lower() if got else ""
         if ctype in ICON_TYPES and got[1]:      # raster only: an SVG (any spelling) would be a page on our origin
@@ -869,13 +886,14 @@ def media_info(kind, tmdb):
 def requests_pending():
     """/api/requests: pending Seerr requests with title, year, poster and who asked."""
     d = seerr("/request?take=50&filter=pending&sort=added")
-    out = []
+    out, deadline = [], time.monotonic() + 20   # titles looked up for 20 s at most (the rest next time: they're cached)
     for r in listed(d.get("results"), 50):   # (it asks for 50)
         # the id goes into approve/decline URLs and the type into Seerr API paths: anything unexpected is skipped
         if not isinstance(r, dict) or type(r.get("id")) is not int or r.get("type") not in ("movie", "tv"):
             continue
         m = r.get("media") if isinstance(r.get("media"), dict) else {}
-        info = media_info(r["type"], m.get("tmdbId"))
+        known = (r["type"], m.get("tmdbId")) in _titles
+        info = media_info(r["type"], m.get("tmdbId")) if known or time.monotonic() < deadline else media_info(None, None)
         seasons = [s["seasonNumber"] for s in listed(r.get("seasons"), 100) if isinstance(s, dict) and type(s.get("seasonNumber")) is int]
         u = r.get("requestedBy") if isinstance(r.get("requestedBy"), dict) else {}
         out.append({"id": r["id"], "type": r["type"], "is4k": r.get("is4k") is True, "created": text(r.get("createdAt"), 40),

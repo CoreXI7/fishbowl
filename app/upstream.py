@@ -108,8 +108,8 @@ def fetch_same_host(url, base, name, limit, timeout=5):
     for _ in range(4):
         if urllib.parse.urlparse(url)[:2] != origin:
             return None
-        req = urllib.request.Request(url, headers={"User-Agent": UA, "Host": name})
         try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA, "Host": name})   # (it can refuse a URL too)
             with NOFOLLOW.open(req, timeout=timeout) as r:
                 body = r.read(limit)
                 return None if r.length else (r.headers.get("Content-Type", ""), body)   # (cut short: no half an icon)
