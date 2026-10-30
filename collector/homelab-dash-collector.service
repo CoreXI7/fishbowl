@@ -7,7 +7,9 @@ ExecStart=/usr/bin/python3 -I /usr/local/sbin/homelab-dash-collector
 Restart=always
 RestartSec=10
 Nice=10
-# Runs as root (smartctl, fail2ban, journal), but can't modify the system and never touches the network.
+# Runs as root (smartctl, fail2ban, journal). The settings below keep it from changing /usr, /boot, /etc or anyone's home.
+# install.sh then adds the strictest sandbox it still works under on this machine (collector/sandbox.sh, a drop-in:
+# no network at all, the whole system read-only except its output folder, only the root powers it needs).
 StateDirectory=homelab-dash
 StateDirectoryMode=0755
 ProtectHome=read-only

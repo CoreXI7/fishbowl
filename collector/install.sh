@@ -9,6 +9,7 @@ cd "$(dirname "$0")"
 if [ "${1:-}" = "--uninstall" ]; then
   systemctl disable --now homelab-dash-collector 2>/dev/null || true
   rm -f /etc/systemd/system/homelab-dash-collector.service /usr/local/sbin/homelab-dash-collector
+  rm -f /etc/systemd/system/homelab-dash-collector.service.d/10-sandbox.conf
   systemctl daemon-reload
   echo "removed. Config (/etc/homelab-dash) and data (/var/lib/homelab-dash) were left in place."
   exit 0
@@ -26,6 +27,9 @@ install -d -m 0755 /etc/homelab-dash
 systemctl daemon-reload
 systemctl enable homelab-dash-collector >/dev/null
 systemctl restart homelab-dash-collector
+# the strictest sandbox the collector still works under here (no network, read-only system, fewer root powers); it
+# restarts the collector with it and checks it keeps updating, else puts the previous settings back
+bash sandbox.sh || echo "note: the sandbox check didn't finish; the collector keeps its previous sandbox settings"
 sleep 3
 if [ -s /var/lib/homelab-dash/hw.json ]; then
   echo "collector running: /var/lib/homelab-dash/hw.json is being written."
