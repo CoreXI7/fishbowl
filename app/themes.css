@@ -113,36 +113,46 @@ html[data-theme="miku"] #bubbles i:nth-child(9n)::before{content:"🥬";font-siz
 .cutie.logo-gura{display:none}
 html[data-theme="gura"] .cutie.logo-bubbles{display:none}
 html[data-theme="gura"] .cutie.logo-gura{display:block}
-html[data-theme="gura"]{--bg:#d3e7f5;--card:rgba(255,255,255,.88);--fg:#0f2335;--mute:#3f5b70;--line:#b4d0e6;--up:#0b6e41;--down:#c4202c;
-  --warn:#7f5000;--acc:#2b6fa6;--acc2:#7cc0ea;--ink:#164b78;--bar:#cfe2f0;--coat:#14b5c8;--eye:#3d9ae2;--blush:#ff6b93;--teeth:#fff;
-  --outline:#fff;--ray:rgba(255,255,255,.6);--glow:rgba(43,111,166,.38);--shadow:0 10px 26px -12px rgba(14,62,110,.5)}
-@media (prefers-color-scheme:dark){html[data-theme="gura"]{--bg:#041019;--card:rgba(18,51,82,.84);--fg:#eaf6ff;--mute:#a3c4da;--line:#26557f;
-  --up:#44e094;--down:#ff6a75;--warn:#ffc94d;--acc:#56b6f2;--acc2:#1f5f8f;--ink:#a4e4ff;--bar:#0e2a43;--coat:#2ee3ec;--eye:#86d4ff;
-  --blush:#ff8fb0;--teeth:#f2f8fc;--outline:#061626;--ray:rgba(124,206,255,.2);--glow:rgba(86,182,242,.42);--shadow:0 12px 30px -14px rgba(0,0,0,.9)}}
+html[data-theme="gura"]{
+  /* palette by colour-theory rules: 60% tinted neutrals, 30% text/lines, 10% accent. OKLCH keeps steps even.
+     brand hue 248 (hood blue), analogous aqua 205, pink 5 only for tiny highlights */
+  --bg:oklch(95.5% .016 238);--card:oklch(99.2% .004 238 / .93);--bar:oklch(91.5% .02 238);--line:oklch(88% .022 238);
+  --fg:oklch(27% .03 248);--mute:oklch(47% .03 244);--ink:oklch(39% .085 250);
+  --acc:oklch(53% .115 250);--eye:oklch(69% .095 242);--coat:oklch(71% .085 208);--acc2:oklch(82% .06 240);
+  --blush:oklch(72% .13 4);--teeth:oklch(99.5% .004 238);--outline:oklch(99.5% .004 238);
+  --up:oklch(51% .12 155);--warn:oklch(52% .11 68);--down:oklch(53% .17 25);
+  --ray:oklch(100% 0 0 / .35);--glow:oklch(53% .115 250 / .2);--shadow:0 8px 22px -14px oklch(30% .06 250 / .4)}
+@media (prefers-color-scheme:dark){html[data-theme="gura"]{
+  /* the deep: same hues, only lightness changes; surfaces get lighter with height (no black), accents desaturated */
+  --bg:oklch(17% .025 248);--card:oklch(22% .03 248 / .9);--bar:oklch(27% .03 248);--line:oklch(32% .035 248);
+  --fg:oklch(92% .014 238);--mute:oklch(73% .028 238);--ink:oklch(85% .06 232);
+  --acc:oklch(72% .1 242);--eye:oklch(80% .075 236);--coat:oklch(78% .075 202);--acc2:oklch(40% .07 248);
+  --blush:oklch(78% .1 4);--teeth:oklch(93% .012 238);--outline:oklch(17% .025 248);
+  --up:oklch(78% .13 155);--warn:oklch(82% .12 80);--down:oklch(72% .15 22);
+  --ray:oklch(85% .06 230 / .08);--glow:oklch(72% .1 242 / .2);--shadow:0 12px 28px -16px oklch(5% .02 248 / .85)}}
 
 /* the water: surface light fading into depth, light rays from the top-left (the one always-on animation: a slow
    transform on one layer), a blush of pink in light mode, and a seabed with seaweed, a starfish and a lost trident */
 html[data-theme="gura"] body{background:
-  radial-gradient(900px 520px at 100% 0%,color-mix(in srgb,var(--acc) 14%,transparent),transparent 65%),
-  radial-gradient(700px 420px at 0% 100%,color-mix(in srgb,var(--blush) 13%,transparent),transparent 70%),
-  linear-gradient(180deg,color-mix(in srgb,var(--bg) 55%,#fff) 0%,var(--bg) 40%,color-mix(in srgb,var(--bg) 72%,var(--acc)) 100%);background-attachment:fixed}
+  radial-gradient(900px 520px at 100% 0%,color-mix(in oklch,var(--acc) 10%,transparent),transparent 65%),
+  linear-gradient(180deg,color-mix(in oklch,var(--bg) 60%,#fff) 0%,var(--bg) 42%,color-mix(in oklch,var(--bg) 85%,var(--acc)) 100%);background-attachment:fixed}
 @media (prefers-color-scheme:dark){html[data-theme="gura"] body{background:
-  radial-gradient(1100px 600px at 12% -14%,color-mix(in srgb,var(--coat) 26%,transparent),transparent 62%),
-  radial-gradient(900px 500px at 105% 10%,color-mix(in srgb,var(--acc) 18%,transparent),transparent 65%),
-  linear-gradient(180deg,#0e2e4c 0%,var(--bg) 50%,#02070d 100%);background-attachment:fixed}}
+  radial-gradient(1100px 600px at 12% -14%,color-mix(in oklch,var(--acc) 12%,transparent),transparent 62%),
+  radial-gradient(900px 500px at 105% 10%,color-mix(in oklch,var(--coat) 6%,transparent),transparent 65%),
+  linear-gradient(180deg,oklch(22% .035 245) 0%,var(--bg) 50%,oklch(13% .02 250) 100%);background-attachment:fixed}}
 html[data-theme="gura"] body::before{content:"";position:fixed;left:-15%;right:-15%;top:-25vh;height:105vh;pointer-events:none;z-index:0;
   background:repeating-conic-gradient(from 150deg at 22% 0,transparent 0deg,var(--ray) 2.5deg,transparent 5deg,transparent 9deg);
   -webkit-mask:linear-gradient(180deg,#000 10%,transparent 78%);mask:linear-gradient(180deg,#000 10%,transparent 78%);
   transform-origin:22% 0;animation:gura-rays 16s ease-in-out infinite alternate;will-change:transform}
 @keyframes gura-rays{from{transform:rotate(-2deg);opacity:.75}to{transform:rotate(2deg);opacity:1}}
 html[data-theme="gura"] body::after{content:"";position:fixed;left:0;right:0;bottom:0;height:150px;pointer-events:none;z-index:0;
-  background:color-mix(in srgb,var(--acc) 16%,transparent);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 150' preserveAspectRatio='none'%3E%3Cpath d='M0 150V112c90-24 150 8 240-10s170-26 260 4 180 14 270-12 200-18 290 8 190 18 280-6 170-20 260 2v52z'/%3E%3Cpath d='M180 104c-14-30 12-46-2-76M196 102c10-26-10-40 4-66M1310 104c-12-28 10-44-4-72M1330 106c14-24-8-38 6-62' fill='none' stroke='%23000' stroke-width='7' stroke-linecap='round'/%3E%3Cpath d='M1040 110 1100 22M1086 16l20 4-6 20M1072 34c-10-14-6-24 4-30M1110 46c12-6 22-2 26 10' fill='none' stroke='%23000' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M620 118l6-12 6 12 12 2-9 8 3 12-12-6-12 6 3-12-9-8z'/%3E%3Ccircle cx='430' cy='112' r='7'/%3E%3Ccircle cx='446' cy='116' r='4'/%3E%3C/svg%3E") bottom/100% 100% no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 150' preserveAspectRatio='none'%3E%3Cpath d='M0 150V112c90-24 150 8 240-10s170-26 260 4 180 14 270-12 200-18 290 8 190 18 280-6 170-20 260 2v52z'/%3E%3Cpath d='M180 104c-14-30 12-46-2-76M196 102c10-26-10-40 4-66M1310 104c-12-28 10-44-4-72M1330 106c14-24-8-38 6-62' fill='none' stroke='%23000' stroke-width='7' stroke-linecap='round'/%3E%3Cpath d='M1040 110 1100 22M1086 16l20 4-6 20M1072 34c-10-14-6-24 4-30M1110 46c12-6 22-2 26 10' fill='none' stroke='%23000' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M620 118l6-12 6 12 12 2-9 8 3 12-12-6-12 6 3-12-9-8z'/%3E%3Ccircle cx='430' cy='112' r='7'/%3E%3Ccircle cx='446' cy='116' r='4'/%3E%3C/svg%3E") bottom/100% 100% no-repeat}
+  background:color-mix(in srgb,var(--acc) 10%,transparent);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 150' preserveAspectRatio='none'%3E%3Cpath d='M0 150V112c90-24 150 8 240-10s170-26 260 4 180 14 270-12 200-18 290 8 190 18 280-6 170-20 260 2v52z'/%3E%3Cpath d='M180 104c-14-30 12-46-2-76M196 102c10-26-10-40 4-66M1310 104c-12-28 10-44-4-72M1330 106c14-24-8-38 6-62' fill='none' stroke='%23000' stroke-width='7' stroke-linecap='round'/%3E%3Cpath d='M1040 110 1100 22M1086 16l20 4-6 20M1072 34c-10-14-6-24 4-30M1110 46c12-6 22-2 26 10' fill='none' stroke='%23000' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M620 118l6-12 6 12 12 2-9 8 3 12-12-6-12 6 3-12-9-8z'/%3E%3Ccircle cx='430' cy='112' r='7'/%3E%3Ccircle cx='446' cy='116' r='4'/%3E%3C/svg%3E") bottom/100% 100% no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 150' preserveAspectRatio='none'%3E%3Cpath d='M0 150V112c90-24 150 8 240-10s170-26 260 4 180 14 270-12 200-18 290 8 190 18 280-6 170-20 260 2v52z'/%3E%3Cpath d='M180 104c-14-30 12-46-2-76M196 102c10-26-10-40 4-66M1310 104c-12-28 10-44-4-72M1330 106c14-24-8-38 6-62' fill='none' stroke='%23000' stroke-width='7' stroke-linecap='round'/%3E%3Cpath d='M1040 110 1100 22M1086 16l20 4-6 20M1072 34c-10-14-6-24 4-30M1110 46c12-6 22-2 26 10' fill='none' stroke='%23000' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M620 118l6-12 6 12 12 2-9 8 3 12-12-6-12 6 3-12-9-8z'/%3E%3Ccircle cx='430' cy='112' r='7'/%3E%3Ccircle cx='446' cy='116' r='4'/%3E%3C/svg%3E") bottom/100% 100% no-repeat}
 
 /* header: the hood's rim (blue band) with big white shark teeth under it, and a little shark on patrol behind the title */
-html[data-theme="gura"] header{border-bottom:4px solid var(--acc);box-shadow:var(--shadow),0 6px 20px -8px var(--glow)}
-html[data-theme="gura"] header::after{left:0;width:100%;bottom:-15px;height:12px;animation:none;will-change:auto;
-  background:conic-gradient(from -40deg at 50% 100%,var(--teeth) 80deg,transparent 0) 0 0/20px 12px repeat-x;
-  filter:drop-shadow(0 1.5px 0 var(--acc)) drop-shadow(0 3px 4px rgba(0,0,0,.18))}
+html[data-theme="gura"] header{border-bottom:2px solid color-mix(in srgb,var(--acc) 70%,transparent);box-shadow:var(--shadow)}
+html[data-theme="gura"] header::after{left:0;width:100%;bottom:-9px;height:7px;animation:none;will-change:auto;opacity:.9;
+  background:conic-gradient(from -40deg at 50% 100%,var(--teeth) 80deg,transparent 0) 0 0/16px 7px repeat-x;
+  filter:drop-shadow(0 1px 0 color-mix(in srgb,var(--acc) 55%,transparent))}
 html[data-theme="gura"] header::before{content:"";position:absolute;left:0;bottom:5px;width:40px;height:23px;z-index:-1;pointer-events:none;
   background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 26'%3E%3Cpath d='M3 15c3-7 13-11 24-9 5 1 9 4 11 7l6-6-1 8 3 7-7-4c-4 4-12 6-20 5-8-1-14-3-16-8z' fill='%234a92c4' stroke='%2324587c' stroke-width='1.1' stroke-linejoin='round'/%3E%3Cpath d='M6 17.5c7 3.6 18 4.4 28 1-4 3.6-11 4.6-18 3.8-5-.6-8-2-10-4.8z' fill='%23f4f8fb'/%3E%3Cpath d='M18 7.5l5-6.5 3 7.5z' fill='%232f6f98' stroke='%2324587c' stroke-width='1.1' stroke-linejoin='round'/%3E%3Ccircle cx='11' cy='12.6' r='2' fill='%2310263a'/%3E%3Ccircle cx='10.3' cy='11.9' r='.7' fill='%23fff'/%3E%3Cpath d='M4.6 16.4l1.3 1.8 1.3-1.8 1.3 1.8 1.3-1.8' fill='none' stroke='%23fff' stroke-width='1' stroke-linejoin='round'/%3E%3Cellipse cx='15' cy='15.6' rx='2.2' ry='1.2' fill='%23ff8fab' opacity='.85'/%3E%3C/svg%3E") center/contain no-repeat;animation:gura-patrol 38s linear infinite;will-change:transform}
 @keyframes gura-patrol{0%{transform:translate(-50px,0) scaleX(-1)}12%{transform:translate(12vw,-4px) scaleX(-1)}25%{transform:translate(25vw,0) scaleX(-1)}
@@ -150,9 +160,8 @@ html[data-theme="gura"] header::before{content:"";position:absolute;left:0;botto
   62%{transform:translate(63vw,-4px) scaleX(1)}75%{transform:translate(50vw,0) scaleX(1)}87%{transform:translate(25vw,-4px) scaleX(1)}100%{transform:translate(-50px,0) scaleX(1)}}
 /* the title is a sticker (outlined, with a drop), the "a" badge is candy pink and wiggles when you point at it */
 html[data-theme="gura"] #site-title{font-family:Fredoka,sans-serif;font-weight:700;letter-spacing:.01em;color:var(--acc);white-space:nowrap;
-  text-shadow:1.6px 0 var(--outline),-1.6px 0 var(--outline),0 1.6px var(--outline),0 -1.6px var(--outline),1.2px 1.2px var(--outline),
-  -1.2px -1.2px var(--outline),1.2px -1.2px var(--outline),-1.2px 1.2px var(--outline),0 3.5px 0 color-mix(in srgb,var(--acc) 35%,transparent)}
-@media (prefers-color-scheme:dark){html[data-theme="gura"] #site-title{color:#a6e0f7}}
+  text-shadow:1px 0 var(--outline),-1px 0 var(--outline),0 1px var(--outline),0 -1px var(--outline),0 2.5px 0 color-mix(in srgb,var(--acc) 20%,transparent)}
+@media (prefers-color-scheme:dark){html[data-theme="gura"] #site-title{color:var(--ink)}}
 html[data-theme="gura"] #site-title::after{content:"a";display:inline-block;margin-left:7px;padding:0 7px 1px;border-radius:10px 10px 10px 3px;
   transform:rotate(-10deg) translateY(-3px);font:700 13px/1.3 Fredoka,sans-serif;color:#fff;text-shadow:none;
   background:linear-gradient(135deg,var(--blush),color-mix(in srgb,var(--blush) 70%,#fff));border:1.5px solid #fff;box-shadow:0 2px 6px -2px var(--blush)}
@@ -163,43 +172,42 @@ html[data-theme="gura"] #title:hover .logo-gura{animation:gura-chomp .45s ease-i
 html[data-theme="gura"] body.wall #p-time{color:var(--ink)}
 
 /* cards: glassy water panels with a wavy hoodie-fade ribbon; h2 markers are shark fins (every third a trident) */
-html[data-theme="gura"] section{border-color:color-mix(in srgb,var(--acc) 38%,var(--line));
-  box-shadow:var(--shadow),0 0 0 1px color-mix(in srgb,var(--acc) 10%,transparent),inset 0 1px 0 color-mix(in srgb,#fff 45%,transparent)}
+html[data-theme="gura"] section{border-color:color-mix(in srgb,var(--acc) 16%,var(--line));
+  box-shadow:var(--shadow),inset 0 1px 0 color-mix(in srgb,#fff 35%,transparent)}
 html[data-theme="gura"] h2{color:var(--ink)}
-html[data-theme="gura"] section::before{height:8px;background:linear-gradient(90deg,var(--acc) 0 22%,var(--eye) 50%,var(--coat) 78%,color-mix(in srgb,var(--coat) 30%,transparent));
-  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 6'%3E%3Cpath d='M0 1.5Q6-1.5 12 1.5T24 1.5V4.5Q18 7.5 12 4.5T0 4.5Z'/%3E%3C/svg%3E") 0 0/30px 8px repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 6'%3E%3Cpath d='M0 1.5Q6-1.5 12 1.5T24 1.5V4.5Q18 7.5 12 4.5T0 4.5Z'/%3E%3C/svg%3E") 0 0/30px 8px repeat-x}
-html[data-theme="gura"] h2::before{width:16px;height:16px;top:1px;border-radius:0;background:linear-gradient(160deg,var(--eye),var(--acc) 70%);
+html[data-theme="gura"] section::before{height:5px;opacity:.5;background:linear-gradient(90deg,var(--acc),color-mix(in oklch,var(--eye) 50%,transparent));
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 6'%3E%3Cpath d='M0 1.5Q6-1.5 12 1.5T24 1.5V4.5Q18 7.5 12 4.5T0 4.5Z'/%3E%3C/svg%3E") 0 0/22px 5px repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 6'%3E%3Cpath d='M0 1.5Q6-1.5 12 1.5T24 1.5V4.5Q18 7.5 12 4.5T0 4.5Z'/%3E%3C/svg%3E") 0 0/22px 5px repeat-x}
+html[data-theme="gura"] h2::before{width:16px;height:16px;top:1px;border-radius:0;background:var(--acc);
   -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 15C5 13 8 7 13 1c-1 5-.5 10 2 14z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 15C5 13 8 7 13 1c-1 5-.5 10 2 14z'/%3E%3C/svg%3E") center/contain no-repeat}
-html[data-theme="gura"] section:nth-of-type(3n) h2::before{background:linear-gradient(180deg,var(--coat),var(--acc));-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.4 2.6 2.8 0l1.4 2.6H3.6v2.9c0 .6.4.9.9.9h2.7V2.6h-.9L8 0l1.7 2.6h-.9v3.8h2.7c.5 0 .9-.3.9-.9V2.6h-.6L13.2 0l1.4 2.6H14v2.9c0 1.4-1.1 2.5-2.5 2.5H8.8v8H7.2V8H4.5C3.1 8 2 6.9 2 5.5V2.6z'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.4 2.6 2.8 0l1.4 2.6H3.6v2.9c0 .6.4.9.9.9h2.7V2.6h-.9L8 0l1.7 2.6h-.9v3.8h2.7c.5 0 .9-.3.9-.9V2.6h-.6L13.2 0l1.4 2.6H14v2.9c0 1.4-1.1 2.5-2.5 2.5H8.8v8H7.2V8H4.5C3.1 8 2 6.9 2 5.5V2.6z'/%3E%3C/svg%3E")}
+html[data-theme="gura"] section:nth-of-type(3n) h2::before{background:var(--coat);-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.4 2.6 2.8 0l1.4 2.6H3.6v2.9c0 .6.4.9.9.9h2.7V2.6h-.9L8 0l1.7 2.6h-.9v3.8h2.7c.5 0 .9-.3.9-.9V2.6h-.6L13.2 0l1.4 2.6H14v2.9c0 1.4-1.1 2.5-2.5 2.5H8.8v8H7.2V8H4.5C3.1 8 2 6.9 2 5.5V2.6z'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.4 2.6 2.8 0l1.4 2.6H3.6v2.9c0 .6.4.9.9.9h2.7V2.6h-.9L8 0l1.7 2.6h-.9v3.8h2.7c.5 0 .9-.3.9-.9V2.6h-.6L13.2 0l1.4 2.6H14v2.9c0 1.4-1.1 2.5-2.5 2.5H8.8v8H7.2V8H4.5C3.1 8 2 6.9 2 5.5V2.6z'/%3E%3C/svg%3E")}
 html[data-theme="gura"] section:hover h2::before{animation:gura-fin .6s ease-in-out}
 @keyframes gura-fin{0%,100%{transform:none}35%{transform:translateX(3px) rotate(8deg)}70%{transform:translateX(-1px) rotate(-5deg)}}
 /* KPI tiles: the status bar has a row of teeth (still green/amber/red for the status) */
-html[data-theme="gura"] .kpi{border-color:color-mix(in srgb,var(--acc) 36%,var(--line));box-shadow:var(--shadow),0 0 0 1px color-mix(in srgb,var(--acc) 10%,transparent)}
-html[data-theme="gura"] .kpi::before{width:9px;
-  -webkit-mask:linear-gradient(#000,#000) 0 0/4px 100% no-repeat,conic-gradient(from 225deg at 100% 50%,#000 90deg,transparent 0) 4px 0/5px 8px repeat-y;
-  mask:linear-gradient(#000,#000) 0 0/4px 100% no-repeat,conic-gradient(from 225deg at 100% 50%,#000 90deg,transparent 0) 4px 0/5px 8px repeat-y}
-html[data-theme="gura"] .kpi.ok::before{background:linear-gradient(180deg,var(--acc),var(--coat))}
-html[data-theme="gura"] .meter i{background:linear-gradient(180deg,rgba(255,255,255,.4),transparent 55%),linear-gradient(90deg,var(--acc),var(--eye) 55%,var(--coat));
-  box-shadow:0 0 10px -2px var(--glow)}
-html[data-theme="gura"] .bar i{background:linear-gradient(90deg,var(--acc),var(--eye) 60%,var(--coat))}
-html[data-theme="gura"] .cores i b{background:linear-gradient(0deg,var(--acc),var(--eye) 70%,var(--coat))}
-html[data-theme="gura"] .app .ic .lt{background:linear-gradient(135deg,var(--acc),var(--coat))}
-html[data-theme="gura"] .app:hover{transform:translateY(-3px) rotate(-3deg);background:color-mix(in srgb,var(--acc) 13%,transparent);border-color:color-mix(in srgb,var(--acc) 50%,transparent)}
+html[data-theme="gura"] .kpi{border-color:color-mix(in srgb,var(--acc) 16%,var(--line));box-shadow:var(--shadow)}
+html[data-theme="gura"] .kpi::before{width:7px;
+  -webkit-mask:linear-gradient(#000,#000) 0 0/4px 100% no-repeat,conic-gradient(from 225deg at 100% 50%,#000 90deg,transparent 0) 4px 0/3px 7px repeat-y;
+  mask:linear-gradient(#000,#000) 0 0/4px 100% no-repeat,conic-gradient(from 225deg at 100% 50%,#000 90deg,transparent 0) 4px 0/3px 7px repeat-y}
+html[data-theme="gura"] .kpi.ok::before{background:var(--acc)}
+html[data-theme="gura"] .meter i{background:linear-gradient(90deg,var(--acc),var(--eye))}
+html[data-theme="gura"] .bar i{background:linear-gradient(90deg,var(--acc),var(--eye))}
+html[data-theme="gura"] .cores i b{background:linear-gradient(0deg,var(--acc),var(--eye))}
+html[data-theme="gura"] .app .ic .lt{background:linear-gradient(135deg,var(--acc),color-mix(in oklch,var(--acc) 60%,var(--coat)))}
+html[data-theme="gura"] .app:hover{transform:translateY(-2px) rotate(-1.5deg);background:color-mix(in srgb,var(--acc) 9%,transparent);border-color:color-mix(in srgb,var(--acc) 30%,transparent)}
 html[data-theme="gura"] button.ok,html[data-theme="gura"] .tabs button.on,html[data-theme="gura"] #wall-btn[aria-pressed=true]{
-  background:linear-gradient(135deg,var(--acc),color-mix(in srgb,var(--acc) 70%,var(--coat)));color:#fff}
-html[data-theme="gura"] ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--acc),var(--eye));background-clip:padding-box}
-html[data-theme="gura"] ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--blush),var(--acc));background-clip:padding-box}
+  background:var(--acc);color:var(--outline)}
+html[data-theme="gura"] ::-webkit-scrollbar-thumb{background:color-mix(in oklch,var(--acc) 70%,var(--bar));background-clip:padding-box}
+html[data-theme="gura"] ::-webkit-scrollbar-thumb:hover{background:var(--acc);background-clip:padding-box}
 
 /* the mascot gets the spotlight: bigger, and on the wall she stands on the seabed in the corner */
 html[data-theme="gura"] .mascot img{width:min(250px,82%);filter:drop-shadow(0 10px 14px rgba(14,62,110,.45))}
 @media (prefers-color-scheme:dark){html[data-theme="gura"] .mascot img{filter:drop-shadow(0 0 14px rgba(134,212,255,.45)) drop-shadow(0 10px 14px rgba(0,0,0,.6))}}
-html[data-theme="gura"] .mascot .say{border-color:color-mix(in srgb,var(--acc) 75%,var(--line));box-shadow:var(--shadow),0 0 18px -8px var(--glow)}
+html[data-theme="gura"] .mascot .say{border-color:color-mix(in srgb,var(--acc) 40%,var(--line));box-shadow:var(--shadow)}
 html[data-theme="gura"] body.wall .mascot img{max-height:min(240px,22vh)}
 
 /* bubbles stay bubbles; every seventh is a little shark, one is an "a" and one is a shrimp */
-html[data-theme="gura"] #bubbles i{opacity:.7;background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.95) 0 9%,transparent 12%),
+html[data-theme="gura"] #bubbles i{opacity:.5;background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.95) 0 9%,transparent 12%),
   radial-gradient(circle,transparent 56%,color-mix(in srgb,var(--eye) 65%,#fff) 67%,transparent 72%),radial-gradient(circle,color-mix(in srgb,var(--eye) 14%,transparent),transparent 70%)}
-@media (prefers-color-scheme:dark){html[data-theme="gura"] #bubbles i{opacity:.42}}
+@media (prefers-color-scheme:dark){html[data-theme="gura"] #bubbles i{opacity:.28}}
 html[data-theme="gura"] #bubbles i:nth-child(7n){border-radius:0;opacity:.32;background:var(--acc);animation-name:gura-swim;
   -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'%3E%3Cpath d='M2 12c6-6 17-8 28-4l6-6-1 8 4 7-7-3c-8 4-21 4-30-2zM16 6l5-6 2 7z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'%3E%3Cpath d='M2 12c6-6 17-8 28-4l6-6-1 8 4 7-7-3c-8 4-21 4-30-2zM16 6l5-6 2 7z'/%3E%3C/svg%3E") center/contain no-repeat}
 @keyframes gura-swim{0%{transform:translate(0,0) rotate(-24deg) scaleX(-1)}50%{transform:translate(30px,-55vh) rotate(-18deg) scaleX(-1)}
