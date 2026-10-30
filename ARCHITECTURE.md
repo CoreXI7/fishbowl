@@ -1,11 +1,12 @@
 # How Fishbowl is put together
 
-A small stdlib-only Python server, two HTML pages, plain CSS and plain JavaScript files. No framework, no build step,
+A small stdlib-only Python server, three HTML pages (the dashboard, settings, sign-in), plain CSS and plain JavaScript files. No framework, no build step,
 no dependencies. The optional root collector (`collector/`) gathers what the container can't see and writes JSON files
 the server reads.
 
 ```
-browser ──► reverse proxy + SSO ──► app/app.py (ThreadingHTTPServer, port 8000)
+browser ──► reverse proxy (HTTPS) ──► app/app.py (ThreadingHTTPServer, port 8000)
+                                       │  every request    the sign-in gate (auth.py; or your SSO with AUTH: proxy)
                                        │  GET /            index.html + css + js/*.js
                                        │  GET /api/...     JSON, cached per endpoint (see API in app.py)
                                        │  POST /api/...    settings, approvals (Origin-checked)
@@ -20,6 +21,8 @@ browser ──► reverse proxy + SSO ──► app/app.py (ThreadingHTTPServer,
 | File | What's in it |
 |---|---|
 | `app.py` | Entry point. Settings-dependent state (`apply_settings()`), services (NPM parsing, health checks, favicons), security data (known IPs, acks, `hw.json` / `sec-detail.json`), the integrations (qBittorrent, Tautulli/Plex, Seerr), the page and settings views, and the HTTP `Handler` (routing, proxy check, CSRF check, logging). |
+| `auth.py` | Fishbowl's own sign-in: password hashing and rules, authenticator codes (TOTP) and recovery codes, the account (`data/auth.json`), sessions (`data/sessions.json`), trusted devices, the guessing limits, the setup code, one file lock shared with its command line (`python /app/auth.py status / unlock / setup-code / reset`). The gate and the sign-in API that use it are the "Fishbowl's own sign-in" part of `Handler` in `app.py`; THREAT-MODEL.md "The sign-in" lists every rule. |
+| `qrcodegen.py`, `common-passwords.txt.gz` | Vendored (see `VENDORED.md`): the QR code for authenticator apps, drawn on the server; the list of common passwords that are refused. |
 | `hostinfo.py` | Reading the host: per-CPU load, CPU model and topology, clocks, temperature sensors, disk I/O. No settings, no network. |
 | `upstream.py` | Rules for talking to upstreams: openers that never follow redirects off-host (`NOFOLLOW`, `STRICT`, `fetch_same_host`), size caps (`read_capped`), and `num()` / `text()`, which let only the expected types through from upstream JSON. |
 | `settings.py` | Loading, validating and saving settings (`data/settings.json`, `data/secrets.json`, optional `config.toml`), the built-in themes. Every field is validated server-side. |
@@ -43,7 +46,8 @@ global scope:
 | `usage.js`, `live.js` | the CPU/memory breakdown and the live window |
 | `mascot.js`, `wall.js` | mascot, bubbles, confetti; wall mode |
 | `start.js` | polling: what refreshes how often |
-| `theme-boot.js` | runs in `<head>` so the page paints in the saved theme |
+| `theme-boot.js` | runs in `<head>` so the page paints in the saved theme, and reloads a page brought back by Back (after signing out, nothing shows from the browser's cache) |
+| `login.js` | the sign-in page (`login.html`): first-run setup, sign-in, the code step, the notice after signing in |
 | `settings.js` | the settings page |
 
 Rules the page code follows:

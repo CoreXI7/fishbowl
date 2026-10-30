@@ -11,9 +11,9 @@ torrents (with a VPN-leak alarm), temperatures, drives, security and backups, al
 - Safe: your API keys stay on the server, and the part that runs as root never talks to the network (the installer also
   locks it into the strictest sandbox it works under).
 
-> **⚠ It has no login of its own.** Anyone who can open it can change its settings. Put it behind your reverse proxy's
-> sign-in (Authelia, Authentik, or an NPM access list with a password); the settings page's Setup checklist warns when it
-> can't find one. How it's built to be safe, and how to report a problem: [SECURITY.md](SECURITY.md).
+> **🔑 It has its own sign-in, on by default:** one account, an optional authenticator app (two-step sign-in) and
+> recovery codes. Already have SSO in front of it (Authelia, Authentik, an access list)? `AUTH: proxy` turns Fishbowl's
+> own off, so you sign in once. How it's built to be safe, and how to report a problem: [SECURITY.md](SECURITY.md).
 
 **▶ [Try the live demo](https://demo.vicy.us)** (fake data, nothing you do there is saved)
 
@@ -85,8 +85,14 @@ container name), the path to your NPM `proxy_host` folder, and your proxy's Dock
 docker compose up -d
 ```
 
-In NPM, add a proxy host that forwards to `dash:8000`, and **put it behind your SSO** (Authelia, Authentik, …).
-Open the dashboard and click **⚙**: the **Setup** checklist checks the rest and gives the exact fix for anything missing.
+In NPM, add a proxy host that forwards to `dash:8000` (with HTTPS). Open the dashboard: the first time, it asks you to
+create your account, with a one-time **setup code** from the container's log
+(`docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1`).
+Already have SSO (Authelia, Authentik, …)? Put the proxy host behind it and set `AUTH: proxy` instead.
+Then click **⚙**: the **Setup** checklist checks the rest and gives the exact fix for anything missing.
+
+> **Forgot the password?** `docker exec -it dash python /app/auth.py reset` deletes the account (settings and keys
+> stay) and prints a new setup code. Locked out after 100 wrong tries? `... auth.py unlock`.
 
 > **Empty page or 502?** Run `docker logs dash`. A `TRUSTED_PROXY` name that doesn't resolve refuses everyone, and the log says so.
 > Not sure of your proxy's network name? `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <proxy>`
@@ -132,6 +138,7 @@ Most updates need nothing from you. These ones might:
 
 | Change | What to do |
 |---|---|
+| **Fishbowl has its own sign-in now, on by default.** | If your reverse proxy's sign-in (Authelia, Authentik, an access list) already protects it, add `AUTH: proxy` to the `environment:` of docker-compose.yml. Otherwise, after updating, open the dashboard and create your account with the setup code from `docker logs <container> 2>&1 \| grep "^SETUP CODE" \| tail -n 1`. |
 | **homelab-dash is now called Fishbowl.** GitHub forwards the old address. | Nothing required. Optionally run `git remote set-url origin https://github.com/CoreXI7/fishbowl`. The collector keeps its `homelab-dash` names. |
 | **The collector's settings are on the settings page now, and it runs in a sandbox.** | Run `sudo bash collector/install.sh` again. Until then the page's Drives & hardware, Security and Backups sections say the collector is too old, and its settings stay in `/etc/homelab-dash/collector.toml`. |
 | **The collector gained new checks** (security details, CPU power, safer reading of logs). | Run `sudo bash collector/install.sh` again and restart it. Without that, the new detail views and the live window's power reading stay empty. |
@@ -161,6 +168,22 @@ and for what can't be, the Setup checklist gives the exact fix.
 - **Every theme edited the same way** (the Default theme picker moved into Themes), and services not in NPM get their own tile link.
 - **Accessible**: readable contrast in every theme, a visible focus ring, labels on every field, works with the
   keyboard alone and on a phone.
+
+#### 🔑 Its own sign-in (Oct 30)
+
+Fishbowl used to rely entirely on your reverse proxy's sign-in. Now it has its own, on by default, for everyone who
+doesn't run SSO:
+
+- **First run**: the account can only be created with a one-time setup code printed in the container's log, so
+  nobody who finds a fresh install first can claim it.
+- **Passwords**: at least 15 characters (a few random words work well), checked against common passwords, stored with
+  scrypt. No "must contain a digit" rules; password managers and pasting welcome.
+- **Two-step sign-in** (optional): an authenticator app (scan a QR code), with 10 one-time recovery codes.
+- **Guessing**: after 5 wrong tries the waits double (up to 15 minutes); 100 wrong tries in a row lock the account
+  for new browsers until you unlock it on the host. Browsers you signed in with before still get in.
+- **Sessions**: "keep me signed in" lasts 30 days at most (wall screens included); changing the password signs every
+  other browser out; Settings → Account lists the signed-in browsers and signs any of them out.
+- **Already have SSO?** `AUTH: proxy` in docker-compose.yml turns it off.
 
 #### 🧰 The collector's settings on the page, and a sandbox for it (Oct 29)
 
@@ -285,6 +308,7 @@ Click **⚙** (or open `/settings`). Use the side menu or the search box; change
 | **Drives & hardware** | Which drives to show and their names, the network interface, the GPU, the update interval (the collector applies them) |
 | **Security** | **Your own IPs** (was "Trusted IPs"): logins from them aren't flagged (or add them from the SSH details). What the collector watches: fail2ban, SSH, Authelia, miners, crontabs, locked files, the firewall, your own watch script |
 | **Backups** | Your backup log, what counts as OK or failed, backup jobs, counted checks and file patterns (files and patterns wait for your OK on the host) |
+| **Account** | With Fishbowl's own sign-in: change the password, turn the authenticator app on or off, recovery codes, signed-in browsers (sign them out), recent sign-ins |
 | **About** | What's set in `docker-compose.yml`, and why it can't be changed here |
 
 Everything is saved in `data/` (`settings.json`, keys in `secrets.json`, both `chmod 600`). Prefer a file? Put a
@@ -298,7 +322,7 @@ on the settings page. **Every setting is listed in [docs/SETTINGS.md](docs/SETTI
 ## Security in short
 
 ```
-browser ──► reverse proxy + SSO ──► dash container (no root, read-only, no capabilities)
+browser ──► reverse proxy ──► dash container: its own sign-in (or your SSO) ── no root, read-only, no capabilities
                                        │  reads: NPM proxy hosts, /proc, the collector's files
                                        │  calls: qBittorrent, Seerr, Tautulli (keys stay here)
                                        ▼
@@ -307,7 +331,11 @@ browser ──► reverse proxy + SSO ──► dash container (no root, read-on
 
 **The part on the network has no power, and the part with root never talks to the network.**
 
-- **Run it behind SSO.** The dashboard has no login of its own. Set `SETTINGS_UI=0` to make the settings page read-only.
+- **Nothing without signing in.** Its own sign-in (on by default) or your SSO (`AUTH: proxy`). Passwords of 15+
+  characters checked against common ones, stored with scrypt; sessions in HttpOnly, SameSite, `__Host-` cookies; growing
+  waits after wrong tries and a lock after 100; an optional authenticator app with one-time recovery codes. The first
+  account can only be created with a setup code from the container's log. Set `SETTINGS_UI=0` to make the settings
+  page read-only.
 - **Keys never reach the browser.** The settings page can save a key but never shows it. Changing an integration's
   address means typing its key again, so nobody can redirect your saved key to their own server.
 - **Only your proxy can talk to it** (`TRUSTED_PROXY`, and optionally `LISTEN`), and every change must come from the

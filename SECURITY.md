@@ -14,12 +14,16 @@ Supported: the latest `main`. There are no older release branches.
 
 ## What you have to do
 
-The dashboard has **no login of its own**. Anyone who can open it can change its settings. So:
+Nobody gets in without signing in: Fishbowl's own sign-in is on by default (or your SSO protects it, with
+`AUTH: proxy`). So:
 
-1. **Put it behind your reverse proxy's sign-in** (Authelia, Authentik, or an NPM access list with a password).
-2. **Set `TRUSTED_PROXY`** to your proxy's container name, so nothing else can connect.
-3. **Set `ORIGIN`** to the address you open it at.
-4. Optional, recommended: **`LISTEN`** on a network only the proxy shares ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)).
+1. **Create the account** the first time you open it, with the setup code from the container's log
+   (`docker logs <container> 2>&1 | grep "^SETUP CODE" | tail -n 1`), and **turn on the authenticator app** (Settings → Account).
+   Or, if your reverse proxy's sign-in (Authelia, Authentik, an access list) already protects it: `AUTH: proxy`.
+2. **Reach it over HTTPS** through your reverse proxy, so the password and the session cookie are encrypted.
+3. **Set `TRUSTED_PROXY`** to your proxy's container name, so nothing else can connect.
+4. **Set `ORIGIN`** to the address you open it at.
+5. Optional, recommended: **`LISTEN`** on a network only the proxy shares ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)).
 
 The settings page's **Setup** checklist checks all of these and says how to fix what's missing.
 

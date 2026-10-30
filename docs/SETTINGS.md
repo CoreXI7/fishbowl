@@ -62,6 +62,7 @@ Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes en
 
 | Variable | Default | What it does |
 |---|---|---|
+| `AUTH` | `login` | `login`: Fishbowl's own sign-in (one account, optional authenticator app). `proxy`: off, because your reverse proxy's sign-in (Authelia, Authentik, an access list) protects the dashboard. Anything else counts as `login`. The demo has no sign-in |
 | `TRUSTED_PROXY` | (empty = anyone) | Your reverse proxy's container name(s) or IP(s), space-separated: the only clients allowed. Others are dropped before a thread is started for them |
 | `LISTEN` | `0.0.0.0` | Addresses to answer on, space-separated (IPv4 or IPv6). With `"127.0.0.1 <address on a network only the proxy shares>"` other containers can't reach the dash at all. Don't mix a wildcard (`0.0.0.0`, `::`) with specific addresses |
 | `ORIGIN` | (the address it's opened on) | The dashboard's public URL(s), space-separated: every POST must come from one (CSRF guard) |
@@ -128,3 +129,44 @@ open that file:
   editing a setting in `collector.toml` later (then restarting the collector) wins over what the page set for it.
 - `sudo homelab-dash-collector --apply --undo` drops everything the page set: back to `collector.toml` alone.
 - `out_dir` and `dash_uid` can only be set in `collector.toml`.
+
+## Signing in (`AUTH: login`, the default)
+
+- **First run**: the container's log shows a one-time **setup code**
+  (`docker logs <container> 2>&1 | grep "^SETUP CODE" | tail -n 1`). Opening the dashboard asks for it, a name and a
+  password. A new code appears at every start until the account exists: only the newest works.
+  `python /app/auth.py setup-code` (on the host, see below) makes a new one without a restart.
+- **Passwords**: 15 to 1024 characters, checked against a list of common passwords, your name and the words
+  fishbowl, homelab and dashboard, and refused when they're one short piece repeated. No other rules.
+  Stored with scrypt (N=2^15, r=8, p=3) in `data/auth.json` (0600).
+- **Two-step sign-in**: Settings → Account → set up an authenticator app (scan the QR code, type a code), which also
+  gives 10 one-time recovery codes. Changing the password, turning it off or making new recovery codes needs the
+  password and a code.
+- **Sessions**: kept in `data/sessions.json` (0600, only hashes of the cookies). "Keep me signed in" = 30 days at most
+  (7 days without a visit); otherwise 12 hours (1 hour without a visit). Over HTTPS the cookie is `__Host-fishbowl`
+  (Secure, HttpOnly, SameSite=Strict); over plain HTTP `fishbowl` (the Setup checklist warns).
+- **Your reverse proxy** must send `X-Real-IP` (the visitor's address) and `X-Forwarded-Proto` (http or https), and be
+  named in `TRUSTED_PROXY`. Nginx Proxy Manager sends both headers. Caddy: `header_up X-Real-IP {remote_host}`.
+  HAProxy: `http-request set-header X-Real-IP %[src]` and `http-request set-header X-Forwarded-Proto https if { ssl_fc }`.
+  Without X-Real-IP every visitor shares one count of wrong tries and plain-HTTP sign-in is refused; without
+  X-Forwarded-Proto sign-in from outside your network is refused (the sign-in page and the Setup checklist say which
+  header is missing). If your proxy passes request bodies on as they arrive (Caddy, Traefik and HAProxy do by
+  default), let it buffer them: Caddy `request_buffers 64KiB` in the reverse_proxy block, Traefik the Buffering
+  middleware, HAProxy `option http-buffer-request`. Nginx Proxy Manager buffers already.
+- **Changes end other access**: a new password, or turning two-step on or off, signs every other browser out and
+  forgets every trusted browser. Signing one browser out (or every other one) needs the password too.
+- **Plain HTTP stays at home**: over plain HTTP, passwords are only accepted from your own network (private addresses),
+  and a sign-in made that way only works there: the same cookie is refused from outside and over HTTPS.
+- **Wrong tries**: after 5 (per address, and for the account), each try waits twice as long as the last, up to 15
+  minutes. 100 wrong tries in a row lock the account for browsers that never signed in here. A browser that did
+  (it keeps a `fishbowl-device` cookie for a year) still signs in, and its wrong tries count on their own, so someone
+  guessing can't lock you out (after 10 wrong tries of its own it's just another browser). The next sign-in shows what
+  failed since the last one (not your own typos just before it). The right password with a wrong code becomes a
+  Setup problem until you change the password, or press "That was me" in Settings → Account.
+- **Settings → Account** has one "Confirm it's you" box: the current password (and a code when two-step is on, a new
+  one each time) before every change there, including signing browsers out. A code typed twice is refused as "just
+  used", not counted as wrong.
+- **`AUTH: proxy`** needs `TRUSTED_PROXY`; without it the dashboard keeps its own sign-in on (and says so).
+- **On the host** (`docker exec -it <container> python /app/auth.py ...`): `status`; `unlock` (after the lock);
+  `setup-code` (a new setup code, while there's no account); `signout` (signs every browser out, the account stays);
+  `reset` (deletes the account and every session, keeps your settings and keys, prints a new setup code).

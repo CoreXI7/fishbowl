@@ -1,12 +1,14 @@
 # Threat model
 
 What Fishbowl protects, who might attack it, where the trust boundaries are, and which controls hold each one.
-Written for the reference setup (a home server behind a reverse proxy with SSO), but the reasoning applies to any install.
+Written for the reference setup (a home server behind a reverse proxy, signed in with Fishbowl's own sign-in or the
+proxy's SSO), but the reasoning applies to any install.
 
 ## What's worth protecting
 
 | Asset | Where it lives | Why it matters |
 |---|---|---|
+| The dashboard account (password hash, authenticator secret, recovery-code hashes, sessions) | `data/auth.json`, `data/sessions.json` (0600) | Whoever signs in is the admin |
 | Integration secrets (qBittorrent login, Seerr and Tautulli API keys) | `data/secrets.json` (0600) or the container environment | Control over downloads, requests, Plex activity |
 | Security state: known IPs, acknowledged logins, approved crontabs | `data/settings.json`, `data/acks.json`, the collector's `cron-approved.json` (root) | Changing it silences the alerts the dashboard exists for |
 | The root collector | systemd service, runs as root | Anything that steers it runs with root's power |
@@ -16,7 +18,7 @@ Written for the reference setup (a home server behind a reverse proxy with SSO),
 ## Components and data flow
 
 ```
- internet ─► reverse proxy (only 443) ─► SSO (2FA; a LAN bypass is a deployment choice)
+ internet ─► reverse proxy (only 443) ─► Fishbowl's own sign-in (AUTH=login), or the proxy's SSO (AUTH=proxy)
                          │
                          ▼
                 dash container  (uid 1000, read-only rootfs, cap_drop ALL, 256 MB, answers only the proxy's IP)
@@ -38,8 +40,8 @@ Written for the reference setup (a home server behind a reverse proxy with SSO),
 
 ## Trust boundaries
 
-1. **Internet → proxy → SSO → dash.** The dash has no login of its own; the SSO is the gate. Anyone past it
-   (or inside the SSO's LAN bypass) is an admin.
+1. **Internet → proxy → sign-in → dash.** With `AUTH=login` (the default) the dash's own sign-in is the gate (below);
+   with `AUTH=proxy` the proxy's SSO is, and anyone past it (or inside its LAN bypass) is an admin.
 2. **Other containers → dash.** Many containers share the proxy's Docker network. They can open a connection
    to the dash's port; the app answers only the proxy's IP (`TRUSTED_PROXY`). The check is by source IP.
 3. **Upstream data → page.** Text from qBittorrent (torrent names, numbers), Seerr (titles, user names, ids),
@@ -59,7 +61,7 @@ Written for the reference setup (a home server behind a reverse proxy with SSO),
 
 | Attacker | Starting point | Realistic goal |
 |---|---|---|
-| A1 Internet, unauthenticated | the proxy | get past the SSO, abuse the public demo |
+| A1 Internet, unauthenticated | the proxy | get past the sign-in (or the SSO, with AUTH=proxy), abuse the public demo |
 | A2 Hostile container | code execution in a container (one was taken over by a cryptominer in this setup's past) | feed HTML/JS into the page, steer the dash's outbound requests, freeze or mislead the collector, reach the dash directly |
 | A3 Log writer | can make a log line exist (SSH user name, failed SSO login, process name, torrent name) | inject markup, slow the parsers, fake a known IP |
 | A4 Public demo visitor | the demo | leak real data, run code, deny service to the host |
@@ -133,6 +135,98 @@ written by an attacker who controls the dash container:
   must compile and are capped at 300 characters, paths at 512. A path the page set is never read through a link,
   anywhere on the way (opened folder by folder with `O_NOFOLLOW`), and FIFOs never block. Approving a path still means
   root reads that file: read what it shows.
+
+## The sign-in (`AUTH=login`)
+
+Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Session Management cheat sheets.
+
+- **Every request** except the sign-in page, the stylesheets, the app's scripts under `/js/` and files under `/static/`
+  (all open source: the same as on GitHub, no data), the state the sign-in page needs (`/api/auth/state`) and
+  `/healthz` needs a session. Pages redirect to `/login`, the API answers 401. The request target must be a plain
+  path (`//`, `\`, absolute URIs are refused), and the gate and the router read it the same way (`urlsplit`), so no
+  spelling of a path reaches a page the gate didn't check. `next=` only ever leads to `/` or `/settings` (with a plain
+  query such as `?wall`).
+- **First run**: the account can only be created with a one-time setup code (125 bits) from the container's log (only
+  its SHA-256 is kept in `data/setup-code`), compared in constant time, throttled; creating it is atomic (one account,
+  ever, also against a reset on the host).
+- **Passwords**: 15–1024 characters, NFKC-normalised, checked against 5,531 common ones of that length and the
+  account's own words; scrypt N=2^15 r=8 p=3 (32 MiB) with a 16-byte salt, one hash at a time (no memory DoS); a
+  wrong name costs a hash too; constant-time comparisons; generic "wrong name or password".
+- **Guessing**: per address (the proxy's X-Real-IP only from `TRUSTED_PROXY`; IPv6 per /64) and for the account: after 5 failures
+  each try waits twice as long (≤15 min); each try is counted (and saved) before it is checked, under one lock, so
+  parallel tries can't slip under a limit; 100 consecutive failures lock the account for new browsers until
+  `auth.py unlock` on the host. Password, code and setup-code failures all count. The code step counts too but never
+  waits (its own cap is 5 codes per password step): otherwise someone else's guessing could stretch the waits past
+  the 5 minutes the step lasts, and no new browser could finish signing in.
+- **Trusted devices** (OWASP "device cookies"): a browser that signed in before carries a 1-year `fishbowl-device`
+  token (stored as SHA-256, 10 kept). Its tries count on their own (10 wrong ones and it's just another browser), so
+  someone guessing can't lock the owner out; its successes never reset the account's count, so the lock still trips.
+- **Telling the owner**: failures are kept apart from sign-ins (so they can't push them out of view) and counted until
+  the next sign-in, which shows them once. Only the owner's own typos are left out, and only per browser, never per
+  address (an attacker can share the owner's address): wrong codes of that very sign-in, and wrong passwords and codes
+  typed in that same trusted browser in the 10 minutes before. A right code typed a second time (used already) is
+  refused but isn't counted as a wrong one. "The right password with a wrong code" adds up into a lasting Setup
+  checklist problem until the password changes or the owner says "That was me" (which needs the password, and the
+  code when two-step is on).
+- **Sessions**: 256-bit tokens, stored as SHA-256; a new one at every sign-in (no fixation); HttpOnly,
+  SameSite=Strict, `__Host-` + Secure over HTTPS (only that name is read over HTTPS, so a sibling subdomain can't set
+  one); every value of the cookie is tried, so junk cookies sent first can't push the real one out; 30 days max
+  (7 idle) when kept, else 12 h (1 h idle). This is longer than NIST's AAL2 (24 h, 1 h idle) on purpose: wall screens
+  stay signed in; untick "keep me signed in" for the AAL2 limits on a browser. An open dashboard polls, so it counts as
+  activity. At most 50 sessions; a new one pushes out the one seen longest ago. A session counts only on the kind of
+  connection it was made on: one made over plain HTTP (exposed there) works only over plain HTTP from your own
+  network, never from outside or over HTTPS; trusted-device tokens are bound the same way. Sign-out ends it on the
+  server and sends `Clear-Site-Data: "cache"` (not `"cookies"`, which would also wipe your SSO's cookies on the same
+  site); pages behind the sign-in are `no-store`, and a page brought back by Back reloads, so the back/forward cache
+  never shows them (or recovery codes) after signing out. Cookies are `Priority=High` (in Chrome a cookie flood from a
+  sibling site evicts lower ones first; no browser promises to keep cookies, so a flood can still sign you out).
+- **Revocation**: a password change, or turning two-step on or off, saves the change together with a new random
+  account *epoch* (62 bits, new at every change and for every new account, so nothing made for an account that was
+  reset can match the next one). Sessions, half-finished sign-ins and trusted devices carry the epoch they were made
+  in, so everything from before is worthless at once, including a sign-in that was checked a moment before the change
+  and finishes after it. Each change is saved only if the account is still at the epoch it was approved under and the
+  browser asking still has a live session (checked inside the same locked update that saves the change, so a sign-out
+  that has answered can't be overtaken), so of two changes approved at the same moment only one lands.
+  "Sign out every other browser" ends sessions only: forgetting trusted browsers needs the password (a password change).
+- **Two-step**: TOTP (RFC 6238, 160-bit secret, ±1 step, each step accepted once), a 5-minute pre-sign-in cookie
+  (SameSite=Strict) with 5 tries; 10 recovery codes (120 bits each, stored as SHA-256, single use). The QR code is
+  drawn on the server. Every change in Settings → Account (password, two-step, recovery codes, signing browsers out,
+  "That was me") needs the current password, and a code when two-step is on: a stolen session plus the password
+  isn't enough. These tries count per session (10, then that browser is signed out), not toward the account lock,
+  so a locked account never keeps a signed-in owner out of Settings.
+- **Files**: `auth.json` and `sessions.json` are 0600, written atomically (flushed, folder too), read without
+  following links, checked field by field (a wrong type or an empty authenticator secret means "damaged", never
+  "anyone"); a damaged `auth.json` blocks every sign-in (fail closed) until reset on the host. The server and the
+  `auth.py` command line take the same lock (`data/.auth.lock`), so a reset can't be undone by a sign-in in flight.
+- **Plain HTTP**: a password is only accepted on positive evidence: the trusted proxy says the browser used HTTPS
+  (`X-Forwarded-Proto: https`), or the browser's address is known (through the proxy: its X-Real-IP, IPv4-mapped
+  addresses mapped, scoped ones refused) and private, loopback or link-local. `ORIGIN` alone doesn't count. A proxy
+  nobody named in `TRUSTED_PROXY` that sends forwarding headers makes the address unknown (the sign-in page says to set
+  `TRUSTED_PROXY`). The Setup checklist says when the proxy leaves out either header, or when every request comes from
+  the container's gateway (Docker's userland proxy, rootless Docker/Podman: visitors can't be told apart). A repeated X-Real-IP or
+  X-Forwarded-Proto counts as missing. "Your own network" is spelled out: 10/8, 172.16/12, 192.168/16, 127/8,
+  169.254/16, fc00::/7, fe80::/10, ::1. With `ORIGIN` unset, changes over plain
+  HTTP are only accepted for a Host no website can own (an IP address, a name without dots, `.lan`, `.local`,
+  `.home.arpa`, `.internal`, `.localhost`): this stops DNS rebinding.
+- **Headers**: `Cache-Control: no-store` on the sign-in API and on pages; CSP on every answer
+  (`frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`), `X-Frame-Options: DENY`; every POST (sign-in
+  included) must carry the dashboard's Origin, be JSON, and not be marked cross-site by the browser.
+- **Connections**: at most 80 at once for the whole process (every `LISTEN` address), 32 per address (IPv6 per /64;
+  through the proxy, per browser address when the proxy sends X-Real-IP); when all 80 are taken, the oldest one still
+  sending its request is cut to make room. The request (line, headers, body) must arrive within 20 s, every connection
+  is cut after 120 s, request headers are at most 64 KB, and cookie parsing is linear and tries at most 300 values.
+  Proxies that pass request bodies on as they arrive (Caddy, Traefik, HAProxy by default) should buffer them (see
+  docs/SETTINGS.md). Someone who can reach port 8000 directly from many addresses can still keep it busy (keep it
+  behind the proxy: `TRUSTED_PROXY` and `LISTEN`).
+- **Deliberate deviations** (ASVS 5 / NIST 800-63B-4): CSRF is stopped by Origin + JSON-only bodies + Sec-Fetch-Site +
+  SameSite=Strict instead of a token; two-step is optional (strongly suggested by the Setup checklist); the TOTP window
+  is ±1 step (about 90 s) for clock drift; the setup code has 125 bits and recovery codes 120 (NIST asks 64; both are
+  single-use, throttled and stored hashed); no replacement recovery code is issued automatically (the notice says how
+  many are left, new ones any time in Account); HSTS is your proxy's job; settings changes need a session, not the
+  password again; session lifetimes as above; the owner is told in the app only (the notice after signing in, the
+  Account section, the Setup checklist), not over a second channel such as email; wrong tries in Settings are shown at
+  the next sign-in but don't raise the lasting "someone may know your password" warning (a signed-in browser making
+  them is far more likely the owner mistyping).
 
 ## Controls that hold today
 

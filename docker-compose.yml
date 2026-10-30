@@ -1,4 +1,5 @@
-# Fishbowl. Put it behind your reverse proxy + SSO (Authelia, Authentik, ...); it publishes no ports.
+# Fishbowl. Put it behind your reverse proxy (HTTPS); it has its own sign-in, or use your SSO with AUTH: proxy.
+# It publishes no ports.
 # Setup: see README.md. Everything else is set on the dashboard's /settings page.
 services:
   dash:
@@ -17,7 +18,8 @@ services:
     environment:
       # Security-critical settings live here, never on the settings page:
       ORIGIN: ""                          # e.g. https://dash.example.com (CSRF guard); empty = the address it's opened on
-      TRUSTED_PROXY: nginx                # your reverse proxy's container name; empty = accept anyone (LAN-only use)
+      # AUTH: proxy                       # turn Fishbowl's own sign-in off: ONLY if your proxy's SSO (Authelia, Authentik, ...) protects it
+      TRUSTED_PROXY: nginx                # your reverse proxy's container name; empty = no proxy (anyone who can reach port 8000 gets the sign-in page)
       NPM_DIR: /npm
       # SETTINGS_UI: "0"                  # make the settings page read-only
       # USER_HEADER: Remote-User          # name the SSO user in the log; ONLY if your proxy sets this header itself
