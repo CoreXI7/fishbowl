@@ -201,6 +201,10 @@ def read_json(r, limit):
     return json.loads(data) if data else {}
 
 
+_INVISIBLE = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+
+
 def text(v, limit=300):
-    """A string from an upstream JSON field, clipped; anything else (lists, objects, numbers) becomes ""."""
-    return v[:limit] if isinstance(v, str) else ""
+    """A string from an upstream JSON field, clipped, without control or bidi characters (a torrent name with RLO could
+    pass for another); anything else (lists, objects, numbers) becomes ""."""
+    return _INVISIBLE.sub("", v[:limit * 2])[:limit] if isinstance(v, str) else ""

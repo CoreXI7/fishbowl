@@ -84,6 +84,13 @@ class UpstreamTypes(unittest.TestCase):
         self.assertIsInstance(s["state"], str)
         self.assertIsInstance(s["title"], str)
 
+class UpstreamTextCharacters(unittest.TestCase):
+    def test_control_and_bidi_characters_are_dropped(self):
+        # (torrent names and request titles kept RLO, ESC and NUL: a name could pass for another on the page; audit round 3)
+        load_app()
+        import upstream
+        self.assertEqual(upstream.text("good\u202etxt.exe\x1b[31m\x00end"), "goodtxt.exe[31mend")
+
 
 if __name__ == "__main__":
     unittest.main()
