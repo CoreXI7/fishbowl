@@ -1303,7 +1303,9 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             "your proxy. So only addresses count until you give the proxy's IP, or LISTEN keeps the other networks out.",
             [("Find the proxy's address on the network it shares with the dashboard:",
               "docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' <your proxy's container name>"),
-             ("Put it in TRUSTED_PROXY in docker-compose.yml (after the name, or instead of it):", "TRUSTED_PROXY: <the proxy's IP>"),
+             ("Put it in TRUSTED_PROXY in docker-compose.yml (after the name, or instead of it), and pin it in the proxy's "
+              "compose file (ipv4_address under its network): otherwise Docker may give it to another container after a "
+              "restart.", "TRUSTED_PROXY: <the proxy's IP>"),
              ("Or answer only on the proxy's network: see LISTEN in docs/SETTINGS.md.", "")], compose=True)
     elif proxy_shared():
         entry, found = next(iter(proxy_shared().items()))
@@ -1312,7 +1314,8 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             "that name too (a compose service called like your proxy gets it as an alias), and it could pass for the "
             "proxy. So none of them is trusted until the name is unique.",
             [("Find the proxy's own address:", "docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' <your proxy's container name>"),
-             ("Name the proxy by that address (or by a container name nothing else uses) in docker-compose.yml:",
+             ("Name the proxy by that address (pinned with ipv4_address in its compose file, or Docker may give it to "
+              "another container after a restart), or by a container name nothing else uses, in docker-compose.yml:",
               "TRUSTED_PROXY: <the proxy's IP>"),
              ("Better still, lock the dash to a network only the proxy shares: see LISTEN in docs/SETTINGS.md.", "")], compose=True)
     elif not proxy_ips():
