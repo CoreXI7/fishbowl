@@ -111,7 +111,8 @@ def gap_hint(gaps):
     if "gateway" in gaps:
         return ("Every request reaches the dashboard from Docker's gateway (its userland proxy, or rootless Docker or "
                 "Podman), so it can't tell visitors apart, and signing in over plain HTTP is refused. Sign in through "
-                "your reverse proxy's https address.")
+                "your reverse proxy's https address, or, without one, from another computer at the server's own LAN "
+                "address (a browser on the server itself, or an SSH tunnel to it, arrives from the gateway too).")
     heads = [g for g in gaps if g in PROXY_HEADERS]
     if heads:
         return " ".join(what[g] for g in heads) + " See \"Signing in\" in docs/SETTINGS.md for the line to add."
