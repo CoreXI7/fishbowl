@@ -70,6 +70,14 @@
         <div class="field"><label for="theme-default">Default theme</label>
           <select id="theme-default" aria-describedby="d-theme"></select>
           <small id="d-theme">What every browser shows until someone picks another one with 🎨 (or T) on the dashboard. Each browser remembers its own pick.</small></div>
+        <div class="field"><label for="f-motion">Background motion</label>
+          <select id="f-motion" data-k="site.motion" aria-describedby="d-motion">
+            <option value="auto">Follow each device (off where it's set to reduce motion)</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+          <small id="d-motion">The drifting bubbles and effects, in every browser that hasn't switched them with 🫧 (or M) on the
+            dashboard. "Follow each device" leaves them off for people who turned animations off on their phone or computer.</small></div>
       </div>
       <h3 id="h-theme-ed">Edit a theme</h3>
       <p class="hint">Each theme's mascot, tab icon and what it says. For Miku and Gura, an empty field uses the theme's own text (shown faded).

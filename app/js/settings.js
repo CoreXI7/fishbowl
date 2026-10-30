@@ -27,7 +27,7 @@ const narrow = matchMedia("(max-width:600px)");
 const PERSONALITY = ["tagline", "tagline_down", "click_emoji", "greeting", "quotes", "mascot", "mascot_credit", "favicon"];
 const slices = d => ({   // which part of the settings each section edits (for the unsaved-changes dots)
   look: [d.site.title, d.site.hidden_panels],
-  themes: [d.site.theme, PERSONALITY.map(k => d.site[k]), d.site.themes],
+  themes: [d.site.theme, d.site.motion, PERSONALITY.map(k => d.site[k]), d.site.themes],
   services: [d.groups, d.apps, d.services, d.skip_hosts, d.via_proxy],
   integrations: [d.qbittorrent, d.seerr, d.tautulli],
   security: [d.known_ips],
@@ -912,7 +912,7 @@ function render() {
   collectorStart();
   renderInteg(); bindFields(); renderPanels(); renderThemes(); renderServices(); renderExtras(); renderCollector(); renderInfra(); renderSetup();
   document.querySelectorAll(".ferr").forEach(m => m.remove());
-  hideErr(); setDirty(false); applySearch(); markCurrent();
+  hideErr(); setDirty(false); applySearch(); markCurrent(); bubbles();
 }
 async function load() { V = await api("/api/settings"); render(); }
 $("reload").onclick = () => { if (!dirty || confirm("Discard your unsaved changes?")) render(); };
@@ -946,11 +946,17 @@ $("save").onclick = async () => {
     form.inert = false; form.removeAttribute("aria-busy");
   }
 };
-(function bubbles() {
-  const box = $("bubbles"); if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+function bubbles() {   // the dashboard's rule: this browser's 🫧 choice, else the saved default ("auto" = the device's)
+  const box = $("bubbles");
+  let mine = "";
+  try { mine = localStorage.getItem("motion") || ""; } catch (e) { /* storage blocked: the default */ }
+  const mode = ["on", "off"].includes(mine) ? mine : V.settings.site.motion || "auto";
+  const still = mode === "off" || (mode === "auto" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  document.documentElement.dataset.motion = still ? "still" : "move";
+  if (still || box.childElementCount) return;
   for (let i = 0; i < 12; i++) { const b = document.createElement("i"), s = 14 + Math.random() * 40;
     Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%",
                             animationDuration: 16 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"});
     box.appendChild(b); }
-})();
+}
 load().catch(e => showErr(e.message, "", "Couldn't load the settings"));
