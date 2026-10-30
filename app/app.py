@@ -456,9 +456,14 @@ _answered = {}   # integration API path -> (did the last fetch work, when): the 
 def cached(key, ttl, fn):
     """fn(), reused for ttl seconds. When several requests miss at the same moment (the wall display plus a
     phone, say), only the first one runs fn; the others wait for it and share its result instead of each
-    checking every service again."""
+    checking every service again. A failure is shared the same way, for a few seconds: the waiting requests used to
+    run a failing fetch again one after another, each holding its connection slot while it waited."""
     def fresh():
         hit = _cache.get(key)
+        if hit and isinstance(hit[1], _Failed):
+            if time.monotonic() - hit[0] < min(ttl, FAIL_FOR):
+                raise hit[1].error
+            return None
         return hit if hit and time.monotonic() - hit[0] < ttl else None
 
     with _lock:
@@ -468,14 +473,16 @@ def cached(key, ttl, fn):
         key_lock = _key_locks.setdefault(key, threading.Lock())
     with key_lock:
         with _lock:
-            hit = fresh()           # someone else refreshed it while we waited
+            hit = fresh()           # someone else refreshed it (or it failed) while we waited
         if hit:
             return hit[1]
         try:
             val = fn()
-        except Exception:
+        except Exception as e:
             if key in FEATURE:
                 _answered[key] = (False, time.time())
+            with _lock:
+                _cache[key] = (time.monotonic(), _Failed(e))
             raise
         if key in FEATURE:
             _answered[key] = (True, time.time())
@@ -484,6 +491,12 @@ def cached(key, ttl, fn):
         return val
 
 
+class _Failed:
+    def __init__(self, error):
+        self.error = error
+
+
+FAIL_FOR = 10   # seconds a failure is shared with the requests that waited for it (and those right after)
 _icons = {}
 
 

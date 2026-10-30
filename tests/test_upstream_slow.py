@@ -127,6 +127,32 @@ class SlowManyLookups(unittest.TestCase):
         r = self.app.check_once({"name": "odd.example", "upstream": "http://[127.0.0.1]:8080", "auth": False})
         self.assertFalse(r["up"])
 
+class CachedFailure(unittest.TestCase):
+    def test_waiters_share_a_failure_instead_of_queueing_to_repeat_it(self):
+        # (polls waiting on a failing fetch each ran it again in turn: the k-th waited k x 30 s, holding its connection
+        # slot; audit round 2)
+        app = load_app()
+        calls = []
+
+        def failing():
+            calls.append(1)
+            time.sleep(1)
+            raise TimeoutError("upstream too slow")
+        out = []
+
+        def poll():
+            try:
+                app.cached("/api/test-failing", 25, failing)
+            except TimeoutError as e:
+                out.append(str(e))
+        ts = [threading.Thread(target=poll) for _ in range(5)]
+        t0 = time.monotonic()
+        [t.start() for t in ts]
+        [t.join(15) for t in ts]
+        self.assertEqual(len(out), 5, "every poll got the error")
+        self.assertEqual(len(calls), 1, "the failing fetch ran once")
+        self.assertLess(time.monotonic() - t0, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
