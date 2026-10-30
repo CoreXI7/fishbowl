@@ -380,11 +380,12 @@ textarea{min-height:84px;resize:vertical;font-family:inherit}
 .chk-t small{font:400 12px "M PLUS Rounded 1c",system-ui,sans-serif}
 .chk p{margin:2px 0;font-size:13px}
 .chk-steps{margin:8px 0 2px;padding-left:20px}.chk-steps li{margin:6px 0;padding-left:2px}.chk-steps li>p{margin:0 0 3px}
+.chk-alt{margin:6px 0 0 !important;color:var(--mute)}
 .chk-why>summary{cursor:pointer;font-size:12.5px;color:var(--mute);margin:3px 0}
 .chk-note{padding:10px 13px;border-radius:12px;border:1px dashed var(--line);margin-bottom:8px;font-size:13px}.chk-note p{margin:0 0 4px}
 .code{display:flex;gap:8px;align-items:flex-start;margin:4px 0}
 .code pre{flex:1;min-width:0;margin:0;padding:7px 10px;border-radius:8px;background:color-mix(in srgb,var(--fg) 8%,var(--bg));
-  font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+  font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;overflow-x:auto}   /* a line stays whole */
 .chk-go{display:inline-block;margin-top:7px;font-size:13px;font-weight:700}
 @media (max-width:600px){.code{flex-direction:column;align-items:stretch;gap:4px}.code button{align-self:flex-end}}
 .chk-ok-list>summary{cursor:pointer;color:var(--mute);font-size:13px;margin:6px 0 8px}
@@ -411,7 +412,7 @@ textarea{min-height:84px;resize:vertical;font-family:inherit}
 .srow select{width:auto;padding:5px 6px;font-size:12.5px}
 @media (max-width:760px){.srow-h{display:none}.srow{grid-template-columns:34px 1fr}.srow .host{grid-column:2}.srow>.sl,.srow .acts{grid-column:1/-1}
   .sl-t{position:static;width:auto;height:auto;clip:auto;font-size:11.5px;color:var(--mute);font-weight:600}.srow .acts{flex-wrap:wrap;align-items:flex-end}}
-.xrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.2fr) auto auto;gap:8px 12px;align-items:start;padding:10px 0;border-top:1px solid var(--line)}
+.xrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.2fr) 190px auto;gap:8px 12px;align-items:start;padding:10px 0;border-top:1px solid var(--line)}
 .xrow:first-child{border-top:0;padding-top:2px}
 .xauth label{display:flex;gap:6px;align-items:center;font-size:13px;white-space:nowrap;margin-top:24px}
 .xrow>.ibtn{margin-top:22px}
@@ -466,7 +467,7 @@ textarea{min-height:84px;resize:vertical;font-family:inherit}
 }
 @media (max-width:600px){.savebar .long{display:none}.savebar .short{display:inline}}
 @media (pointer:coarse){.settings .ibtn,.settings .tabs button,.settings .chiplist button,.settings .code button,.settings .pill{min-height:40px;min-width:40px}
-  .settings select,.set-nav a{min-height:40px}.settings details>summary,.chk-go{padding:9px 0;display:inline-block}}
+  .settings select,.set-nav a{min-height:40px}.settings details>summary{padding:9px 0}.chk-go{padding:9px 0;display:inline-block}}
 
 /* ===== CPU / memory breakdown overlay ===== */
 .h2r{display:flex;align-items:center;gap:8px}

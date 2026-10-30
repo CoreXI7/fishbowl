@@ -153,6 +153,7 @@ function chk(i) {
     <p>${esc(i.detail)}</p>
     ${i.why ? `<details class="chk-why"><summary>Why?</summary><p>${esc(i.why)}</p></details>` : ""}
     ${(i.steps || []).length ? `<ol class="chk-steps">${i.steps.map(s => `<li>${s.text ? `<p>${esc(s.text)}</p>` : ""}${s.code ? codeBlock(s.code) : ""}</li>`).join("")}</ol>` : ""}
+    ${i.alt ? `<p class="chk-alt">${esc(i.alt)}</p>` : ""}
     ${link && secName(link.slice(1)) ? `<a class="chk-go" href="${link}">Go to ${esc(secName(link.slice(1)))} →</a>` : ""}
     ${doc ? `<a class="chk-go" href="${esc(doc)}" target="_blank" rel="noopener">How to, in the docs ↗</a>` : ""}
   </div></div>`;
@@ -166,7 +167,7 @@ function renderSetup() {
   $("setup-list").innerHTML =
     (fix.length ? `<p class="chk-sum bad"><span aria-hidden="true">⚠ </span>${fix.length} thing${fix.length > 1 ? "s" : ""} to fix</p>`
                 : `<p class="chk-sum good"><span aria-hidden="true">✓ </span>All set${todo.length ? `, with ${todo.length} optional extra${todo.length > 1 ? "s" : ""} below` : ""}</p>`) +
-    ([...fix, ...todo].some(i => i.compose) ? `<div class="chk-note"><p>After changing docker-compose.yml, run this in its folder, then click <b>Check again</b> below:</p>${codeBlock("docker compose up -d")}</div>` : "") +
+    ([...fix, ...todo].some(i => i.compose) ? `<div class="chk-note"><p>When you've made the docker-compose.yml changes below, run this in its folder, then click <b>Check again</b>:</p>${codeBlock("docker compose up -d")}</div>` : "") +
     fix.map(chk).join("") + todo.map(chk).join("") +
     (ok.length ? `<details class="chk-ok-list"><summary>${ok.length} check${ok.length > 1 ? "s" : ""} passed</summary>${ok.map(chk).join("")}</details>` : "");
 }
@@ -414,8 +415,10 @@ $("extras").addEventListener("input", e => {
 $("extras").addEventListener("change", e => {   // a finished rename takes the tile's label, icon and link along
   const el = e.target; if (el.dataset.x !== "name") return;
   const was = el.dataset.was, now = el.value.trim();
-  const shared = V.discovered.includes(was) || S.services.filter(x => x.name === was).length;
-  if (was && now && was !== now && Object.hasOwn(S.apps, was) && !Object.hasOwn(S.apps, now) && !shared) {
+  const npm = V.discovered.filter(h => !V.settings.services.some(x => x.name === h));
+  const shared = npm.includes(was) || S.services.some(x => x.name === was);
+  if (was && now && was !== now && was !== "__proto__" && now !== "__proto__" && Object.hasOwn(S.apps, was)
+      && !Object.hasOwn(S.apps, now) && !shared) {
     S.apps[now] = S.apps[was]; delete S.apps[was]; setDirty();
   }
   el.dataset.was = now;
@@ -510,18 +513,19 @@ function markCurrent() {
   const a = navLinks.find(a => a.hash === "#" + curId), ul = a.closest("ul");
   if (ul.scrollWidth > ul.clientWidth) ul.scrollTo({left: a.offsetLeft - ul.offsetLeft - 16});   // phone: keep it in view
 }
-let spyQueued = false, spyPausedUntil = 0, spyCatchUp = 0, pinned = "";
+let spyQueued = false, spyPausedUntil = 0, spyCatchUp = 0, pinned = "", pinFrom = 0;
 addEventListener("scroll", () => {
   if (performance.now() < spyPausedUntil) {   // until a menu jump settles; then catch up with wherever scrolling ended
     spyPausedUntil = performance.now() + 150;
     clearTimeout(spyCatchUp); spyCatchUp = setTimeout(markCurrent, 200);
     return;
   }
+  if (pinned && performance.now() > pinFrom) pinned = "";   // you scrolled yourself: back to following the page
   if (!spyQueued) { spyQueued = true; requestAnimationFrame(() => { spyQueued = false; markCurrent(); }); }
 }, {passive: true});
 document.querySelector(".set-nav ul").addEventListener("click", e => {
   const a = e.target.closest("a"); if (!a) return;
-  curId = ""; spyPausedUntil = performance.now() + 600; pinned = a.hash.slice(1);
+  curId = ""; spyPausedUntil = performance.now() + 600; pinned = a.hash.slice(1); pinFrom = spyPausedUntil;
   navLinks.forEach(l => l === a ? l.setAttribute("aria-current", "true") : l.removeAttribute("aria-current"));
   curId = a.hash.slice(1);
 });
@@ -553,7 +557,10 @@ function applySearch() {
           if (u.querySelector(".srow:not(.q-out)")) hits.push(u); else u.classList.add("q-out");
           return;
         }
-        if (has(u)) { hits.push(u); reveal(u); } else u.classList.add("q-out");
+        if (has(u)) {
+          hits.push(u); reveal(u);
+          u.querySelectorAll("details").forEach(d => { if (d.textContent.toLowerCase().includes(q)) d.open = true; });
+        } else u.classList.add("q-out");
       });
       hit = hits.length > 0;
     }
@@ -582,6 +589,7 @@ function render() {
 async function load() { V = await api("/api/settings"); render(); }
 $("reload").onclick = () => { if (!dirty || confirm("Discard your unsaved changes?")) render(); };
 $("save").onclick = async () => {
+  if (document.activeElement && document.activeElement.matches("input, textarea")) document.activeElement.blur();
   $("save").disabled = true; $("msg").textContent = "Saving…";
   try {
     // empty "not in NPM" rows aren't sent; S keeps them, so the rows on the page still match S if the save is refused
