@@ -48,4 +48,5 @@ that would make root read a file or run a pattern waits until you approve it on 
 `sudo homelab-dash-collector --apply`, which shows exactly what changes.
 
 The full threat model, what's been fixed and what's still open: [THREAT-MODEL.md](THREAT-MODEL.md).
+What it was tested against (five review rounds for the sign-in, with attacks and results): [SECURITY-TESTING.md](SECURITY-TESTING.md).
 Every security fix has a test that failed before it (`python3 -m unittest discover -s tests`).

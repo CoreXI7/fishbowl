@@ -14,6 +14,7 @@ torrents (with a VPN-leak alarm), temperatures, drives, security and backups, al
 > **🔑 It has its own sign-in, on by default:** one account, an optional authenticator app (two-step sign-in) and
 > recovery codes. Already have SSO in front of it (Authelia, Authentik, an access list)? `AUTH: proxy` turns Fishbowl's
 > own off, so you sign in once. How it's built to be safe, and how to report a problem: [SECURITY.md](SECURITY.md).
+> Everything it was tested against, and the results: [SECURITY-TESTING.md](SECURITY-TESTING.md).
 
 **▶ [Try the live demo](https://demo.vicy.us)** (fake data, nothing you do there is saved)
 
@@ -30,7 +31,7 @@ torrents (with a VPN-leak alarm), temperatures, drives, security and backups, al
 ## Contents
 
 - [What you get](#what-you-get)
-- [Quick start](#quick-start)
+- [Quick start](#quick-start) · [**Signing in**](#signing-in)
 - [Tips: keys, clicks and links](#tips-keys-clicks-and-links)
 - [What's new](#whats-new-october-2026), including [**what to check when you update**](#updating-what-to-check)
 - [Settings](#settings)
@@ -91,8 +92,7 @@ create your account, with a one-time **setup code** from the container's log
 Already have SSO (Authelia, Authentik, …)? Put the proxy host behind it and set `AUTH: proxy` instead.
 Then click **⚙**: the **Setup** checklist checks the rest and gives the exact fix for anything missing.
 
-> **Forgot the password?** `docker exec -it dash python /app/auth.py reset` deletes the account (settings and keys
-> stay) and prints a new setup code. Locked out after 100 wrong tries? `... auth.py unlock`.
+> **Forgot the password or locked out?** See [Signing in](#signing-in).
 
 > **Empty page or 502?** Run `docker logs dash`. A `TRUSTED_PROXY` name that doesn't resolve refuses everyone, and the log says so.
 > Not sure of your proxy's network name? `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <proxy>`
@@ -109,6 +109,58 @@ It needs Python 3.11+ and `smartctl`; it also uses `nvidia-smi`, `fail2ban-clien
 It costs under a second of CPU a minute. Remove it with `sudo bash collector/install.sh --uninstall`.
 The collector keeps Fishbowl's old name, homelab-dash, in its service and folders, so existing installs update in place.
 Its config is a file on purpose: it runs as root, so no web page should be able to change what it does.
+
+---
+
+## Signing in
+
+Fishbowl has its own sign-in, on by default: one account, for you.
+
+**The first time**, the dashboard asks for a **setup code**, a name and a password. The code is in the container's log:
+
+```sh
+docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1
+```
+
+Only the newest code works (a new one appears at every start until the account exists), so nobody who finds a fresh
+install before you can claim it.
+
+- **Password**: 15 characters or more (a few random words work well), checked against common passwords. No other rules;
+  password managers and pasting are welcome.
+- **Two-step sign-in** (recommended): ⚙ → **Account** → set up an authenticator app. Scan the QR code with any
+  authenticator app, type a code, and keep the 10 **recovery codes** it shows somewhere safe: each works once, in place of
+  a code from the app (for a lost phone).
+- **Keep me signed in**: 30 days (7 without a visit), so a wall screen stays up. Without it: 12 hours (1 hour without a
+  visit). The sign-out button sits in the header.
+- **⚙ → Account**: confirm it's you (the password, plus a code when two-step is on), then change the password, turn
+  two-step on or off, make new recovery codes, see which browsers are signed in and sign any of them out, and see recent
+  sign-ins and failed tries. A new password signs every other browser out.
+- **If someone guesses**: after 5 wrong tries the waits double (up to 15 minutes). After 100 in a row, browsers that never
+  signed in are locked out until you unlock it on the host; browsers you've signed in with before still get in. Your next
+  sign-in tells you what failed since the last one. The right password with a wrong code stays on the Setup checklist
+  until you change the password or press "That was me".
+- **Plain HTTP** (no HTTPS): passwords are only accepted from your own network, and that sign-in only works there.
+- **Your reverse proxy** must send `X-Real-IP` and `X-Forwarded-Proto` (Nginx Proxy Manager does). Caddy, Traefik and
+  HAProxy need a line or two: see [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). The Setup
+  checklist tells you when something's missing.
+
+**Forgot the password, locked out, or lost a device?** On the host:
+
+| `docker exec -it dash python /app/auth.py ...` | What it does |
+|---|---|
+| `status` | The account, the lock, two-step, recovery codes left, signed-in browsers |
+| `unlock` | Ends the lock after 100 wrong tries |
+| `signout` | Signs every browser out; the account stays (a lost phone or laptop) |
+| `reset` | Deletes the account and every session (settings and keys stay) and prints a new setup code |
+| `setup-code` | A new setup code, while there's no account yet |
+
+**Already have SSO** (Authelia, Authentik, an access list)? Add `AUTH: proxy` to the `environment:` in
+docker-compose.yml so you sign in only once. It needs `TRUSTED_PROXY` too: without it anyone could go around your
+proxy's sign-in, so Fishbowl keeps its own on and says so in the log. The Setup checklist checks that a sign-in sits in
+front of the dashboard. Demo mode (`DEMO=1`) has no sign-in.
+
+Every detail: [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). How it's built:
+[THREAT-MODEL.md](THREAT-MODEL.md#the-sign-in-authlogin). How it was tested: [SECURITY-TESTING.md](SECURITY-TESTING.md).
 
 ---
 
@@ -347,7 +399,8 @@ browser ──► reverse proxy ──► dash container: its own sign-in (or yo
 
 The limit: anyone with Docker or root access on the host can read the container's environment, as with any
 self-hosted app. Keep `.env` at `chmod 600` and out of git (`.gitignore` covers it).
-Details: [THREAT-MODEL.md](THREAT-MODEL.md).
+Details: [THREAT-MODEL.md](THREAT-MODEL.md). What was tested and what came out of it:
+[SECURITY-TESTING.md](SECURITY-TESTING.md).
 
 ---
 
@@ -376,6 +429,7 @@ Fake qBittorrent, Seerr, Tautulli and web apps (`tests/helpers.py`) stand in for
 - [docs/SETTINGS.md](docs/SETTINGS.md): every setting, its limits and defaults
 - [ARCHITECTURE.md](ARCHITECTURE.md): which file does what
 - [THREAT-MODEL.md](THREAT-MODEL.md): what it defends against, and what it doesn't
+- [SECURITY-TESTING.md](SECURITY-TESTING.md): every attack it was tested against, and the result
 - [PERF-BASELINE.md](PERF-BASELINE.md): measured CPU, memory and network numbers
 - Adding a theme: add its id and defaults to `THEMES` in `app/settings.py` and its styles to `app/themes.css` under `html[data-theme="<id>"]`
 
