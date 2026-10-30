@@ -85,6 +85,31 @@ class Files(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(self.col.CRON_APPROVED).st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.col.OUT_DIR, "hw.json")).st_mode), 0o640)
 
+    def authelia_db(self, create):
+        import sqlite3
+        path = os.path.join(self.tmp, "db.sqlite3")
+        if os.path.exists(path):
+            os.remove(path)
+        con = sqlite3.connect(path)
+        con.executescript(create)
+        con.commit()
+        con.close()
+        self.col.SEC["authelia_db"] = path
+
+    def test_authelia_tables_must_be_plain_tables(self):
+        # Virtual tables (FTS, R-tree) pass "type = table" but run their module's C code on the file's bytes; generated
+        # columns run expressions from the file. Either let a crafted database hold root's query far past its limit.
+        for create in ("CREATE VIRTUAL TABLE authentication_logs USING fts5(time, successful, banned, username, auth_type, "
+                       "remote_ip, request_uri, id);",
+                       "CREATE TABLE authentication_logs (id INTEGER PRIMARY KEY, time TEXT, successful INT, banned INT, "
+                       "username TEXT, auth_type TEXT, remote_ip TEXT, request_uri TEXT GENERATED ALWAYS AS (hex(username)));"):
+            self.authelia_db(create)
+            with self.assertRaises(self.col.CheckFailed, msg=create[:30]):
+                self.col.authelia_detail()
+        self.authelia_db("CREATE TABLE authentication_logs (id INTEGER PRIMARY KEY, time TEXT, successful INT, banned INT, "
+                         "username TEXT, auth_type TEXT, remote_ip TEXT, request_uri TEXT);")
+        self.assertIsNotNone(self.col.authelia_detail(), "a plain table still works")
+
 
 if __name__ == "__main__":
     unittest.main()

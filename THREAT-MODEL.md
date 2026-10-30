@@ -77,7 +77,7 @@ proxy's SSO), but the reasoning applies to any install.
 | NPM `server_name`, settings text | page `innerHTML`, attributes | `esc()`; settings validated server-side |
 | Log lines, process names, cron lines | `hw.json` / `sec-detail.json` → page | `clip()` (length, control and bidi characters), `redact()` (secrets), `esc()` in the page |
 | Request path, headers | dash container log | `log_safe()`: control characters shown as `\xNN`, clipped; `X-Real-IP` and the user header count only from the proxy |
-| Authelia SQLite file | root collector's SQLite | bytes read with `O_NOFOLLOW`/`O_NONBLOCK`, size cap, in-memory copy, defensive mode, real tables only, parameter-free fixed queries, row + time limits |
+| Authelia SQLite file | root collector's SQLite | bytes read with `O_NOFOLLOW`/`O_NONBLOCK`, size cap, in-memory copy, defensive mode, plain tables only (no virtual tables, no generated columns: either runs code the file chose), cell size checks, 256 KB values, parameter-free fixed queries, row + time limits |
 | `req/cron-approve` | root collector | read with `O_NOFOLLOW`/`O_NONBLOCK`, regular files only, 100 bytes; must be 64 hex chars and equal the live crontab hash |
 | Upstream redirects | dash outbound requests | never followed off-host (health checks count a 3xx as up; icons follow at most 3 on the same host; integrations none) |
 | Upstream answer speed (one byte every few seconds) | dash threads and connection slots | every outbound request has an overall deadline (3x its timeout: 15 s for checks and icons, 30 s for integrations); at the deadline its socket is shut down; an icon cut short isn't kept |

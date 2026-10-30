@@ -1022,10 +1022,25 @@ def ssh_detail():
 AUTHELIA_TABLES = ("authentication_logs", "banned_user", "banned_ip")
 
 
+def plain_tables(con, names):
+    """{name: "table"} for each of names that is a plain table: virtual tables (FTS, R-tree) also say "table" in
+    sqlite_schema but run their module's C code on the file's bytes, and generated columns run expressions stored in the
+    file; a crafted database could hold root's query far past its time limit with either (the progress handler only
+    runs between steps). Anything else: "other"."""
+    out = {}
+    for name, kind, sql in con.execute(f"SELECT name, type, sql FROM sqlite_schema WHERE name IN ({','.join('?' * len(names))})",
+                                       names).fetchall():
+        plain = kind == "table" and isinstance(sql, str) and re.match(r"\s*CREATE\s+TABLE\b", sql, re.I) is not None
+        if plain:   # (only now: pragma_table_xinfo on a virtual table would run its module)
+            plain = all(h == 0 for (h,) in con.execute("SELECT hidden FROM pragma_table_xinfo(?)", (name,)))
+        out[name] = "table" if plain else "other"
+    return out
+
+
 def authelia_detail():
     """Sign-ins and lockouts from Authelia's SQLite database. Its folder is writable by the Authelia container, so SQLite
     never opens anything there: the file's bytes are read (no symlinks, no FIFOs, size-capped) into an in-memory copy,
-    queried with SQLite's defensive settings (no triggers, no views, untrusted schema), real tables only, row limits and
+    queried with SQLite's defensive settings (no triggers, no views, untrusted schema), plain tables only, row limits and
     a 5-second time limit. A copy also means Authelia's own database is never locked by us."""
     db = SEC.get("authelia_db", "")
     if not db:
@@ -1043,12 +1058,13 @@ def authelia_detail():
                             ("SQLITE_DBCONFIG_ENABLE_TRIGGER", False), ("SQLITE_DBCONFIG_ENABLE_VIEW", False)):
                 if hasattr(sqlite3, opt):
                     con.setconfig(getattr(sqlite3, opt), on)
-        con.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
+        con.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 256 * 1024)
         deadline = time.monotonic() + 5
         con.set_progress_handler(lambda: time.monotonic() > deadline, 10_000)   # a true return stops the query
         con.deserialize(bytes(data))
         con.execute("PRAGMA query_only = ON")
-        kinds = dict(con.execute("SELECT name, type FROM sqlite_schema WHERE name IN (?, ?, ?)", AUTHELIA_TABLES).fetchall())
+        con.execute("PRAGMA cell_size_check = ON")       # (SQLite's advice for files from someone else)
+        kinds = plain_tables(con, AUTHELIA_TABLES)
         if kinds.get("authentication_logs") != "table":
             raise CheckFailed("authentication_logs isn't a table in that database")
         rows = con.execute("SELECT substr(time, 1, 40), successful, banned, substr(username, 1, 100), substr(auth_type, 1, 8), "
