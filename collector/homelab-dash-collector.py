@@ -23,6 +23,7 @@ import glob
 import hashlib
 import heapq
 import ipaddress
+import itertools
 import json
 import os
 import pwd
@@ -451,6 +452,26 @@ def save_approved(snap):
     os.replace(tmp, CRON_APPROVED)
 
 
+GLOB_MAX = 20_000   # files one backup pattern may match: ~200,000 in a folder a container fills used up the 200M cap
+
+
+def capped_glob(pattern):
+    """At most GLOB_MAX matches of pattern, without holding more than that."""
+    return list(itertools.islice(glob.iglob(pattern), GLOB_MAX))
+
+
+def backup_job_files(patterns, strict=False):
+    """(path, mtime, size, named exactly) for each regular file the patterns match, reached as _walk allows (a folder
+    link in a folder a container can write mustn't list root-only files)."""
+    out = []
+    for g in patterns:
+        for f in capped_glob(g):
+            st = regular_stat(f, strict)
+            if st:
+                out.append((f, st.st_mtime, st.st_size, not re.search(r"[*?\[]", g)))
+    return out
+
+
 def card_lines(lines, n=20):
     """At most n lines for the card, redacted, and a last one saying how many more there are (approving approves all)."""
     return [redact(l) for l in lines[:n]] + ([f"… and {len(lines) - n} more lines"] if len(lines) > n else [])
@@ -722,7 +743,7 @@ def backups():
     max_age = float(BAK.get("max_age_hours", 26)) * 3600
     for a in arts:
         strict = "backup.artifacts" in APPROVED_NOW
-        files = [st for st in (regular_stat(f, strict) for f in glob.glob(a.get("glob", ""))) if st]
+        files = [st for st in (regular_stat(f, strict) for f in capped_glob(a.get("glob", ""))) if st]
         if not files:
             b["artifacts"].append({"label": a.get("label", "files"), "count": 0, "fresh": False})
             continue
@@ -1400,16 +1421,10 @@ def backup_detail():
             job["last_ok"] = None
         files, missing = [], []
         for g in j.get("files", []):
-            found = [f for f in glob.glob(g) if page_path("backup.jobs", f)]
+            found = backup_job_files([g], "backup.jobs" in APPROVED_NOW)   # (regular files only: no links, no FIFOs)
             if not found and not re.search(r"[*?\[]", g):  # a file named exactly (not a pattern) that isn't there
                 missing.append(clip(g, 200))
-            for f in found:
-                try:
-                    st = os.lstat(f)
-                except OSError:
-                    continue
-                if stat.S_ISREG(st.st_mode):              # no symlinks, no FIFOs
-                    files.append((f, st.st_mtime, st.st_size, not re.search(r"[*?\[]", g)))
+            files += found
         if files:
             files.sort(key=lambda x: x[1])
             job["files"] = {"count": len(files), "newest": int(files[-1][1]), "oldest": int(files[0][1]), "bytes": sum(x[2] for x in files),
@@ -2585,10 +2600,27 @@ def req_signature():
         return None
 
 
+def unsafe_out_dir(path):
+    """Why root mustn't use path as its state folder ("" = fine): it must be a real folder (not a link) that only root
+    owns and can write; otherwise its owner could swap req/ or a file for a link, and root would chown, chmod or write
+    the target."""
+    try:
+        st = os.lstat(path)
+    except OSError as e:
+        return f"can't check it ({e.strerror})"
+    if not stat.S_ISDIR(st.st_mode):
+        return "it isn't a folder (a link?)"
+    if st.st_uid != 0 or st.st_mode & 0o022:
+        return "someone other than root can write it"
+    return ""
+
+
 def main():
     """Every round (default 5 s): refresh whatever is due, then write hw.json.
     Slow or expensive checks run less often: GPU 10 s, containers 30 s, drives + security + backups 60 s, SMART 5 min."""
     os.makedirs(OUT_DIR, exist_ok=True)
+    if os.geteuid() == 0 and (why := unsafe_out_dir(OUT_DIR)):
+        sys.exit(f"out_dir {OUT_DIR}: {why}. Use a folder only root can write (the default /var/lib/homelab-dash).")
     os.chmod(OUT_DIR, 0o755)
     load_sizes()
     data = {"disks": [], "smart": {}, "gpu": None, "containers": None, "net": None}

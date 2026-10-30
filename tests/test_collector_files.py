@@ -237,6 +237,26 @@ class Robust(unittest.TestCase):
         self.col.SEC["authelia_db"] = path
         self.assertIsNotNone(self.col.authelia_detail(), "one odd row doesn't blank the whole view")
 
+    def test_backup_globs_are_capped_and_skip_links(self):
+        dumps = os.path.join(self.tmp, "dumps")
+        os.makedirs(dumps)
+        for i in range(30):
+            open(os.path.join(dumps, f"{i:03d}.gz"), "w").close()
+        secret = os.path.join(self.tmp, "root-only")
+        open(secret, "w").write("x" * 99)
+        os.symlink(self.tmp, os.path.join(dumps, "linked"))          # a folder link inside a writable folder
+        real = self.col.GLOB_MAX
+        self.col.GLOB_MAX = 10
+        try:
+            self.assertEqual(len(self.col.capped_glob(dumps + "/*.gz")), 10)
+            self.assertNotIn("root-only", " ".join(f for f, *_ in self.col.backup_job_files([dumps + "/linked/*"])))
+        finally:
+            self.col.GLOB_MAX = real
+
+    def test_a_state_folder_others_can_write_is_refused(self):
+        open_dir = tempfile.mkdtemp(dir=self.tmp)
+        os.chmod(open_dir, 0o777)
+        self.assertTrue(self.col.unsafe_out_dir(open_dir))
 
 
 if __name__ == "__main__":
