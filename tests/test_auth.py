@@ -1610,6 +1610,20 @@ class Audit(Base):
         finally:
             other.ACCOUNT.get = real
 
+    def test_cli_signout_for_a_lost_device(self):
+        # A lost laptop: the README says `auth.py signout`. It also has to forget that browser as trusted (its device
+        # cookie skips the account's waits) and end a sign-in it had half finished (audit 2026-10-30).
+        _, secret, _, dev = self.two_step()
+        pre = cookie_of(self.login(cookie=dev)[1], "fishbowl-pre")      # the thief, password typed, code due
+        self.assertTrue(pre)
+        out = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "app", "auth.py"), "signout"], capture_output=True,
+                             text=True, env={**os.environ, "DATA_DIR": self.auth.DATA_DIR})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(self.app.ACCOUNT.get().get("devices"), {}, "no browser is trusted any more")
+        st, _, _ = call(self.url + "/api/login/code", "POST", {"code": self.auth.totp_code(secret, int(time.time() // 30) + 1)},
+                        cookie=f"{pre}; {dev}")
+        self.assertEqual(st, 401, "the half-finished sign-in can't be completed")
+
 
 if __name__ == "__main__":
     unittest.main()

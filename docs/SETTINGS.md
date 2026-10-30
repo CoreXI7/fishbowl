@@ -191,5 +191,5 @@ open that file:
   used", not counted as wrong.
 - **`AUTH: proxy`** needs `TRUSTED_PROXY`; without it the dashboard keeps its own sign-in on (and says so).
 - **On the host** (`docker exec -it <container> python /app/auth.py ...`): `status`; `unlock` (after the lock);
-  `setup-code` (a new setup code, while there's no account); `signout` (signs every browser out, the account stays);
+  `setup-code` (a new setup code, while there's no account); `signout` (signs every browser out and forgets trusted browsers, the account stays);
   `reset` (deletes the account and every session, keeps your settings and keys, prints a new setup code).

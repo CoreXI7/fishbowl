@@ -730,7 +730,7 @@ def _cli(argv):
              "  status      the account's name, whether it's locked, authenticator on/off, signed-in browsers\n"
              "  unlock      allow sign-ins again after 100 wrong tries in a row\n"
              "  setup-code  a new one-time code for creating the account (only while there's no account)\n"
-             "  signout     sign every browser out (the account stays; trusted browsers stay trusted)\n"
+             "  signout     sign every browser out and forget trusted browsers (the account stays)\n"
              "  reset       delete the account and every session (settings and keys stay), and print a new setup code")
     if not argv or argv[0] not in ("status", "unlock", "setup-code", "signout", "reset"):
         print(usage)
@@ -773,9 +773,11 @@ def _cli(argv):
                 os.remove(SESSIONS_FILE)
             except FileNotFoundError:
                 pass
-        if d is not None:
-            acct.update(lambda x: Account.event(x, "every browser signed out on the host", "host"))
-        print("Every browser is signed out (no restart needed). If someone else may know the password, sign in and change it.")
+        if d is not None:   # a new epoch: half-finished sign-ins can't complete, and no browser stays trusted
+            acct.update(lambda x: (x.update(epoch=new_epoch(x["epoch"]), devices={}),
+                                   Account.event(x, "every browser signed out on the host", "host")))
+        print("Every browser is signed out and none is trusted any more (no restart needed). If someone else may know the "
+              "password, sign in and change it.")
         return 0
     if cmd == "unlock":
         if d is None:

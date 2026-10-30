@@ -157,7 +157,7 @@ shipper) can read the code too: create the account right after the first start.
 |---|---|
 | `status` | The account, the lock, two-step, recovery codes left, signed-in browsers |
 | `unlock` | Ends the lock after 100 wrong tries |
-| `signout` | Signs every browser out; the account stays (a lost phone or laptop) |
+| `signout` | Signs every browser out and forgets trusted browsers; the account stays (a lost phone or laptop) |
 | `reset` | Deletes the account and every session (settings and keys stay) and prints a new setup code |
 | `setup-code` | A new setup code, while there's no account yet |
 
