@@ -1072,10 +1072,15 @@ class RoundTwo(Base):
         self.assertEqual(st, 200, d)
 
     def test_every_visitor_looking_like_the_gateway_is_flagged(self):
-        c = self.create()
+        self.create()
         self.app.default_gateway = lambda: "127.0.0.1"
-        ids = {i["id"] for i in call(self.url + "/api/settings", cookie=c)[2]["setup"]}
-        self.assertIn("gateway", ids)
+        self.assertIn("gateway", {i["id"] for i in self.app.setup_checks(proxy_gaps=["gateway"])})
+        # every visitor looking alike: a plain-HTTP sign-in couldn't be tied to the browser (audit round 2), so the
+        # sign-in page says why it's refused
+        state = call(self.url + "/api/auth/state")[2]
+        self.assertFalse(state["http_ok"])
+        self.assertIn("gateway", state["gap_hint"])
+        self.assertEqual(self.login()[0], 403)
 
 
 class RoundThree(Base):
@@ -1293,10 +1298,9 @@ class RoundFour(Base):
 
     def test_a_trusted_device_counts_only_on_its_kind_of_connection(self):
         d = {"epoch": 5, "devices": {}}
-        tok = self.auth.new_device(d, tls=False, ip="192.168.1.9")
-        self.assertIsNotNone(self.auth.device_of(d, tok, False, "192.168.1.9"))
+        tok = self.auth.new_device(d, tls=False)
+        self.assertIsNotNone(self.auth.device_of(d, tok, False))
         self.assertIsNone(self.auth.device_of(d, tok, True), "seen over plain HTTP: no good over HTTPS")
-        self.assertIsNone(self.auth.device_of(d, tok, False, "192.168.1.66"), "nor from another address (audit 2026-10-30)")
 
     def test_own_wrong_code_then_start_over_isnt_an_alarm(self):
         c, secret, recovery, dev = self.two_step()
@@ -1516,21 +1520,55 @@ class AuditPlainHttp(Base):
         st, h, _ = call(self.url + "/api/login", "POST", {"user": "admin", "password": PW}, headers=v6)
         self.assertEqual(st, 200)
         c6 = cookie_of(h)
-        self.assertEqual(call(self.url + "/api/settings", cookie=c6, headers={**v6, "X-Real-IP": "fd00:1:2:3:bbbb::7"})[0], 200,
-                         "IPv6 changes its address within the /64 (privacy addresses): still the same browser")
-        self.assertEqual(call(self.url + "/api/settings", cookie=c6, headers={**v6, "X-Real-IP": "fd00:1:2:4::7"})[0], 401)
+        self.assertEqual(call(self.url + "/api/settings", cookie=c6, headers=v6)[0], 200)
+        self.assertEqual(call(self.url + "/api/settings", cookie=c6, headers={**v6, "X-Real-IP": "fd00:1:2:3:bbbb::7"})[0], 401,
+                         "the same /64 is a whole network, the host itself included (audit round 2): exact address only")
 
-    def test_a_plain_http_trusted_device_counts_only_from_the_address_it_was_made_on(self):
+    def test_a_plain_http_trusted_device_survives_a_new_address_but_its_tries_there_are_no_typos(self):
+        # A trusted browser stays trusted on another address (a laptop changing networks must not be locked out by
+        # someone guessing: audit round 2); but wrong tries made with it from another address aren't forgiven as the
+        # owner's typos at the owner's next sign-in (a copied cookie used elsewhere isn't the owner typing).
         lan = {"X-Real-IP": "192.168.1.9", "X-Forwarded-Proto": "http"}
         st, h, _ = call(self.url + "/api/setup-account", "POST", {"code": self.setup_code(), "user": "admin", "password": PW},
                         headers=lan)
         device = cookie_of(h, "fishbowl-device")
-        self.assertTrue(device)
         self.app.ACCOUNT.update(lambda d: d.update(failures=150, last_fail=int(time.time())))   # someone hammered it
-        login = lambda ip: call(self.url + "/api/login", "POST", {"user": "admin", "password": PW}, cookie=device,
-                                headers={**lan, "X-Real-IP": ip})[0]
-        self.assertEqual(login("192.168.1.66"), 423, "the device token, replayed from another address: just a browser")
-        self.assertEqual(login("192.168.1.9"), 200, "the owner's browser, where it signed in: still trusted")
+        login = lambda ip, pw=PW: call(self.url + "/api/login", "POST", {"user": "admin", "password": pw}, cookie=device,
+                                       headers={**lan, "X-Real-IP": ip})
+        self.assertEqual(login("192.168.1.66")[0], 200, "the owner's browser on a new address is still trusted")
+        login("192.168.1.66", "wrong-password-from-the-copy")                 # the copied cookie, elsewhere
+        self.app.ACCOUNT.update(lambda d: [v.update(last=0) for v in d["devices"].values()])   # (skip the device's wait)
+        st, _, d = login("192.168.1.9")
+        self.assertEqual(st, 200, d)
+        self.assertEqual(d.get("notice", {}).get("password"), 1, "a wrong try from another address isn't a typo")
+
+    def test_a_half_finished_sign_in_counts_only_where_it_started(self):
+        # The code step's cookie goes to every port too: another app on the host could finish it, or use up its tries
+        # and the owner's trusted browser's (audit round 2)
+        lan = {"X-Real-IP": "192.168.1.9", "X-Forwarded-Proto": "http"}
+        st, h, _ = call(self.url + "/api/setup-account", "POST", {"code": self.setup_code(), "user": "admin", "password": PW},
+                        headers=lan)
+        c = cookie_of(h)
+        st, _, d = call(self.url + "/api/account/totp/start", "POST", {"password": PW}, cookie=c, headers=lan)
+        st, _, _ = call(self.url + "/api/account/totp/confirm", "POST",
+                        {"code": self.auth.totp_code(d["secret"], int(time.time() // 30))}, cookie=c, headers=lan)
+        secret = d["secret"]
+        pre = cookie_of(call(self.url + "/api/login", "POST", {"user": "admin", "password": PW}, headers=lan)[1], "fishbowl-pre")
+        for _ in range(6):
+            st, _, _ = call(self.url + "/api/login/code", "POST", {"code": "000000"}, cookie=pre,
+                            headers={**lan, "X-Real-IP": "192.168.1.66"})
+            self.assertEqual(st, 401)
+        st, _, d = call(self.url + "/api/login/code", "POST", {"code": self.auth.totp_code(secret, int(time.time() // 30) + 1)},
+                        cookie=pre, headers=lan)
+        self.assertEqual(st, 200, "the owner's step wasn't used up from elsewhere")
+
+    def test_signing_out_from_a_new_address_ends_the_session(self):
+        lan = {"X-Real-IP": "192.168.1.9", "X-Forwarded-Proto": "http"}
+        st, h, _ = call(self.url + "/api/setup-account", "POST", {"code": self.setup_code(), "user": "admin", "password": PW},
+                        headers=lan)
+        c = cookie_of(h)
+        call(self.url + "/api/logout", "POST", {}, cookie=c, headers={**lan, "X-Real-IP": "192.168.1.66"})
+        self.assertEqual(call(self.url + "/api/settings", cookie=c, headers=lan)[0], 401, "ended on the server, wherever from")
 
 
 class Audit(Base):

@@ -186,10 +186,16 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   (7 idle) when kept, else 12 h (1 h idle). This is longer than NIST's AAL2 (24 h, 1 h idle) on purpose: wall screens
   stay signed in; untick "keep me signed in" for the AAL2 limits on a browser. An open dashboard polls, so it counts as
   activity. At most 50 sessions; a new one pushes out the one seen longest ago. A session counts only on the kind of
-  connection it was made on: one made over plain HTTP (exposed there) works only over plain HTTP, from the address it
-  was made from (IPv6: the same /64), never from another address or over HTTPS; trusted-device tokens are bound the
-  same way. (Browsers send cookies to every port of a host, so over plain HTTP every other web app on the dashboard's
-  address receives them: a hostile one on your own network must not be able to replay them.) Sign-out ends it on the
+  connection it was made on: one made over plain HTTP (exposed there) works only over plain HTTP, from the very address
+  it was made from (IPv6 too: a /64 is a whole network, the host included), never from another address or over HTTPS;
+  half-finished sign-ins are bound the same way. Trusted-device tokens are bound to the kind of connection only (one
+  bound to an address made a laptop that changed networks "new", so someone guessing could keep its owner out); a
+  copied one gets only that device's own 10 tries, and its wrong tries from another address are never forgiven as the
+  owner's typos. When every visitor arrives from the container's gateway (Docker's userland proxy, rootless
+  Docker/Podman) nothing can be bound to a browser, so plain-HTTP sign-in is refused. (Browsers send cookies to every
+  port of a host, so over plain HTTP every other web app on the dashboard's address receives them: a hostile one on your
+  own network must not be able to replay them. Over HTTPS `__Host-` cookies go to every HTTPS port of the same host
+  name too: the dashboard needs a host name of its own.) Sign-out ends the session whatever address it comes from. Sign-out ends it on the
   server and sends `Clear-Site-Data: "cache"` (not `"cookies"`, which would also wipe your SSO's cookies on the same
   site); pages behind the sign-in are `no-store`, and a page brought back by Back reloads, so the back/forward cache
   never shows them (or recovery codes) after signing out. Cookies are `Priority=High` (in Chrome a cookie flood from a

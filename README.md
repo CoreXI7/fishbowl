@@ -144,7 +144,8 @@ shipper) can read the code too: create the account right after the first start.
   until you change the password or press "That was me".
 - **Plain HTTP** (no HTTPS): passwords are only accepted from your own network, and that sign-in only works from the
   same address. Your browser also sends the dashboard's cookies to every other web app on that address (any port),
-  so over plain HTTP only run apps you trust next to it, or put it behind HTTPS.
+  so over plain HTTP only run apps you trust next to it, or put it behind HTTPS on a host name of its own (over HTTPS
+  the cookies still go to other HTTPS ports of the same name).
 - **Your reverse proxy** must set `X-Real-IP` and `X-Forwarded-Proto` itself, never pass on what the visitor sent.
   Nginx Proxy Manager, Caddy and HAProxy need a line or two for that (NPM: `set_real_ip_from 127.0.0.2/32;` under
   Advanced, and Force SSL); Traefik is fine as it is: see

@@ -447,42 +447,41 @@ DEVICES_KEPT, DEVICE_FAILS, DEVICE_FOR = 10, 10, 365 * 86400
 
 
 def same_place(made, ip):
-    """Is ip the address a plain-HTTP token was made from? Browsers send cookies to every port of a host, so over
-    plain HTTP every other web app on that address gets ours; a token made there only counts from where it was made.
-    IPv4: the same address. IPv6: the same /64 (a computer's privacy addresses change within it)."""
+    """Is ip the address a plain-HTTP session was made from? Browsers send cookies to every port of a host, so over
+    plain HTTP every other web app on that address gets ours; a session made there only counts from that very address
+    (IPv6 too: a /64 is a whole network, the host's own address included; a browser whose privacy address changed signs
+    in again)."""
     try:
         a, b = ipaddress.ip_address(made or ""), ipaddress.ip_address(ip or "")
     except ValueError:
         return False
-    a, b = getattr(a, "ipv4_mapped", None) or a, getattr(b, "ipv4_mapped", None) or b
-    if a.version != b.version:
-        return False
-    return a == b if a.version == 4 else ipaddress.ip_network((a, 64), strict=False) == ipaddress.ip_network((b, 64), strict=False)
+    return (getattr(a, "ipv4_mapped", None) or a) == (getattr(b, "ipv4_mapped", None) or b)
 
 
-def new_device(d, tls=False, ip=None):
-    """Add a device token (for this epoch, and this kind of connection: http or https; over http, for this address) to
-    the account dict d; returns the token (for the cookie)."""
+def new_device(d, tls=False):
+    """Add a device token (for this epoch, and this kind of connection: http or https) to the account dict d; returns
+    the token (for the cookie). Not bound to an address: a laptop that changes networks must stay trusted, or someone
+    guessing could keep its owner out (a copied token gets only the device's own 10 tries, and its wrong tries made
+    from another address are never forgiven as the owner's typos)."""
     token = secrets.token_urlsafe(32)
     devs = {k: v for k, v in (d.get("devices") or {}).items()
             if isinstance(v, dict) and time.time() - v.get("t", 0) < DEVICE_FOR and v.get("epoch") == d["epoch"]}
     while len(devs) >= DEVICES_KEPT:
         del devs[min(devs, key=lambda k: devs[k].get("t", 0))]
-    devs[hashlib.sha256(token.encode()).hexdigest()] = {"t": int(time.time()), "fails": 0, "epoch": d["epoch"], "tls": bool(tls),
-                                                         **({} if tls else {"from": str(ip or "")[:64]})}
+    devs[hashlib.sha256(token.encode()).hexdigest()] = {"t": int(time.time()), "fails": 0, "epoch": d["epoch"], "tls": bool(tls)}
     d["devices"] = devs
     return token
 
 
-def device_of(d, token, tls=False, ip=None):
+def device_of(d, token, tls=False):
     """The device-token hash if this token belongs to the account (this epoch, the same kind of connection it was
-    made on and, over plain HTTP, the same address; not worn out by wrong tries)."""
+    made on, not worn out by wrong tries)."""
     if not isinstance(token, str) or not TOKEN.fullmatch(token):
         return None
     h = hashlib.sha256(token.encode()).hexdigest()
     v = (d.get("devices") or {}).get(h)
     if isinstance(v, dict) and time.time() - v.get("t", 0) < DEVICE_FOR and v.get("fails", 0) < DEVICE_FAILS \
-            and v.get("epoch") == d["epoch"] and bool(v.get("tls")) == tls and (tls or same_place(v.get("from"), ip)):
+            and v.get("epoch") == d["epoch"] and bool(v.get("tls")) == tls:
         return h
     return None
 
@@ -597,9 +596,17 @@ class Sessions:
             return False
 
     def end(self, token):
-        with self.lock, file_lock():
-            if self._load(fresh=True).pop(self._key(token or ""), None) is not None:
-                self._save()
+        """End this session: True if there was one. A value that matches none costs a hash and a lookup (sign-out tries
+        every cookie value the browser sent)."""
+        key = self._key(token or "")
+        with self.lock:
+            if key not in self._load():
+                return False
+            with file_lock():
+                if self._load(fresh=True).pop(key, None) is not None:
+                    self._save()
+                    return True
+        return False
 
     def end_id(self, sid, own=None):
         """End the session with this id: True, False if there's none, None when the asking browser's own session

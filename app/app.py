@@ -108,6 +108,10 @@ def gap_hint(gaps):
                          "share one count of wrong tries, and signing in over plain HTTP is refused.",
             "X-Forwarded-Proto": "Your reverse proxy doesn't send X-Forwarded-Proto, so the dashboard can't tell whether "
                                  "you use https, and signing in from outside your network is refused."}
+    if "gateway" in gaps:
+        return ("Every request reaches the dashboard from Docker's gateway (its userland proxy, or rootless Docker or "
+                "Podman), so it can't tell visitors apart, and signing in over plain HTTP is refused. Sign in through "
+                "your reverse proxy's https address.")
     heads = [g for g in gaps if g in PROXY_HEADERS]
     if heads:
         return " ".join(what[g] for g in heads) + " See \"Signing in\" in docs/SETTINGS.md for the line to add."
@@ -1213,7 +1217,7 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             add("gateway", "warn", "Every visitor looks like the same address",
                 "This request came from the container's own gateway, as every request does with Docker's userland proxy or "
                 "rootless Docker/Podman. Then the dashboard can't tell visitors apart: they share one count of wrong tries, "
-                "and all of them count as being on your own network (so passwords are accepted over plain HTTP).",
+                "and signing in over plain HTTP is refused (anyone, the host itself included, would look like you).",
                 [("Put your reverse proxy in front (same Docker network) and set TRUSTED_PROXY to its container name:",
                   "TRUSTED_PROXY: <your proxy's container name>")], compose=True)
         if https is False:
@@ -1793,8 +1797,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def device(self, acct):
         """This browser's trusted-device token hash (it signed in here before), or None."""
-        tls, ip = self.https(), self.real_ip()
-        return next((h for h in (auth.device_of(acct, t, tls, ip) for t in self.cookie_values("fishbowl-device")) if h), None) if acct else None
+        tls = self.https()
+        return next((h for h in (auth.device_of(acct, t, tls) for t in self.cookie_values("fishbowl-device")) if h), None) if acct else None
 
     def gate(self, p, post=False, q=""):
         """AUTH=login: everything except the sign-in page (and the open-source CSS/JS/fonts it uses) needs a session.
@@ -1835,6 +1839,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
         a = getattr(a, "ipv4_mapped", None) or a
+        if not self.via_proxy() and str(a) == default_gateway():   # Docker's userland proxy: every visitor looks alike
+            return False
         return any(a in n for n in OWN_NETWORKS)
 
     def auth_state(self):
@@ -1855,10 +1861,12 @@ class Handler(BaseHTTPRequestHandler):
         with _pending_lock:
             for k in [k for k, v in _pending.items() if now - v["t"] > PENDING_FOR]:
                 del _pending[k]
+            tls = self.https()
             for tok in self.cookie_values("fishbowl-pre"):
                 key = hashlib.sha256(tok.encode()).hexdigest()
-                if key in _pending:
-                    return _pending.pop(key) if consume else _pending[key]
+                p = _pending.get(key)   # (only on its kind of connection and, over plain HTTP, from where it started)
+                if p and p.get("tls") == tls and (tls or auth.same_place(p.get("from"), self.client_ip())):
+                    return _pending.pop(key) if consume else p
         return None
 
     def begin_try(self, ip, dev=None, account=True, session=None, waits=True):
@@ -1949,17 +1957,18 @@ class Handler(BaseHTTPRequestHandler):
             with _pending_lock:
                 if len(_recent_fails) > 1000:
                     _recent_fails.clear()
-                _recent_fails.setdefault(dev, []).append((time.time(), count))
+                _recent_fails.setdefault(dev, []).append((time.time(), count, ip))
         print(log_safe(f"sign-in: {what} from {ip}"), flush=True)
 
     @staticmethod
-    def own_typos(dev, wrong_codes=0):
+    def own_typos(dev, ip, wrong_codes=0):
         """What the sign-in that follows forgives: this trusted browser's own wrong passwords and codes of the last 10
-        minutes, and the wrong codes of this very sign-in (its half-finished step). Every other record is dropped:
-        after a sign-in, older ones can only be stale."""
+        minutes typed from this same address (a copied device cookie used elsewhere isn't the owner typing), and the
+        wrong codes of this very sign-in (its half-finished step). Every other record is dropped: after a sign-in,
+        older ones can only be stale."""
         now = time.time()
         with _pending_lock:
-            mine = [k for t, k in _recent_fails.get(dev, []) if now - t < 600] if dev else []
+            mine = [k for t, k, at in _recent_fails.get(dev, []) if now - t < 600 and at == ip] if dev else []
             _recent_fails.clear()
         return {"password": mine.count("password"), "code": max(mine.count("code"), wrong_codes)}
 
@@ -1982,7 +1991,7 @@ class Handler(BaseHTTPRequestHandler):
             change(x)
             x["epoch"] = auth.new_epoch(epoch)
             x["devices"] = {}
-            new.update(dev=auth.new_device(x, self.https(), ip), epoch=x["epoch"])
+            new.update(dev=auth.new_device(x, self.https()), epoch=x["epoch"])
             ACCOUNT.event(x, why, ip, ua)
         ACCOUNT.update(apply)
         if not new:
@@ -2002,13 +2011,13 @@ class Handler(BaseHTTPRequestHandler):
         ua = self.headers.get("User-Agent", "")
         token, max_age = SESSIONS.create(keep, ip, ua, epoch, self.https())
         mine = self.device(ACCOUNT.get())   # (forgive only this browser's own typos: a step planted from elsewhere isn't)
-        out, typos = {}, self.own_typos(dev if dev and dev == mine else None, wrong_codes if dev and dev == mine else 0)
+        out, typos = {}, self.own_typos(dev if dev and dev == mine else None, ip, wrong_codes if dev and dev == mine else 0)
 
         def apply(x):
             if x["epoch"] != epoch:   # the password or two-step changed meanwhile: that session is already worthless
                 return
             if not dev:
-                out["dev"] = auth.new_device(x, self.https(), ip)
+                out["dev"] = auth.new_device(x, self.https())
             ACCOUNT.event(x, what, ip, ua)
             since = {k: v - typos.get(k, 0) for k, v in x.get("since", {}).items()
                      if k in ("password", "code", "settings") and v > typos.get(k, 0)}
@@ -2082,9 +2091,8 @@ class Handler(BaseHTTPRequestHandler):
         keep = d_in.get("keep") is True
 
         if path == "/api/logout":
-            tok = self.session_token()
-            if tok:
-                SESSIONS.end(tok)
+            ended = [t for t in self.cookie_values("fishbowl") if SESSIONS.end(t)]   # (from any address: it's this browser's)
+            if ended:
                 print(log_safe(f"sign-in: signed out from {ip}"), flush=True)
             self.pending(consume=True)   # a half-finished sign-in in this browser ends too ("Start over")
             # (not Clear-Site-Data "cookies": that wipes every cookie of the whole site, your SSO's included)
@@ -2159,7 +2167,7 @@ class Handler(BaseHTTPRequestHandler):
                     if len(_pending) > 200:
                         _pending.clear()
                     _pending[hashlib.sha256(pre.encode()).hexdigest()] = {"t": time.time(), "keep": keep, "tries": 0, "dev": dev,
-                                                                          "epoch": acct["epoch"]}
+                                                                          "epoch": acct["epoch"], "tls": self.https(), "from": ip}
                 return self.send(200, {"code_due": True}, cookies=(self.make_cookie("fishbowl-pre", pre, PENDING_FOR),))
             return self.signed_in_now(ip, keep, "signed in", dev, acct["epoch"])
 
