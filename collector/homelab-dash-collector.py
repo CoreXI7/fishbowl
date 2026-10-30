@@ -2065,6 +2065,7 @@ def take_request(state, det, cfg, force=False):
     state["last"] = h
     try:
         req = json.loads(raw.decode("utf-8"))
+        json.dumps(req, ensure_ascii=False).encode("utf-8")   # (a lone surrogate can't be saved: it wedged this channel)
     except (ValueError, UnicodeDecodeError, RecursionError):
         req = None
     changes = req.get("changes") if isinstance(req, dict) and req.get("v") == 3 else None

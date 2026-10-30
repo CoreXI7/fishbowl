@@ -73,6 +73,18 @@ class PageSettings(unittest.TestCase):
         self.assertEqual(st["pending_values"]["backup.log"], "/etc/shadow")
         self.assertFalse(os.path.exists(col.PAGE_TOML))
 
+    def test_text_that_cant_be_saved_is_refused_not_stuck(self):
+        # (a lone surrogate in a key made every round, and every restart, fail at saving the state; audit round 3)
+        col = self.col
+        with open(col.PAGE_REQ, "w") as f:
+            f.write('{"v": 3, "id": "a1", "changes": {"x\\udc80": {"from": "", "to": 1}}}')
+        st = col.page_round(DET)
+        self.assertEqual(st["error"], "")
+        self.assertEqual(st["rejected"][0][0], "request")
+        send(col, {"interval": ch(5, 7)})
+        self.assertEqual(col.page_round(DET)["rejected"], [])
+        self.assertEqual(col.CFG["interval"], 7, "the next request still works")
+
     def test_refused_values_keep_what_was_there(self):
         col = self.col
         send(col, {"interval": ch(5, 7)})
