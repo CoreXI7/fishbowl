@@ -128,6 +128,7 @@ class Setup(unittest.TestCase):
         app.NPM_DIR = os.path.join(app.TEST_TMP, "not-there")
         st = {i["id"]: i for i in app.setup_checks()}
         self.assertEqual(st["services"]["state"], "problem")
+        self.assertTrue(st["services"]["alt"].startswith("Or, without NPM"), "an alternative, not step 2")
         self.assertIn(":" + app.NPM_DIR + ":ro", " ".join(s["code"] for s in st["services"]["steps"]))
 
     def test_all_set(self):
@@ -178,6 +179,12 @@ class Setup(unittest.TestCase):
         item = {i["id"]: i for i in app.setup_checks()}["services"]
         self.assertEqual(item["detail"], "2 from Nginx Proxy Manager (1 hidden), 1 added by hand.", "counted once, as hand-added")
 
+    def test_js_built_in_names_are_refused(self):
+        app = load_app()
+        for bad in ("__proto__", "constructor", "prototype"):
+            with self.assertRaises(app.cfgstore.Invalid, msg=bad):
+                app.cfgstore.validate({"groups": [{"name": "g", "hosts": [bad]}]}, {})
+
     def test_npm_names_with_underscores_and_wildcards_can_be_grouped(self):
         app = load_app()
         v = app.cfgstore.validate({"groups": [{"name": "g", "hosts": ["my_app.example.com", "*.example.com"]}],
@@ -213,6 +220,20 @@ class Setup(unittest.TestCase):
         self.assertFalse(L('server { auth_basic off; }'))
         self.assertFalse(L("server { location /admin { auth_request /authelia; } location / { } }"))
         self.assertFalse(L("server { include /snippets/authelia-location.conf; location / { } }"))
+        self.assertFalse(L("server { location = / { auth_request /authelia; } }"), "= / covers only the bare /")
+        self.assertFalse(L('server { auth_basic "off"; auth_request \'off\'; }'), "quoted off is off")
+        self.assertFalse(L("server { auth_request /authelia; location / { auth_request off; } }"), "location / switches it off")
+        self.assertFalse(L("server { location / { limit_except GET { auth_basic x; } } }"), "only for some methods")
+        self.assertFalse(L('server { location /admin { add_header X "}"; auth_request /authelia; } location / { } }'),
+                         "a brace inside quotes doesn't end the block")
+        self.assertTrue(L('server { add_header X "a#b"; auth_request /authelia; }'), "a # inside quotes isn't a comment")
+
+    def test_sign_in_parser_is_linear(self):
+        app = load_app()
+        t = time.monotonic()
+        app.has_login("server { }\n" + "x" * 200_000)
+        app.has_login("}\n" + "# c\n" * 50_000)
+        self.assertLess(time.monotonic() - t, 1.0, "a big unterminated tail must not take quadratic time")
 
     def test_integration_that_stopped_answering(self):
         app = load_app(QBIT_URL="http://127.0.0.1:9", QBIT_USER="u", QBIT_PASS="p")
@@ -224,6 +245,9 @@ class Setup(unittest.TestCase):
         self.assertIn("Torrents", st["integrations"]["detail"])
         app._answered["/api/qbit"] = (False, time.time() - 3600)
         self.assertEqual({i["id"]: i for i in app.setup_checks()}["integrations"]["state"], "ok", "an old failure is forgotten")
+        app._answered["/api/qbit"] = (False, time.time())
+        app.apply_settings()
+        self.assertEqual({i["id"]: i for i in app.setup_checks()}["integrations"]["state"], "ok", "a save starts fresh")
 
     def test_test_button_explains(self):
         """Test says what a failed connection usually means instead of a Python error."""

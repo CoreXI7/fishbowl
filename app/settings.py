@@ -192,7 +192,7 @@ def _obj(v, what):
     return v
 
 
-HOST = r"(\*\.)?[A-Za-z0-9_.-]{1,253}"   # NPM allows underscores and a leading "*." (wildcard hosts)
+HOST = r"(?!(__proto__|constructor|prototype)$)(\*\.)?[A-Za-z0-9_.-]{1,253}"   # NPM allows "_" and "*." (wildcards); never a JS built-in name
 URL = r"https?://[^\s<>\"']{1,500}"
 ICON = r"[a-z0-9][a-z0-9-]{0,80}|/(static|uploads)/[\w.-]{1,120}"
 

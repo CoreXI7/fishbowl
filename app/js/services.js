@@ -14,7 +14,7 @@ function iconFail(img) {
 }
 
 function serviceTile(s) {
-  const app = CFG.apps[s.name] || {}, label = app.label || s.name.split(".")[0], icon = app.icon || "";
+  const app = (Object.hasOwn(CFG.apps, s.name) && CFG.apps[s.name]) || {}, label = app.label || s.name.split(".")[0], icon = app.icon || "";
   const letter = esc(label[0].toUpperCase());
   const fav = CFG.demo ? "" : "/api/icon?host=" + encodeURIComponent(s.name);
   const src = icon ? (/^(\/|https?:|data:)/.test(icon) ? icon : CDN + icon + ".png") : fav;
@@ -36,7 +36,7 @@ async function loadServices() {
     const down = d.services.filter(s => !s.up);
     // configured groups first, then anything not in a group under "New / other"
     const byName = Object.fromEntries(d.services.map(s => [s.name, s])), used = new Set();
-    const groups = CFG.groups.map(g => [g.name, (g.hosts || []).filter(h => byName[h]).map(h => (used.add(h), byName[h]))]);
+    const groups = CFG.groups.map(g => [g.name, (g.hosts || []).filter(h => Object.hasOwn(byName, h)).map(h => (used.add(h), byName[h]))]);
     const other = d.services.filter(s => !used.has(s.name));
     if (other.length) groups.push([CFG.groups.length ? "✨ New / other" : "All services", other]);
     setHTML("svc", groups.filter(([, list]) => list.length).map(([name, list]) => {

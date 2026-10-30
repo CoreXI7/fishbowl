@@ -66,6 +66,7 @@ def apply_settings():
         return {"url": url, "secrets": secrets, "on": bool(url and all(secrets)) or DEMO}
 
     QBIT, SEERR, TAUTULLI = integration("qbittorrent"), integration("seerr"), integration("tautulli")
+    _answered.clear()                                    # new addresses/keys: the last tries don't count any more
     HOME_IP = os.environ.get("HOME_IP") or ED["qbittorrent"]["home_ip"]   # real WAN IP; qbit showing it = VPN leak
     SECRETS = sorted({v for i in (QBIT, SEERR, TAUTULLI) for v in i["secrets"] if len(v) >= 4}, key=len, reverse=True)
     qb = Qbit()                                          # fresh login with the (possibly new) credentials
@@ -150,23 +151,39 @@ def parse_npm_conf(path):
 
 
 def has_login(txt):
-    """Does this proxy host put a sign-in in front of / ? Comments don't count, "off" doesn't count, and a directive
-    counts only at server level or inside `location /` (not in location /admin). An include counts only if it's an
-    auth-request snippet (Authelia's NPM guide: authelia-authrequest.conf; its authelia-location.conf only defines the
-    endpoint). An NPM access list counts when it asks for a user and password (auth_basic)."""
-    txt = re.sub(r"#[^\n]*", "", txt)
-    stack = []
-    for m in re.finditer(r"([^{};]*)([{};])", txt):
-        head, sep = " ".join(m.group(1).split()), m.group(2)
+    """Does this proxy host put a sign-in in front of / ? Comments and "off" don't count (quoted or not), and a
+    directive counts at server level or in `location /` / `location ^~ /` (not in location /admin, nor `location = /`,
+    which only covers the bare /). A `location /` that switches it off wins over server level. An include counts only
+    if it's an auth-request snippet (Authelia's NPM guide: authelia-authrequest.conf; authelia-location.conf only defines
+    the endpoint); an NPM access list counts when it asks for a user and password (auth_basic). Linear in the file."""
+    # quoted text becomes a neutral word (so a brace or # inside quotes means nothing; "off" stays off), comments go
+    txt = re.sub(r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|#[^\n]*""",
+                 lambda m: ("off" if m.group(1)[1:-1].strip() == "off" else "quoted") if m.group(1) else "", txt)
+    parts = re.split(r"([{};])", txt)
+    stack, server, root, root_off = [], False, False, False
+    for head, sep in zip(parts[0::2], parts[1::2]):
+        head = " ".join(head.split())
         if sep == "{":
             stack.append(head)
-        elif sep == "}":
+            continue
+        if sep == "}":
             stack = stack[:-1]
-        elif not any(b.startswith("location") and not re.fullmatch(r"location (=\s*|\^~\s*)?/", b) for b in stack):
-            if (re.fullmatch(r"auth_request (?!off$)\S+", head) or re.fullmatch(r"auth_basic (?!off$).+", head)
-                    or re.fullmatch(r"include \S*auth[-_]?request\S*", head)):
-                return True
-    return False
+            continue
+        locs = [b for b in stack if b.startswith("location")]
+        if any(not re.fullmatch(r"location (\^~\s*)?/", b) for b in locs):
+            continue                                           # another path (or limit_except/if: not for every request)
+        if any(not b.startswith(("location", "server")) for b in stack):
+            continue
+        word, _, arg = head.partition(" ")
+        arg = arg.strip().strip("\"'")
+        if word in ("auth_request", "auth_basic") and arg == "off":
+            root_off = root_off or bool(locs)
+            continue
+        on = ((word == "auth_request" and arg) or (word == "auth_basic" and arg)
+              or (word == "include" and re.search(r"auth[-_]?request", arg)))
+        if on:
+            root, server = (True, server) if locs else (root, True)
+    return root or (server and not root_off)
 
 
 _npm = {"sig": None, "hosts": [], "conf": [], "n_npm": 0}   # last host list (+ every parsed .conf, hidden ones too) + the folder state
@@ -778,8 +795,8 @@ def setup_checks(host=None):
     host = the Host the page was opened with (to find the dashboard's own proxy host and its sign-in)."""
     out = []
 
-    def add(id, state, title, detail, steps=(), link="", doc="", optional=False, why="", compose=False):
-        out.append({"id": id, "state": state, "title": title, "detail": detail, "why": why, "compose": compose,
+    def add(id, state, title, detail, steps=(), link="", doc="", optional=False, why="", compose=False, alt=""):
+        out.append({"id": id, "state": state, "title": title, "detail": detail, "why": why, "compose": compose, "alt": alt,
                     "steps": [{"text": t, "code": c} for t, c in steps], "link": link, "doc": doc, "optional": optional})
 
     if DEMO:
@@ -827,7 +844,7 @@ def setup_checks(host=None):
     elif TRUSTED_PROXY and name:
         add("sso", "todo", "Couldn't check the sign-in",
             f"{name[:100]} isn't one of Nginx Proxy Manager's proxy hosts here, so this page can't see what's in front of it. "
-            "The dashboard has no login of its own: make sure your sign-in (SSO) is in front of it.", optional=True)
+            "The dashboard has no login of its own: make sure your sign-in (SSO) is in front of it.")
 
     if ALLOWED_ORIGINS:
         add("origin", "ok", "Changes only come from your dashboard's address", ", ".join(sorted(ALLOWED_ORIGINS)))
@@ -868,22 +885,22 @@ def setup_checks(host=None):
             "on the left of the /npm line in docker-compose.yml is wrong (Docker quietly creates an empty folder there).",
             [("On the host, check that NPM's folder holds its 1.conf, 2.conf… (your path, as on the left of the /npm line):",
               "ls /path/to/npm/data/nginx/proxy_host/"),
-             ("Fix the path in docker-compose.yml.", "")]
-            + ([("No NPM? Delete the /npm line (Docker made that empty folder), and add your services by hand in "
-                 "Services → Services not in NPM.", "")] if by_hand else []), link="#services", compose=True)
+             ("Fix the path in docker-compose.yml.", "")],
+            alt="Or, without NPM: delete the /npm line (Docker made that empty folder), and add your services by hand in "
+                "Services → Services not in NPM." if by_hand else "", link="#services", compose=True)
     else:
         add("services", "problem", "No services yet",
             f"Services are read from Nginx Proxy Manager's proxy_host folder, which isn't mounted at {NPM_DIR}.",
             [("Using Nginx Proxy Manager? In docker-compose.yml, set the left side of the /npm line to the proxy_host folder "
-              "inside NPM's data folder (the one that holds 1.conf, 2.conf…):", f"- /path/to/npm/data/nginx/proxy_host:{NPM_DIR}:ro")]
-            + ([("No NPM? Delete that line, and add your services by hand in Services → Services not in NPM.", "")] if by_hand else []),
-            link="#services", compose=True)
+              "inside NPM's data folder (the one that holds 1.conf, 2.conf…):", f"- /path/to/npm/data/nginx/proxy_host:{NPM_DIR}:ro")],
+            alt="Or, without NPM: delete that line, and add your services by hand in Services → Services not in NPM."
+                if by_hand else "", link="#services", compose=True)
 
     hw = read_hw()
     install = [("On the host, in the folder you cloned (the one with docker-compose.yml). It needs Python 3.11+ and systemd, "
                 "and it runs as root, so this one step needs sudo:", "sudo bash collector/install.sh"),
-               ("Keep these two lines under volumes in docker-compose.yml (the example has them; if you add them, run "
-                "docker compose up -d):", "- /var/lib/homelab-dash:/hw:ro\n- /var/lib/homelab-dash/req:/req"),
+               ("Keep these two lines under volumes in docker-compose.yml (the example has them):",
+                "- /var/lib/homelab-dash:/hw:ro\n- /var/lib/homelab-dash/req:/req"),
                ("Then choose what it checks (drives, fail2ban, Authelia, backups) in its config file:",
                 "sudo nano /etc/homelab-dash/collector.toml"),
                ("And restart it:", "sudo systemctl restart homelab-dash-collector")]
