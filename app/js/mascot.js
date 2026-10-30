@@ -17,7 +17,9 @@ function mascotSay() {
 }
 function bubbles() {
   const box = $("bubbles");
-  if (!box || reducedMotion()) return;
+  if (!box) return;
+  box.textContent = "";   // redrawn when background motion is switched on or off
+  if (reducedMotion()) return;
   for (let i = 0; i < 18; i++) {
     const b = document.createElement("i"), s = 14 + Math.random() * 46;
     Object.assign(b.style, {width: s + "px", height: s + "px", left: Math.random() * 100 + "%",

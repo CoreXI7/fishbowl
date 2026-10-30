@@ -12,7 +12,14 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const noTyping = e => !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
-const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Background motion (bubbles, drifting effects): "auto" follows the device's reduce-motion setting, "on" and "off"
+// override it. Saved per browser (🫧 button or M), so a wall screen and a laptop can differ.
+const MOTION_MODES = ["auto", "on", "off"];
+let MOTION = "auto";
+try { MOTION = MOTION_MODES.includes(localStorage.getItem("motion")) ? localStorage.getItem("motion") : "auto"; } catch (e) {}
+const reducedMotion = () => MOTION === "off" || (MOTION === "auto" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+const applyMotion = () => { document.documentElement.dataset.motion = reducedMotion() ? "still" : "move"; };
+applyMotion();
 
 // Write HTML/text into an element only if it differs from what we wrote last time.
 function setHTML(el, html) {
@@ -144,4 +151,20 @@ function nextTheme() {
 }
 $("theme-btn").addEventListener("click", nextTheme);
 addEventListener("keydown", e => { if (e.key.toLowerCase() === "t" && noTyping(e)) nextTheme(); });
+
+function showMotion() {
+  const label = {auto: "follows this device's setting", on: "always on", off: "off"}[MOTION];
+  $("motion-btn").title = `Background motion: ${label} (click to change · M)`;
+  $("motion-btn").setAttribute("aria-label", `Background motion: ${label}`);
+  $("motion-btn").classList.toggle("off", reducedMotion());
+}
+function nextMotion() {
+  MOTION = MOTION_MODES[(MOTION_MODES.indexOf(MOTION) + 1) % MOTION_MODES.length];
+  try { localStorage.setItem("motion", MOTION); } catch (e) {}
+  applyMotion(); showMotion(); bubbles();
+}
+$("motion-btn").addEventListener("click", nextMotion);
+addEventListener("keydown", e => { if (e.key.toLowerCase() === "m" && noTyping(e)) nextMotion(); });
+matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => { applyMotion(); showMotion(); bubbles(); });
+showMotion();
 
