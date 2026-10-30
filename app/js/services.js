@@ -14,8 +14,8 @@ function iconFail(img) {
 }
 
 function serviceTile(s) {
-  const app = (Object.hasOwn(CFG.apps, s.name) && CFG.apps[s.name]) || {}, label = app.label || s.name.split(".")[0], icon = app.icon || "";
-  const letter = esc(label[0].toUpperCase());
+  const app = (Object.hasOwn(CFG.apps, s.name) && CFG.apps[s.name]) || {}, label = app.label || s.name.split(".")[0] || s.name, icon = app.icon || "";
+  const letter = esc((label[0] || "?").toUpperCase());
   const fav = CFG.demo ? "" : "/api/icon?host=" + encodeURIComponent(s.name);
   const src = icon ? (/^(\/|https?:|data:)/.test(icon) ? icon : CDN + icon + ".png") : fav;
   const status = s.up ? `online · ${s.ms} ms${s.code ? " · HTTP " + s.code : ""}` : `OFFLINE (${s.err || "HTTP " + s.code})`;

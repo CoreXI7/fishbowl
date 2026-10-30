@@ -49,6 +49,22 @@ class PageEscaping(unittest.TestCase):
         self.assertEqual(n, 0)
         self.assertFalse(self.b.js("window.__xss || 0"))
 
+@unittest.skipUnless(CHROME, "needs Chrome or Chromium")
+class ServiceNames(unittest.TestCase):
+    def test_an_odd_name_doesnt_empty_the_panel(self):
+        # (".x".split(".")[0] is "": its first letter was undefined and the whole Services panel failed; audit 2026-10-30)
+        app = load_app()
+        hosts = [{"name": n, "up": True, "code": 200, "ms": 5, "err": None, "auth": False} for n in (".evil", "nas.example")]
+        app.API["/api/services"] = (0, lambda: {"checked": 1, "services": hosts})
+        srv, url = serve(app.Handler)
+        b = Browser()
+        try:
+            b.send("Page.navigate", {"url": url + "/"})
+            self.assertTrue(b.wait_for("document.querySelectorAll('#svc .app').length === 2", 15))
+        finally:
+            b.close()
+            srv.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()
