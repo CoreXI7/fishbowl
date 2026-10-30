@@ -311,9 +311,21 @@ def parse_npm_conf(path):
         "caches": bool(re.search(r"^[ \t]*include\s+conf\.d/include/assets\.conf\s*;", txt, re.M)),
         # NPM believes a visitor's own X-Real-IP from any private address unless the host sets its own trusted list
         # (Advanced: set_real_ip_from), and passes on a visitor's X-Forwarded-Proto unless plain HTTP is redirected
-        "real_ip": real_ip_pinned(re.findall(r"^[ \t]*set_real_ip_from\s+([^\s;]+)\s*;", txt, re.M)),
+        "real_ip": real_ip_pinned(re.findall(r"^[ \t]*set_real_ip_from\s+([^\s;]+)\s*;", server_level(txt), re.M)),
         "force_ssl": bool(re.search(r"^[ \t]*include\s+conf\.d/include/force-ssl\.conf\s*;", txt, re.M)),
     }
+
+
+def server_level(txt):
+    """The lines of an NPM proxy-host file that sit directly in its server block (not in a location): only a list
+    there replaces NPM's own trusted ranges for the whole host."""
+    out, depth = [], 0
+    for line in txt.splitlines():
+        code = line.split("#", 1)[0]
+        if depth == 1:
+            out.append(code)
+        depth = max(0, depth + code.count("{") - code.count("}"))
+    return "\n".join(out)
 
 
 def real_ip_pinned(sources):
@@ -325,8 +337,8 @@ def real_ip_pinned(sources):
         nets = [ipaddress.ip_network(x, strict=False) for x in sources]
     except ValueError:
         return False
-    return bool(nets) and not any(n.prefixlen == 0 or any(n.version == p.version and n.overlaps(p) for p in private)
-                                   for n in nets)
+    return bool(nets) and not any(n.prefixlen < (8 if n.version == 4 else 16)   # (everyone, or near enough: 2000::/3)
+                                   or any(n.version == p.version and n.overlaps(p) for p in private) for n in nets)
 
 
 def has_login(txt):
