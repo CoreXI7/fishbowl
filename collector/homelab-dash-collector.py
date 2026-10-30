@@ -142,7 +142,11 @@ def disks():
             continue
         if not src[m].startswith("/dev/"):
             continue                              # skip tmpfs, overlay, network shares picked up by a glob
-        st = os.statvfs(m)
+        try:
+            st = os.statvfs(m)
+        except OSError:                           # (a share whose server is gone: EIO; shown missing, not a crash)
+            out.append({"mount": m, "name": name, "missing": True})
+            continue
         dev = whole_disk(src[m])
         model_f = f"/sys/block/{os.path.basename(dev)}/device/model"
         model = open(model_f).read().strip() if os.path.exists(model_f) else ""
@@ -162,18 +166,21 @@ def smart(dev):
     msgs = " ".join(m.get("string", "") for m in d.get("smartctl", {}).get("messages", []))
     if "STANDBY" in msgs.upper():
         return {"standby": True}
-    attrs = {a["id"]: a["raw"]["value"] for a in d.get("ata_smart_attributes", {}).get("table", [])}
-    nv = d.get("nvme_smart_health_information_log", {})
-    return {
-        "temp": d.get("temperature", {}).get("current"),
-        "passed": d.get("smart_status", {}).get("passed"),
-        "hours": d.get("power_on_time", {}).get("hours"),
-        "realloc": attrs.get(5, nv.get("media_errors")),
-        "pending": attrs.get(197),
-        "uncorrect": attrs.get(198),
-        "wear": nv.get("percentage_used"),
-        "model": d.get("model_name"),
-    }
+    try:                                          # (odd output from a firmware or a smartctl version: no crash)
+        attrs = {a["id"]: a["raw"]["value"] for a in d.get("ata_smart_attributes", {}).get("table", [])}
+        nv = d.get("nvme_smart_health_information_log", {})
+        return {
+            "temp": d.get("temperature", {}).get("current"),
+            "passed": d.get("smart_status", {}).get("passed"),
+            "hours": d.get("power_on_time", {}).get("hours"),
+            "realloc": attrs.get(5, nv.get("media_errors")),
+            "pending": attrs.get(197),
+            "uncorrect": attrs.get(198),
+            "wear": nv.get("percentage_used"),
+            "model": d.get("model_name"),
+        }
+    except (AttributeError, KeyError, TypeError):
+        return {"error": "unexpected output"}
 
 
 # ---------- GPU / containers / network ----------
@@ -187,6 +194,8 @@ def gpu():
     if not line:
         return None
     v = [x.strip() for x in line[0].split(",")]
+    if len(v) < 10:                               # (an odd answer: no GPU tile, not a crash)
+        return None
     num = lambda s: float(s) if re.fullmatch(r"[\d.]+", s) else None
     return {"name": v[0], "temp": num(v[1]), "util": num(v[2]), "enc": num(v[3]), "dec": num(v[4]),
             "mem_used": num(v[5]), "mem_total": num(v[6]), "power": num(v[7]), "fan": num(v[8]),

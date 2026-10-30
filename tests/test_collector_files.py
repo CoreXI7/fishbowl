@@ -142,6 +142,34 @@ class AutheliaLog(unittest.TestCase):
         self.assertEqual((int(n), newest, int(kept)), (120_001, "newest", 6), "every failure counted, the newest first")
         self.assertLess(int(grew_mb), 50, "~190 MB of log, read without holding it")
 
+class OddOutput(unittest.TestCase):
+    """One failing mount (a NAS share gone: EIO) or odd smartctl / nvidia-smi output ended the collector's main loop
+    before it wrote hw.json, again after every restart (audit 2026-10-30)."""
+
+    def setUp(self):
+        self.col, _ = load_collector()
+
+    def test_a_mount_that_fails_is_shown_missing(self):
+        def broken(path):
+            raise OSError(5, "Input/output error")
+        real = self.col.os.statvfs
+        self.col.os.statvfs = broken
+        try:
+            disks = self.col.disks()
+        finally:
+            self.col.os.statvfs = real
+        self.assertTrue(all(d.get("missing") for d in disks))
+
+    def test_odd_smart_and_gpu_output(self):
+        real = self.col.run
+        self.col.run = lambda *a, **k: '{"ata_smart_attributes": {"table": [{"id": 194, "raw": "x"}]}, "temperature": []}'
+        try:
+            self.assertIn("error", self.col.smart("/dev/sdz"))
+            self.col.run = lambda *a, **k: "Tesla, 40\n"
+            self.assertIsNone(self.col.gpu() if self.col.have("nvidia-smi") else None)
+        finally:
+            self.col.run = real
+
 
 if __name__ == "__main__":
     unittest.main()
