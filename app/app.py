@@ -1446,6 +1446,11 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             add("listen", "ok", "Answers only on its own addresses",
                 f"Answers only on {', '.join(addrs)}. Other containers are locked out as long as only your proxy shares that network.",
                 optional=True)
+        elif AUTH == "proxy":   # (then whatever passes for the proxy is the admin: not optional any more)
+            add("listen", "warn", "Lock the dashboard to the proxy",
+                "With AUTH: proxy, whatever the dashboard takes for your proxy is signed in as you. Other containers on the "
+                "same Docker network are refused, but one that fakes the proxy's address (ARP: most containers can) would "
+                "get straight in. A network that only the proxy shares closes it.", doc=DOCS + "#lock-the-dash-to-the-proxy-listen")
         else:
             add("listen", "todo", "Optional: lock the dashboard to the proxy",
                 "Other containers on the same Docker network are refused, but one that fakes the proxy's address could get "

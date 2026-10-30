@@ -259,8 +259,8 @@ class Setup(unittest.TestCase):
         self.assertIn("Can't find 'no-such-host.invalid'", r["detail"])
 
     def test_listen_wildcard_is_not_locked(self):
-        app = load_app(TRUSTED_PROXY="127.0.0.1", LISTEN="0.0.0.0")
-        self.assertEqual(self.states(app)["listen"], "todo")
+        app = load_app(TRUSTED_PROXY="127.0.0.1", LISTEN="0.0.0.0", AUTH="login")
+        self.assertEqual(self.states(app)["listen"], "todo")   # (with AUTH: proxy it's a warning: test_listen)
 
     def test_no_secrets_in_the_page_data(self):
         app = load_app(TRUSTED_PROXY="127.0.0.1")

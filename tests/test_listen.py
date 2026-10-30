@@ -140,5 +140,15 @@ class Listen(unittest.TestCase):
         self.assertEqual(self.again(app), {"10.0.0.5"}, "a lookup that failed for now keeps the last answer")
         self.assertEqual(self.again(app), set(), "a name that no longer exists: its old address (soon someone else's) isn't trusted")
 
+    def test_sso_mode_without_listen_is_a_warning(self):
+        # With AUTH: proxy, a container that fakes the proxy's address (ARP, NET_RAW is on by default) is the admin:
+        # LISTEN stops being optional (audit round 2)
+        app = load_app(TRUSTED_PROXY="127.0.0.1", AUTH="proxy")
+        item = {i["id"]: i for i in app.setup_checks()}["listen"]
+        self.assertEqual((item["state"], item["optional"]), ("warn", False))
+        app = load_app(TRUSTED_PROXY="127.0.0.1", AUTH="login")
+        self.assertTrue({i["id"]: i for i in app.setup_checks()}["listen"]["optional"])
+
+
 if __name__ == "__main__":
     unittest.main()
