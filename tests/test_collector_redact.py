@@ -19,6 +19,8 @@ SECRET_LINES = [
     f"rclone sync /data b2:bucket --b2-key {PW}", f"duplicity /data sftp://backup:{PW}@nas/b",
     f"curl 'https://api.telegram.org/bot123456:{PW}/sendMessage?chat_id=1'", f"curl -d 'token={PW}&user=u' https://po.example/1",
     f"mosquitto_pub -h mqtt.lan -u backup -P {PW} -t backup -m done",
+    f"B2_ACCOUNT_KEY={PW} restic backup /data", f"ldapsearch -x -D cn=admin -w {PW} -b dc=lan",
+    f"ssh-keygen -t ed25519 -N {PW} -f /root/k",
 ]
 PLAIN_LINES = ["mkdir -p /backup && rsync -aP /data /backup", "ssh -p 2222 nas uptime", "curl -k https://dash.lan/healthz",
                "docker run --rm -p 8080:80 nginx", "tar -czf /b/x.tgz /data", "/usr/local/bin/start.sh --port 8080"]

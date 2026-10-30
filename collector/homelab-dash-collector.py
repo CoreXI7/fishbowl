@@ -398,7 +398,7 @@ def cron_hash(snap):
 _RD_URL = re.compile(r"webhook|token|key|api|secret|sig", re.I)
 _RD_VAL = r"('[^']{0,300}'|\"[^\"]{0,300}\"|\S+)"
 # a name holding a key word, found by a look-ahead from the start of each word (once per word: linear)
-_RD_NAME = re.compile(r"(?i)(?<!\w)(?=\w*?(?:pass(?:word|wd)?|token|secret|api_?key))(\w+)(\s*[=:]\s*)" + _RD_VAL)
+_RD_NAME = re.compile(r"(?i)(?<!\w)(?=\w*?(?:pass(?:word|wd)?|token|secret|key))(\w+)(\s*[=:]\s*)" + _RD_VAL)
 _RD_OPT = re.compile(r"(?i)(?<![\w-])(?=--?[\w-]*?(?:pass(?:word|wd)?|token|secret|key|auth))(--?[\w-]+)([\s=]+)" + _RD_VAL)
 
 
@@ -416,6 +416,8 @@ def redact(line):
     # -p pw (docker login, mongodump), -P pw (zip, mosquitto), -k pw (openssl): not when it's a path, a URL or a port
     line = re.sub(r"(\s-[pPk]\s+)(?![/~.$-]|\w+://|\d[\d.:]*(?:/(?:tcp|udp))?(?:\s|$))\S+", r"\1***", line)
     line = re.sub(r"(redis-cli\b[^|;&]*?\s-a\s+)\S+", r"\1***", line)                     # redis-cli -a pw
+    line = re.sub(r"(\bldap\w*\b[^|;&]*?\s-w\s+)\S+", r"\1***", line)                    # ldapsearch -w pw
+    line = re.sub(r"(\bssh-keygen\b[^|;&]*?\s-N\s+)\S+", r"\1***", line)                  # ssh-keygen -N passphrase
     line = re.sub(r"(--user[\s=]+[^\s:]+:)\S+", r"\1***", line)                               # curl --user u:pw
     line = re.sub(r"(\s-u\s+[^\s,:]+,)\S+", r"\1***", line)                                 # lftp -u user,pw
     line = re.sub(r"(\bpass:)\S+", r"\1***", line)                                           # openssl -pass pass:pw
