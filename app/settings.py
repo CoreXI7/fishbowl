@@ -92,10 +92,20 @@ def _write_json(path, data):
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())   # (on disk before it replaces the old one: a power cut can't leave half a file)
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
+        dfd = os.open(os.path.dirname(path), os.O_RDONLY)
+        try:
+            os.fsync(dfd)          # (and the rename itself)
+        finally:
+            os.close(dfd)
     except BaseException:
-        os.unlink(tmp)   # (a write that failed halfway leaves nothing behind: failed saves can't fill the disk)
+        try:
+            os.unlink(tmp)   # (a write that failed halfway leaves nothing behind: failed saves can't fill the disk)
+        except FileNotFoundError:
+            pass             # (already renamed into place)
         raise
 
 

@@ -314,6 +314,18 @@ class SettingsText(unittest.TestCase):
         with self.assertRaises(app.cfgstore.Invalid):
             app.check_collector_changes({"security.bad_process_names": {"from": "", "to": ["x\ud800"]}})
 
+    def test_a_save_reaches_the_disk(self):
+        # (settings.json and secrets.json were replaced without fsync: a power cut could leave a torn file the dashboard
+        # can't start with; audit, the fuzzer)
+        app = load_app()
+        synced, real = [], os.fsync
+        os.fsync = lambda fd: (synced.append(fd), real(fd))
+        try:
+            app.cfgstore._write_json(app.cfgstore.SETTINGS_FILE, {"x": 1})
+        finally:
+            os.fsync = real
+        self.assertGreaterEqual(len(synced), 2, "the file and its folder")
+
     def test_a_failed_write_leaves_no_temp_file(self):
         app = load_app()
         folder = os.path.dirname(app.cfgstore.SETTINGS_FILE)
