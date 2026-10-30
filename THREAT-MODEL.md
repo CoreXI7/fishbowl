@@ -23,7 +23,8 @@ Written for the reference setup (a home server behind a reverse proxy with SSO),
                  │   reads: NPM proxy_host/*.conf (ro), /proc + hwmon (ro), hw.json + sec-detail.json (ro)
                  │   writes: data/ (settings, secrets, acks, uploads), req/cron-approve (a 64-hex hash)
                  │   calls out: qBittorrent, Seerr, Tautulli (API keys); every service upstream (health check,
-                 │              favicon); the proxy itself (checks via the proxy)
+                 │              favicon); the proxy itself (checks via the proxy: which hosts and paths is a
+                 │              setting on the page since Oct 29, so a page user can make a down service look up)
                  ▼
  /var/lib/homelab-dash/  hw.json, sec-detail.json (root:dash-group 0640)  ◄── homelab-dash-collector (root)
                                          req/ (owned by the dash uid)    ──► read by the collector each round

@@ -1,4 +1,5 @@
-# homelab-dash config: OPTIONAL. Everything here can be set on the dashboard's /settings page instead.
+# homelab-dash config: OPTIONAL. Almost everything here can be set on the dashboard's /settings page instead (not
+# origin, npm_dir and trusted_proxy: they protect the dashboard, so they're set in docker-compose.yml, which wins).
 # If you prefer a file: copy it to data/config.toml. It's used until the first save from the settings page.
 # Secrets (passwords, API keys) do NOT go here: use the settings page or .env.
 
@@ -6,11 +7,12 @@
 title = "my homelab"
 tagline = "everything's running ✨"
 tagline_down = "uh oh, something's down!"
-# Public URL of the dashboard (CSRF guard). The ORIGIN env var in docker-compose.yml wins.
+# Public URL of the dashboard (CSRF guard). Only used if the ORIGIN variable isn't set at all: the example
+# docker-compose.yml sets it (even empty), and that wins.
 origin = "https://dash.example.com"
 # Emoji that rains down when you click the title or the mascot.
 click_emoji = "🫧"
-# Optional mascot in the left column: drop an image in app/static/ and point to it.
+# Optional mascot in the left column: upload it on the settings page (Themes), or put an image in app/static/ and point to it.
 # mascot = "/static/mascot.png"
 # mascot_credit = "art: your-artist"
 # greeting = "Hi! Everything's up."
@@ -24,12 +26,14 @@ npm_dir = "/npm"
 trusted_proxy = "nginx"
 # NPM hosts to leave off the dashboard.
 skip_hosts = ["www.example.com"]
+# Hosts to health-check through the proxy (on a network the dashboard isn't on); "host/path" checks that path.
+# check_via_proxy = ["vault.example.com/alive"]
 
 [security]
 # IPs you trust. Prefixes end with a dot. SSH/SSO logins from anywhere else show up red.
 known_ips = ["192.168.1.", "172.18."]
 
-# ---------- optional integrations: each one turns on when its URL is set AND its secrets are in .env ----------
+# ---------- optional integrations: each one turns on when its URL is set AND its secrets are saved (settings page or .env) ----------
 
 [qbittorrent]
 # url = "http://192.168.1.10:8080"

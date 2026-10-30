@@ -4,7 +4,8 @@
 torrents (with a VPN-leak alarm), temperatures, drives, security and backups, all at a glance.
 
 - Small: one stdlib-Python app. No pip, no Node, no database. About 25–40 MB of RAM.
-- Easy: set it up from a settings page in your browser. Services from Nginx Proxy Manager show up on their own.
+- Easy: set it up from a settings page in your browser. Its **Setup checklist** tells you what's missing and how to
+  fix it. Services from Nginx Proxy Manager show up on their own.
 - Safe: your API keys stay on the server, and the part that runs as root never talks to the network.
 
 **▶ [Try the live demo](https://demo.vicy.us)** (fake data, nothing you do there is saved)
@@ -78,9 +79,9 @@ docker compose up -d
 ```
 
 In NPM, add a proxy host that forwards to `dash:8000`, and **put it behind your SSO** (Authelia, Authentik, …).
-Open the dashboard, click **⚙**, and set everything else there.
+Open the dashboard and click **⚙**: the **Setup** checklist checks the rest and gives the exact fix for anything missing.
 
-> **Empty page or 502?** Check `docker logs dash` and that `TRUSTED_PROXY` is your proxy's real container name.
+> **Empty page or 502?** Run `docker logs dash`. A `TRUSTED_PROXY` name that doesn't resolve refuses everyone, and the log says so.
 > Not sure of your proxy's network name? `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <proxy>`
 
 **2. The collector** (optional, runs on the host as root)
@@ -128,10 +129,27 @@ Most updates need nothing from you. These ones might:
 | **New `LISTEN` setting** (optional, recommended). | Lets the dash answer only on a network that your proxy alone shares with it, so no other container can reach it. [How to set it up](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen). |
 | **Upload limits**: images only (PNG, JPEG, GIF, WebP), 2 MB each, 200 files / 100 MB in all. SVG is refused. | Nothing, unless you upload a lot of icons. |
 | **Fonts are now part of the app** instead of coming from Google. | Nothing. The page loads nothing from outside any more. |
-| **Health checks through the proxy can use a path** (`CHECK_VIA_PROXY: vault.example.com/alive`). | Use it when a service's `/` sits behind a login. |
+| **"Check through the proxy" moved onto the settings page** (Services → Advanced), and an entry can carry a path (`vault.example.com/alive`). | Nothing: if `CHECK_VIA_PROXY` is set in the compose file it still wins, and the page shows it locked. You can remove it from the compose file and manage the list on the page instead. |
 | **`.env` must exist** (the compose file loads it). | `cp .env.example .env`, even if you leave it empty. |
 
 ### The big changes
+
+#### ⚙ A new settings page: set everything up in one place (Oct 29)
+
+![The Setup checklist on a fresh install](docs/screenshot-setup.png)
+
+The settings page was rebuilt around a new install: after `docker compose up -d`, everything else is set on the page,
+and for what can't be, the Setup checklist gives the exact fix.
+
+- **Setup checklist.** Checks the proxy lock, the dashboard's address, whether settings can be saved, the Nginx Proxy
+  Manager folder, **whether a sign-in sits in front of the dashboard**, the collector and the integrations. Each
+  problem says what happens if you ignore it and gives the exact fix, with a **Copy** button.
+- **Side menu with search** (a bar on phones), a dot on every section with unsaved changes, one Save bar
+  (**Ctrl+S**), and an error summary that takes you straight to the field.
+- **Clearer Test results**: "can't find 'overseerr'" (wrong Docker network), timeouts, refused connections.
+- **Every theme edited the same way** (the Default theme picker moved into Themes), and services not in NPM get their own tile link.
+- **Accessible**: readable contrast in every theme, a visible focus ring, labels on every field, works with the
+  keyboard alone and on a phone.
 
 #### 🔒 Security audit and hardening (Oct 29)
 
@@ -224,15 +242,17 @@ The panel is about a third shorter, and the wall view fits any number of groups.
 
 ![Settings page](docs/screenshot-settings.png)
 
-Click **⚙** (or open `/settings`). Changes apply right away, no restart.
+Click **⚙** (or open `/settings`). Use the side menu or the search box; changes apply right away, no restart.
 
-- **Look & feel**: title, default theme, and per theme its mascot, taglines and lines.
-- **Services**: everything found in NPM. Create, rename and reorder groups; change labels and icons (any
-  [dashboard-icons](https://dashboard-icons.homarr.dev) name); hide what you don't want. New NPM hosts appear on their own.
-- **Extra services** that aren't in NPM (NAS, router, …).
-- **Integrations**: qBittorrent, Seerr / Overseerr / Jellyseerr, Tautulli, each with a **Test** button.
-- **Trusted IPs** for the login checks (or add them from the SSH details).
-- **Hidden panels**.
+| Section | What's there |
+|---|---|
+| **Setup** | What's working and what isn't, each with its fix |
+| **Look & feel** | Title, and which panels to show |
+| **Themes** | The default theme; per theme its mascot (upload an image), tab icon, taglines, click emoji and lines |
+| **Services** | Everything found in NPM: groups (create, rename, reorder), labels, icons (any [dashboard-icons](https://dashboard-icons.homarr.dev) name), hiding. Services not in NPM (NAS, router, …). Advanced: services to check through the proxy |
+| **Integrations** | qBittorrent, Seerr / Overseerr / Jellyseerr, Tautulli, each with a **Test** button that says what's wrong |
+| **Security** | **Your own IPs** (was "Trusted IPs"): logins from them aren't flagged (or add them from the SSH details) |
+| **About** | What's set in `docker-compose.yml`, and why it can't be changed here |
 
 Everything is saved in `data/` (`settings.json`, keys in `secrets.json`, both `chmod 600`). Prefer a file? Put a
 `config.toml` in `data/` (see [`config.example.toml`](config.example.toml)); it's used until the first save.

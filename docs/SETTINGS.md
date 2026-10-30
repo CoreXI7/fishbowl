@@ -4,7 +4,7 @@ Three places, each for a different kind of setting:
 
 | Where | What goes there | Who can change it |
 |---|---|---|
-| The **/settings page** (saved to `data/settings.json`, keys to `data/secrets.json`) | everything about the look, the services, the integrations | anyone who can open the dashboard (unless `SETTINGS_UI=0`) |
+| The **/settings page** (saved to `data/settings.json`, keys to `data/secrets.json`) | everything about the look, the services, the integrations. Its **Setup** section checks the other two places and gives the exact fix for anything missing | anyone who can open the dashboard (unless `SETTINGS_UI=0`) |
 | **Environment** (`docker-compose.yml`, `.env`) | anything security-critical: who may talk to the dash, where it listens, the CSRF origin; optionally the integration keys (then the page can't change them) | whoever runs the container |
 | **`/etc/homelab-dash/collector.toml`** | what the root collector checks | root (see `collector/collector.example.toml`) |
 
@@ -35,6 +35,7 @@ save from the settings page. Every field is validated on the server; a bad value
 | `apps.<host>` | `{label, icon, url}`: a tile's name, its icon (a [dashboard-icons](https://github.com/homarr-labs/dashboard-icons) name, an uploaded file or a URL) and where it links (default `https://<host>`) |
 | `services` | `[{name, url, auth}]`: services that aren't proxy hosts; `url` is what gets health-checked |
 | `skip_hosts` | proxy hosts to leave off the dashboard |
+| `via_proxy` | up to 100 `host` or `host/path` entries (Services → Advanced): health-checked through the reverse proxy instead of directly, for services on a network the dashboard isn't on. A path is checked instead of `/` (use one that skips the sign-in). `CHECK_VIA_PROXY` in the environment wins and locks the field. In `config.toml`: `[proxy] check_via_proxy` |
 
 A service counts as **up** when it answers below HTTP 500 (a login page or a redirect counts: redirects aren't
 followed). Health checks run at most every 25 s whatever the number of open browsers.
@@ -51,7 +52,7 @@ An integration turns on when its URL and keys are set. Changing an integration's
 keys again, so a changed address can't receive the saved ones. Keys never go back to the browser (the page only sees
 "set" / "not set"). The integrations never follow redirects; the settings page's **Test** says so if one redirects.
 
-### `known_ips`
+### `known_ips` ("Known IPs" on the page)
 
 Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes ending in `.` or `:` (`203.0.113.`,
 `2001:db8:`). SSH and SSO logins from anywhere else are flagged. The SSH detail view can add an IP that really logged in.
@@ -66,7 +67,7 @@ Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes en
 | `SETTINGS_UI` | `1` | `0` makes the settings page read-only |
 | `USER_HEADER` | (off) | A header naming the SSO user (e.g. `Remote-User`), logged with each change. Only if your proxy sets it itself, and only trusted on requests from `TRUSTED_PROXY` |
 | `NPM_DIR` | `/npm` | Nginx Proxy Manager's `proxy_host` folder, mounted read-only: the service list |
-| `CHECK_VIA_PROXY` | (none) | `host[/path] …`: services on networks the dash can't reach, checked through the proxy instead |
+| `CHECK_VIA_PROXY` | (none) | `host[/path] …`: the same as `via_proxy` on the settings page. When set, it wins and the field is locked |
 | `QBIT_URL`, `SEERR_URL`, `TAUTULLI_URL` and the keys above | (none) | Integration settings from the environment; the settings page then shows them locked |
 | `HOME_IP` | (none) | Same as `qbittorrent.home_ip` |
 | `DATA_DIR` | `/data` | Settings, keys, acknowledgements, uploads (writable by uid 1000) |

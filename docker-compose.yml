@@ -21,8 +21,8 @@ services:
       NPM_DIR: /npm
       # SETTINGS_UI: "0"                  # make the settings page read-only
       # USER_HEADER: Remote-User          # name the SSO user in the log; ONLY if your proxy sets this header itself
-      # LISTEN: "127.0.0.1 172.31.250.2"  # answer only on these addresses: see "Lock the dash to the proxy" in README.md
-      # CHECK_VIA_PROXY: demo.example.com vault.example.com/alive # hosts on networks the dash can't reach: health-check them through the proxy (optional path instead of /)
+      # LISTEN: "127.0.0.1 172.31.250.2"  # answer only on these addresses: see "Lock the dash to the proxy" in docs/SETTINGS.md
+      # CHECK_VIA_PROXY: demo.example.com vault.example.com/alive # hosts on networks the dash can't reach: health-check them through the proxy (optional path instead of /). Also on the settings page (Services → Advanced); set here, it wins and locks that field
     volumes:
       - ./app:/app:ro
       - ./data:/data                  # settings + saved keys + uploads (must be writable by uid 1000)
@@ -31,7 +31,7 @@ services:
       # Written by the optional root collector (see collector/). Remove both lines if you don't install it.
       - /var/lib/homelab-dash:/hw:ro
       - /var/lib/homelab-dash/req:/req
-    # LAN-only use without a reverse proxy: uncomment, and set trusted_proxy = "" in config.toml.
+    # LAN-only use without a reverse proxy: uncomment, and set TRUSTED_PROXY: "" above.
     # ports: ["8000:8000"]
     networks:
       - reverse_proxy
