@@ -379,8 +379,19 @@ def redact(line):
     line = re.sub(r"(\w+://)[^/\s:@]+:[^@\s]+@", r"\1***@", line)                       # user:pass@host
     val = r"('[^']*'|\"[^\"]*\"|\S+)"
     line = re.sub(r"(?i)\b(\w*(pass(word|wd)?|token|secret|api_?key)\w*\s*[=:]\s*)" + val, r"\1***", line)   # PASSWORD=x
-    line = re.sub(r"(?i)(--?[\w-]*(pass(word|wd)?|token|secret|api-?key|auth)[\w-]*[\s=]+)" + val, r"\1***", line)  # --password x
+    line = re.sub(r"(?i)(--?[\w-]*(pass(word|wd)?|token|secret|key|auth)[\w-]*[\s=]+)" + val, r"\1***", line)  # --password x, --b2-key x
     line = re.sub(r"(\s-p)(?!\s)\S+", r"\1***", line)                                     # mysql -pSecret
+    # -p pw (docker login, mongodump), -P pw (zip, mosquitto), -k pw (openssl): not when it's a path, a URL or a port
+    line = re.sub(r"(\s-[pPk]\s+)(?![/~.$-]|\w+://|\d[\d.:]*(?:/(?:tcp|udp))?(?:\s|$))\S+", r"\1***", line)
+    line = re.sub(r"(redis-cli\b[^|;&]*?\s-a\s+)\S+", r"\1***", line)                     # redis-cli -a pw
+    line = re.sub(r"(--user[\s=]+[^\s:]+:)\S+", r"\1***", line)                               # curl --user u:pw
+    line = re.sub(r"(\s-u\s+[^\s,:]+,)\S+", r"\1***", line)                                 # lftp -u user,pw
+    line = re.sub(r"(\bpass:)\S+", r"\1***", line)                                           # openssl -pass pass:pw
+    line = re.sub(r"(smbclient\s+\S+\s+)(?!-)\S+", r"\1***", line)                          # smbclient //nas/share pw
+    line = re.sub(r"(\becho\s+)\S+(?=\s*\|[^|]*--password-stdin)", r"\1***", line)        # echo pw | ... --password-stdin
+    # push and ping services: the path is the secret (ntfy topics, healthchecks ids, bot tokens, webhooks)
+    line = re.sub(r"(?i)(https?://(?:ntfy\.[^/\s'\"]+|[^/\s'\"]*hc-ping\.com|[^/\s'\"]*healthchecks[^/\s'\"]*|api\.telegram\.org|"
+                  r"(?:[\w.-]+\.)?discord(?:app)?\.com|hooks\.slack\.com|gotify[^/\s'\"]*)/)[^\s'\"]+", r"\1***", line)
     line = re.sub(r"(\s-u\s+[^\s:]+:)\S+", r"\1***", line)                               # curl -u user:pass
     line = re.sub(r"(sshpass\s+(?:-\w+\s+)*-p\s*)\S+", r"\1***", line)                   # sshpass -p pw
     line = re.sub(r"(\s-U\s+[^\s%]+%)\S+", r"\1***", line)                               # smbclient -U user%pw

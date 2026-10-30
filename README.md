@@ -396,8 +396,10 @@ browser ──► reverse proxy ──► dash container: its own sign-in (or yo
   dashboard's own page (blocks other websites acting for you).
 - **Everything from outside is treated as untrusted**: escaped, size-capped and checked. The page only runs its own scripts.
 - **The container** runs as uid 1000, read-only, all capabilities dropped, capped at 256 MB and 128 processes.
-- **The collector** hides passwords and tokens in the log and cron lines it reports. The only thing the dash can ask of
-  it is "approve the cron jobs as they are now", checked by hash.
+- **The collector** tries to hide passwords and tokens in the log and cron lines it reports (common forms: `-p`,
+  `--password`, `user:pass@`, `PASSWORD=`, bearer tokens, push-service URLs). A password passed as a plain argument
+  (`backup.sh hunter2`) looks like any other word: keep secrets in files or the environment, not on cron lines. The
+  only thing the dash can ask of it is "approve the cron jobs as they are now", checked by hash.
 
 The limit: anyone with Docker or root access on the host can read the container's environment, as with any
 self-hosted app. Keep `.env` at `chmod 600` and out of git (`.gitignore` covers it).
