@@ -265,6 +265,10 @@ bloat the collector.
 
 ## Still open
 
+- A signed-in user (with `AUTH=proxy`, anyone past the SSO) can add services, so the dashboard GETs any URL it can
+  reach and shows the status code and timing: a stolen session is also a way to probe your LAN and Docker networks
+  (but not to read what comes back: icons come only from a service's own origin, raster images only).
+
 - A person can approve a bad path or pattern with `--apply` without reading the diff: approval is only as good as the
   reading. (The dash alone can't apply them.)
 

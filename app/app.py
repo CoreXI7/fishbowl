@@ -421,7 +421,8 @@ def favicon(name):
     host = next((h for h in read_npm_hosts() if h["name"] == name), None)
     if not host:
         return None
-    base = host["upstream"]
+    u = urllib.parse.urlsplit(host["upstream"])
+    base = f"{u.scheme}://{u.netloc}"    # the service's origin only: its URL's path or query isn't a way to read other pages
     cands = []
     page = fetch_same_host(base + "/", base, name, 200_000)      # every fetch stays on the service's own upstream
     if page:
@@ -435,8 +436,8 @@ def favicon(name):
     result = None
     for url in cands:
         got = fetch_same_host(url, base, name, 512_000)
-        ctype = got[0].split(";")[0] if got else ""
-        if ctype.startswith("image/") and ctype != "image/svg+xml" and got[1]:
+        ctype = got[0].split(";")[0].strip().lower() if got else ""
+        if ctype in ICON_TYPES and got[1]:      # raster only: an SVG (any spelling) would be a page on our origin
             result = (got[1], ctype)
             break
     _icons[name] = result
@@ -793,6 +794,7 @@ def plex_art(img):
 
 
 ART_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+ICON_TYPES = ART_TYPES | {"image/x-icon", "image/vnd.microsoft.icon"}
 
 
 # ---------- Seerr / Overseerr / Jellyseerr (same API) ----------
