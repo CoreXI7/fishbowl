@@ -1528,5 +1528,39 @@ class AuditPlainHttp(Base):
         self.assertEqual(login("192.168.1.9"), 200, "the owner's browser, where it signed in: still trusted")
 
 
+class Audit(Base):
+    """The pre-release audit (2026-10-30): each finding's attack, refused."""
+
+    def two_step(self):
+        c = self.create()
+        st, _, d = call(self.url + "/api/account/totp/start", "POST", {"password": PW}, cookie=c)
+        st, h, r = call(self.url + "/api/account/totp/confirm", "POST",
+                        {"code": self.auth.totp_code(d["secret"], int(time.time() // 30))}, cookie=c)
+        self.assertEqual(st, 200)
+        return cookie_of(h), d["secret"], r["recovery"], cookie_of(h, "fishbowl-device")
+
+    def test_parallel_codes_on_one_step_are_five_at_most(self):
+        self.two_step()
+        pre = cookie_of(self.login()[1], "fishbowl-pre")
+        before = self.app.ACCOUNT.get()["failures"]
+        out = []
+        ts = [threading.Thread(target=lambda i=i: out.append(call(self.url + "/api/login/code", "POST", {"code": f"{i:06d}"},
+                                                                  cookie=pre)[0])) for i in range(30)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertLessEqual(self.app.ACCOUNT.get()["failures"] - before, 5, "five codes per password step, even all at once")
+
+    def test_a_trusted_browsers_code_tries_stop_at_its_own_limit(self):
+        _, _, _, dev = self.two_step()
+        self.app.ACCOUNT.update(lambda d: [v.update(fails=self.auth.DEVICE_FAILS - 1) for v in d["devices"].values()])
+        pre = cookie_of(self.login(cookie=dev)[1], "fishbowl-pre")
+        self.assertTrue(pre)
+        for i in range(4):
+            call(self.url + "/api/login/code", "POST", {"code": f"{i:06d}"}, cookie=f"{pre}; {dev}")
+        d = self.app.ACCOUNT.get()
+        self.assertLessEqual(max(v.get("fails", 0) for v in d["devices"].values()), self.auth.DEVICE_FAILS)
+        self.assertGreaterEqual(d["failures"], 3, "past its own 10, the device's tries count toward the account lock")
+
+
 if __name__ == "__main__":
     unittest.main()

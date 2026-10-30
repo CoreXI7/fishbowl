@@ -1815,7 +1815,7 @@ class Handler(BaseHTTPRequestHandler):
                     _session_tries[session] = (fails + 1, now)
                 return wait
             d = ACCOUNT.get() if account else None
-            if d and dev and dev in d.get("devices", {}):
+            if d and dev and dev in d.get("devices", {}) and d["devices"][dev].get("fails", 0) < auth.DEVICE_FAILS:   # (worn out: just a browser)
                 v = d["devices"][dev]
                 wait = THROTTLE.wait_for(v.get("fails", 0), v.get("last", 0), now) if waits else 0
                 if not wait:
@@ -2094,15 +2094,24 @@ class Handler(BaseHTTPRequestHandler):
                                                 "sign in again.", "restart": True})
             if not s("code").strip():
                 return self.send(400, {"error": "Type a code from your authenticator app, or a recovery code.", "field": "code"})
+            with _pending_lock:   # the step's own 5 codes, reserved before checking: parallel tries can't all slip in
+                if p["tries"] >= 5:
+                    self.pending(consume=True)
+                    return self.send(401, {"error": "Wrong code 5 times: sign in with your password again.", "restart": True,
+                                           "field": "code"})
+                p["tries"] += 1
             wait = self.begin_try(ip, p.get("dev"), waits=False)
             if wait:
+                with _pending_lock:
+                    p["tries"] -= 1
                 return self.refuse_wait(wait)
             result = self.code_ok(s("code"), p["epoch"])
             if result == "used":   # (refused, but no guess: no strike, nothing for the alarm)
+                with _pending_lock:
+                    p["tries"] -= 1
                 return self.send(401, {"error": CODE_USED, "field": "code"})
             if result != "ok":
                 with _pending_lock:
-                    p["tries"] += 1
                     over = result == "stale" or p["tries"] >= 5
                     if over:
                         self.pending(consume=True)
