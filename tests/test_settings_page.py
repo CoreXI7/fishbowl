@@ -380,6 +380,17 @@ class IntegrationUrls(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertNotIn("banner", r["detail"])
 
+class NewCode(unittest.TestCase):
+    def test_code_changed_on_disk_asks_for_a_restart(self):
+        # (the app is a bind mount: "git pull, then docker compose up -d" left the old code running, as Compose saw no
+        # change; audit round 3)
+        app = load_app()
+        self.assertNotIn("restart", {i["id"] for i in app.setup_checks()})
+        app._code_at_start = ()                       # (as if the files changed since it started)
+        item = {i["id"]: i for i in app.setup_checks()}.get("restart")
+        self.assertEqual((item or {}).get("state"), "warn")
+        self.assertIn("--force-recreate", json.dumps(item))
+
 
 if __name__ == "__main__":
     unittest.main()

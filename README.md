@@ -196,8 +196,11 @@ Every window has its own link, handy for bookmarks or a second screen:
 
 ### Updating? What to check
 
-Most updates need nothing from you. To update: `git pull`, then `docker compose up -d`. If `git pull` refuses
-because you edited `docker-compose.yml`, run `git stash`, `git pull`, `git stash pop` and look over the merged file;
+Most updates need nothing from you. To update: `git pull`, then `docker compose up -d --force-recreate` (without
+`--force-recreate` the old code keeps running: the app folder is mounted, and Compose only restarts for a changed
+compose file; the Setup checklist says when that happened). If `git pull` refuses because you edited
+`docker-compose.yml`, run `git stash`, `git pull`, `git stash pop` and look over the merged file (if `git stash pop`
+reports a conflict, keep your own lines and the new ones, then `git stash drop`);
 next time keep your changes in a `docker-compose.override.yml` next to it (Compose reads it on top, git leaves it
 alone). **The collector runs on the host and only updates when you run `sudo bash collector/install.sh` again**: the
 Setup checklist says when it's older than the dashboard. These updates might need more:

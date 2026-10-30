@@ -1210,6 +1210,22 @@ DOCS = "https://github.com/CoreXI7/fishbowl/blob/main/docs/SETTINGS.md"
 COLLECTOR_BUILD = 20261030   # the oldest collector build this dashboard is happy with (collector/...: BUILD)
 
 
+def code_signature():
+    """When the server's own files last changed: the app folder is mounted from the host, so an update (git pull)
+    changes them under the running server, and Compose sees nothing to restart."""
+    out = []
+    for name in sorted(os.listdir(HERE)):
+        if name.endswith(".py"):
+            try:
+                out.append((name, os.stat(os.path.join(HERE, name)).st_mtime_ns))
+            except OSError:
+                pass
+    return tuple(out)
+
+
+_code_at_start = code_signature()
+
+
 def setup_checks(host=None, https=None, proxy_gaps=()):
     """The settings page's Setup checklist: [{id, state, title, detail, why, steps: [{text, code}], link, doc, optional,
     compose}]. compose = its fix edits docker-compose.yml (the page then says once: run docker compose up -d).
@@ -1503,6 +1519,11 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             "Connect qBittorrent, Seerr/Overseerr/Jellyseerr or Tautulli to show torrents (with the VPN-leak check), requests "
             "and Plex now playing. Until then those panels stay hidden.", link="#integrations", optional=True)
 
+    if not DEMO and code_signature() != _code_at_start:
+        add("restart", "warn", "A newer version is on disk",
+            "The dashboard's files changed since it started (an update?), but it still runs the code it started with: "
+            "Compose doesn't restart it for changed files, only for a changed docker-compose.yml.",
+            [("On the host, in the folder with docker-compose.yml:", "docker compose up -d --force-recreate")])
     if TRUSTED_PROXY:
         addrs = LISTEN.split()
         if addrs and not any(a in ("0.0.0.0", "::", "*") for a in addrs):
