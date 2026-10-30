@@ -166,6 +166,8 @@ def smart(dev):
         d = json.loads(raw)
     except Exception:
         return {"error": "no data"}
+    if not isinstance(d, dict):
+        return {"error": "unexpected output"}
     msgs = " ".join(m.get("string", "") for m in d.get("smartctl", {}).get("messages", []))
     if "STANDBY" in msgs.upper():
         return {"standby": True}
@@ -684,7 +686,7 @@ def security():
         s["authelia"] = {"failed_24h": count, "recent": recent}
     if SEC.get("process_watch", True):
         procs = run(["ps", "-eo", "pid=,pcpu=,comm=,args=", "--sort=-pcpu"]).splitlines()
-        watch = tuple(SEC.get("bad_process_names", MINERS))
+        watch = tuple(m.lower() for m in SEC.get("bad_process_names", MINERS))   # (the ps line is compared lower-cased)
         me = str(os.getpid())                                 # by PID: a name check could be dodged by a process naming itself
         found = [p.split(None, 3)[2] for p in procs if any(m in p.lower() for m in watch) and p.split(None, 1)[0] != me]
         top = []

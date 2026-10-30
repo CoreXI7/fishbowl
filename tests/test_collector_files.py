@@ -268,6 +268,24 @@ class Robust(unittest.TestCase):
         os.chmod(open_dir, 0o777)
         self.assertTrue(self.col.unsafe_out_dir(open_dir))
 
+    def test_process_names_with_capitals_match(self):
+        real = self.col.run
+        self.col.run = lambda cmd, *a, **k: ("123 99.0 XMRig /opt/XMRig --donate-level 1\n" if cmd[0] == "ps" else "")
+        self.col.SEC.update(process_watch=True, bad_process_names=["XMRig"], cron_watch=False, firewall=False)
+        try:
+            self.assertEqual(self.col.security()["procs"]["found"], ["XMRig"])
+        finally:
+            self.col.run = real
+
+    def test_smart_json_that_isnt_an_object(self):
+        real = self.col.run
+        self.col.run = lambda *a, **k: "[1, 2, 3]"
+        try:
+            self.assertIn("error", self.col.smart("/dev/sdz"))
+        finally:
+            self.col.run = real
+
+
 class Flags(unittest.TestCase):
     """The immutable-file check ran lsattr, which opens whatever is at the path after its own type check: a root
     container could swap a device node in between (/dev/watchdog resets the host; audit round 3). The flags are read
