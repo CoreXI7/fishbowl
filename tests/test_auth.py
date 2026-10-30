@@ -1624,6 +1624,20 @@ class Audit(Base):
                         cookie=f"{pre}; {dev}")
         self.assertEqual(st, 401, "the half-finished sign-in can't be completed")
 
+    def test_the_owners_right_code_forgives_nobody_elses_wrong_one(self):
+        # The code step reserves its try before checking it (round 1): the right code's own try isn't a wrong code, or
+        # the owner's next sign-in quietly forgave one wrong code someone else typed (audit round 2).
+        _, secret, _, dev = self.two_step()
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        pre = cookie_of(self.login()[1], "fishbowl-pre")                          # someone with the password...
+        call(self.url + "/api/login/code", "POST", {"code": "000000"}, cookie=pre)  # ...and one wrong code
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        pre = cookie_of(self.login(cookie=dev)[1], "fishbowl-pre")                # the owner, on their own browser
+        st, _, d = call(self.url + "/api/login/code", "POST", {"code": self.auth.totp_code(secret, int(time.time() // 30) + 1)},
+                        cookie=f"{pre}; {dev}")
+        self.assertEqual(st, 200, d)
+        self.assertEqual(d.get("notice", {}).get("code"), 1, "the wrong code is shown")
+
 
 if __name__ == "__main__":
     unittest.main()

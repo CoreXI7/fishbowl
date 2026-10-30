@@ -2188,6 +2188,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(401, {"error": CODE_USED, "field": "code"})
             if result != "ok":
                 with _pending_lock:
+                    p["wrong"] = p.get("wrong", 0) + (result == "wrong")   # (tries counts the right one too)
                     over = result == "stale" or p["tries"] >= 5
                     if over:
                         self.pending(consume=True)
@@ -2200,7 +2201,7 @@ class Handler(BaseHTTPRequestHandler):
             p = self.pending(consume=True) or p
             used = "recovery code" if auth.looks_like_recovery(s("code")) else "authenticator code"
             return self.signed_in_now(ip, p["keep"], f"signed in (password + {used})", p.get("dev"), p["epoch"],
-                                      (self.make_cookie("fishbowl-pre", "", clear=True),), wrong_codes=p["tries"])
+                                      (self.make_cookie("fishbowl-pre", "", clear=True),), wrong_codes=p.get("wrong", 0))
 
         # ---- everything below changes the account: a session is needed (the gate checked it) ----
         tok = self.session_token()
