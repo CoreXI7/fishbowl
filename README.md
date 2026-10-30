@@ -139,7 +139,9 @@ install before you can claim it.
   signed in are locked out until you unlock it on the host; browsers you've signed in with before still get in. Your next
   sign-in tells you what failed since the last one. The right password with a wrong code stays on the Setup checklist
   until you change the password or press "That was me".
-- **Plain HTTP** (no HTTPS): passwords are only accepted from your own network, and that sign-in only works there.
+- **Plain HTTP** (no HTTPS): passwords are only accepted from your own network, and that sign-in only works from the
+  same address. Your browser also sends the dashboard's cookies to every other web app on that address (any port),
+  so over plain HTTP only run apps you trust next to it, or put it behind HTTPS.
 - **Your reverse proxy** must send `X-Real-IP` and `X-Forwarded-Proto` (Nginx Proxy Manager does). Caddy, Traefik and
   HAProxy need a line or two: see [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). The Setup
   checklist tells you when something's missing.

@@ -174,8 +174,10 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   (7 idle) when kept, else 12 h (1 h idle). This is longer than NIST's AAL2 (24 h, 1 h idle) on purpose: wall screens
   stay signed in; untick "keep me signed in" for the AAL2 limits on a browser. An open dashboard polls, so it counts as
   activity. At most 50 sessions; a new one pushes out the one seen longest ago. A session counts only on the kind of
-  connection it was made on: one made over plain HTTP (exposed there) works only over plain HTTP from your own
-  network, never from outside or over HTTPS; trusted-device tokens are bound the same way. Sign-out ends it on the
+  connection it was made on: one made over plain HTTP (exposed there) works only over plain HTTP, from the address it
+  was made from (IPv6: the same /64), never from another address or over HTTPS; trusted-device tokens are bound the
+  same way. (Browsers send cookies to every port of a host, so over plain HTTP every other web app on the dashboard's
+  address receives them: a hostile one on your own network must not be able to replay them.) Sign-out ends it on the
   server and sends `Clear-Site-Data: "cache"` (not `"cookies"`, which would also wipe your SSO's cookies on the same
   site); pages behind the sign-in are `no-store`, and a page brought back by Back reloads, so the back/forward cache
   never shows them (or recovery codes) after signing out. Cookies are `Priority=High` (in Chrome a cookie flood from a

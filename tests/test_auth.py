@@ -1288,9 +1288,10 @@ class RoundFour(Base):
 
     def test_a_trusted_device_counts_only_on_its_kind_of_connection(self):
         d = {"epoch": 5, "devices": {}}
-        tok = self.auth.new_device(d, tls=False)
-        self.assertIsNotNone(self.auth.device_of(d, tok, False))
+        tok = self.auth.new_device(d, tls=False, ip="192.168.1.9")
+        self.assertIsNotNone(self.auth.device_of(d, tok, False, "192.168.1.9"))
         self.assertIsNone(self.auth.device_of(d, tok, True), "seen over plain HTTP: no good over HTTPS")
+        self.assertIsNone(self.auth.device_of(d, tok, False, "192.168.1.66"), "nor from another address (audit 2026-10-30)")
 
     def test_own_wrong_code_then_start_over_isnt_an_alarm(self):
         c, secret, recovery, dev = self.two_step()
@@ -1489,6 +1490,42 @@ class SetupChecks(Base):
             f.write("{}")
         st, _, _ = call(self.url + "/api/settings")
         self.assertEqual(st, 401, "a damaged account file signs everyone out (the sign-in page says what to do)")
+
+
+class AuditPlainHttp(Base):
+    """The pre-release audit (2026-10-30), plain HTTP through a proxy: each finding's attack, refused."""
+    env = {"AUTH": "login", "TRUSTED_PROXY": "127.0.0.1"}
+
+    def test_a_plain_http_session_counts_only_from_the_address_it_was_made_on(self):
+        # Browsers send cookies to every port of a host: over plain HTTP, any other web app on that address gets the
+        # session cookie, and a hostile one could replay it from its own address on the same network.
+        lan = {"X-Real-IP": "192.168.1.9", "X-Forwarded-Proto": "http"}
+        st, h, _ = call(self.url + "/api/setup-account", "POST", {"code": self.setup_code(), "user": "admin", "password": PW},
+                        headers=lan)
+        self.assertEqual(st, 200)
+        c = cookie_of(h)
+        self.assertEqual(call(self.url + "/api/settings", cookie=c, headers=lan)[0], 200)
+        self.assertEqual(call(self.url + "/api/settings", cookie=c, headers={**lan, "X-Real-IP": "192.168.1.66"})[0], 401,
+                         "another address on the same network: no good")
+        v6 = {"X-Real-IP": "fd00:1:2:3:aaaa::1", "X-Forwarded-Proto": "http"}
+        st, h, _ = call(self.url + "/api/login", "POST", {"user": "admin", "password": PW}, headers=v6)
+        self.assertEqual(st, 200)
+        c6 = cookie_of(h)
+        self.assertEqual(call(self.url + "/api/settings", cookie=c6, headers={**v6, "X-Real-IP": "fd00:1:2:3:bbbb::7"})[0], 200,
+                         "IPv6 changes its address within the /64 (privacy addresses): still the same browser")
+        self.assertEqual(call(self.url + "/api/settings", cookie=c6, headers={**v6, "X-Real-IP": "fd00:1:2:4::7"})[0], 401)
+
+    def test_a_plain_http_trusted_device_counts_only_from_the_address_it_was_made_on(self):
+        lan = {"X-Real-IP": "192.168.1.9", "X-Forwarded-Proto": "http"}
+        st, h, _ = call(self.url + "/api/setup-account", "POST", {"code": self.setup_code(), "user": "admin", "password": PW},
+                        headers=lan)
+        device = cookie_of(h, "fishbowl-device")
+        self.assertTrue(device)
+        self.app.ACCOUNT.update(lambda d: d.update(failures=150, last_fail=int(time.time())))   # someone hammered it
+        login = lambda ip: call(self.url + "/api/login", "POST", {"user": "admin", "password": PW}, cookie=device,
+                                headers={**lan, "X-Real-IP": ip})[0]
+        self.assertEqual(login("192.168.1.66"), 423, "the device token, replayed from another address: just a browser")
+        self.assertEqual(login("192.168.1.9"), 200, "the owner's browser, where it signed in: still trusted")
 
 
 if __name__ == "__main__":

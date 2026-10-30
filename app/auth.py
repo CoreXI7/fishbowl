@@ -446,28 +446,43 @@ def new_epoch(old=None):
 DEVICES_KEPT, DEVICE_FAILS, DEVICE_FOR = 10, 10, 365 * 86400
 
 
-def new_device(d, tls=False):
-    """Add a device token (for this epoch, and this kind of connection: http or https) to the account dict d; returns
-    the token (for the cookie)."""
+def same_place(made, ip):
+    """Is ip the address a plain-HTTP token was made from? Browsers send cookies to every port of a host, so over
+    plain HTTP every other web app on that address gets ours; a token made there only counts from where it was made.
+    IPv4: the same address. IPv6: the same /64 (a computer's privacy addresses change within it)."""
+    try:
+        a, b = ipaddress.ip_address(made or ""), ipaddress.ip_address(ip or "")
+    except ValueError:
+        return False
+    a, b = getattr(a, "ipv4_mapped", None) or a, getattr(b, "ipv4_mapped", None) or b
+    if a.version != b.version:
+        return False
+    return a == b if a.version == 4 else ipaddress.ip_network((a, 64), strict=False) == ipaddress.ip_network((b, 64), strict=False)
+
+
+def new_device(d, tls=False, ip=None):
+    """Add a device token (for this epoch, and this kind of connection: http or https; over http, for this address) to
+    the account dict d; returns the token (for the cookie)."""
     token = secrets.token_urlsafe(32)
     devs = {k: v for k, v in (d.get("devices") or {}).items()
             if isinstance(v, dict) and time.time() - v.get("t", 0) < DEVICE_FOR and v.get("epoch") == d["epoch"]}
     while len(devs) >= DEVICES_KEPT:
         del devs[min(devs, key=lambda k: devs[k].get("t", 0))]
-    devs[hashlib.sha256(token.encode()).hexdigest()] = {"t": int(time.time()), "fails": 0, "epoch": d["epoch"], "tls": bool(tls)}
+    devs[hashlib.sha256(token.encode()).hexdigest()] = {"t": int(time.time()), "fails": 0, "epoch": d["epoch"], "tls": bool(tls),
+                                                         **({} if tls else {"from": str(ip or "")[:64]})}
     d["devices"] = devs
     return token
 
 
-def device_of(d, token, tls=False):
+def device_of(d, token, tls=False, ip=None):
     """The device-token hash if this token belongs to the account (this epoch, the same kind of connection it was
-    made on, not worn out by wrong tries)."""
+    made on and, over plain HTTP, the same address; not worn out by wrong tries)."""
     if not isinstance(token, str) or not TOKEN.fullmatch(token):
         return None
     h = hashlib.sha256(token.encode()).hexdigest()
     v = (d.get("devices") or {}).get(h)
     if isinstance(v, dict) and time.time() - v.get("t", 0) < DEVICE_FOR and v.get("fails", 0) < DEVICE_FAILS \
-            and v.get("epoch") == d["epoch"] and bool(v.get("tls")) == tls:
+            and v.get("epoch") == d["epoch"] and bool(v.get("tls")) == tls and (tls or same_place(v.get("from"), ip)):
         return h
     return None
 
@@ -527,7 +542,7 @@ class Sessions:
                                    "until": now + (self.KEEP_FOR if keep else self.BRIEF_FOR),
                                    "idle": self.KEEP_IDLE if keep else self.BRIEF_IDLE,
                                    "ip": str(ip)[:64], "ua": str(ua)[:160], "keep": bool(keep), "epoch": int(epoch),
-                                   "tls": bool(tls)}
+                                   "tls": bool(tls), **({} if tls else {"from": str(ip)[:64]})}
             self._save()
         return token, (self.KEEP_FOR if keep else None)
 
@@ -538,14 +553,15 @@ class Sessions:
     def check(self, token, epoch, ip=None, tls=None):
         """The session for this cookie value, if it's still valid for this epoch (and mark it seen); None otherwise.
         tls: the kind of connection this request came over; a session counts only on the kind it was made on (one
-        made over plain HTTP was exposed there, and is no good over HTTPS). An unknown token costs a hash and a
-        lookup (no file read): a request may carry many cookie values to try."""
+        made over plain HTTP was exposed there, and is no good over HTTPS), and one made over plain HTTP only from
+        the address it was made from (same_place). An unknown token costs a hash and a lookup (no file read): a
+        request may carry many cookie values to try."""
         if not isinstance(token, str) or not TOKEN.fullmatch(token):
             return None
         now, key = int(time.time()), self._key(token)
         with self.lock:
             s = self._load().get(key)
-            if not s or (tls is not None and bool(s.get("tls")) != tls):
+            if not s or (tls is not None and bool(s.get("tls")) != tls) or (tls is False and not same_place(s.get("from"), ip)):
                 return None
             if self._alive(s, now) and s["epoch"] == epoch and now - s["seen"] < self.SEEN_EVERY:
                 return s

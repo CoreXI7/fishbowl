@@ -1161,8 +1161,10 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
         if https is False:
             add("https", "warn", "Signing in over plain HTTP",
                 "This browser reached the dashboard without HTTPS, so the password and the sign-in cookie travel "
-                "unencrypted on your network. (Does the address bar show https? Then your proxy tells the dashboard "
-                "otherwise, for example when HTTPS ends before it: make it send X-Forwarded-Proto: https.)",
+                "unencrypted on your network, and your browser also sends that cookie to every other web app on the "
+                "same address (any port); it only works from this browser's address. (Does the address bar show "
+                "https? Then your proxy tells the dashboard otherwise, for example when HTTPS ends before it: make it "
+                "send X-Forwarded-Proto: https.)",
                 [("Reach it through your reverse proxy's https address, and set ORIGIN in docker-compose.yml to that address:",
                   "ORIGIN: https://dash.example.com")], compose=True)
         if mine and mine.get("caches"):
@@ -1724,7 +1726,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def device(self, acct):
         """This browser's trusted-device token hash (it signed in here before), or None."""
-        return next((h for h in (auth.device_of(acct, t, self.https()) for t in self.cookie_values("fishbowl-device")) if h), None) if acct else None
+        tls, ip = self.https(), self.real_ip()
+        return next((h for h in (auth.device_of(acct, t, tls, ip) for t in self.cookie_values("fishbowl-device")) if h), None) if acct else None
 
     def gate(self, p, post=False, q=""):
         """AUTH=login: everything except the sign-in page (and the open-source CSS/JS/fonts it uses) needs a session.
@@ -1906,7 +1909,7 @@ class Handler(BaseHTTPRequestHandler):
             change(x)
             x["epoch"] = auth.new_epoch(epoch)
             x["devices"] = {}
-            new.update(dev=auth.new_device(x, self.https()), epoch=x["epoch"])
+            new.update(dev=auth.new_device(x, self.https(), ip), epoch=x["epoch"])
             ACCOUNT.event(x, why, ip, ua)
         ACCOUNT.update(apply)
         if not new:
@@ -1932,7 +1935,7 @@ class Handler(BaseHTTPRequestHandler):
             if x["epoch"] != epoch:   # the password or two-step changed meanwhile: that session is already worthless
                 return
             if not dev:
-                out["dev"] = auth.new_device(x, self.https())
+                out["dev"] = auth.new_device(x, self.https(), ip)
             ACCOUNT.event(x, what, ip, ua)
             since = {k: v - typos.get(k, 0) for k, v in x.get("since", {}).items()
                      if k in ("password", "code", "settings") and v > typos.get(k, 0)}

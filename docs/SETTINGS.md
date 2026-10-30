@@ -156,7 +156,9 @@ open that file:
 - **Changes end other access**: a new password, or turning two-step on or off, signs every other browser out and
   forgets every trusted browser. Signing one browser out (or every other one) needs the password too.
 - **Plain HTTP stays at home**: over plain HTTP, passwords are only accepted from your own network (private addresses),
-  and a sign-in made that way only works there: the same cookie is refused from outside and over HTTPS.
+  and a sign-in made that way only works there, from the same address (IPv6: the same /64): the same cookie is
+  refused from any other address and over HTTPS. Browsers send a site's cookies to every port of its address, so
+  over plain HTTP every other web app on that address receives them; this keeps a hostile one from reusing them.
 - **Wrong tries**: after 5 (per address, and for the account), each try waits twice as long as the last, up to 15
   minutes. 100 wrong tries in a row lock the account for browsers that never signed in here. A browser that did
   (it keeps a `fishbowl-device` cookie for a year) still signs in, and its wrong tries count on their own, so someone
