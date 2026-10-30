@@ -365,6 +365,16 @@ class IntegrationUrls(unittest.TestCase):
         loaded = app.cfgstore.validate({**app.ED, "tautulli": {"url": "http://me@nas:8181/t?x=1#y"}}, None)   # (a saved file)
         self.assertEqual(loaded["tautulli"]["url"], "http://nas:8181/t", "an older saved file still loads, cleaned")
 
+    def test_an_older_url_that_cant_be_cleaned_doesnt_stop_the_start(self):
+        # (the cleaning raised ValueError for these, which the old URL rule accepted: the container exited at every start)
+        app = load_app()
+        for old in ("http://admin:pa#ss@qbit:8080/", "http://admin:p?ss@qbit:8080/", "http://tautulli:8181x/?apikey=abc",
+                    "http://[fd00::5/?a"):
+            loaded = app.cfgstore.validate({**app.ED, "tautulli": {"url": old}}, None)
+            self.assertEqual(loaded["tautulli"]["url"], "", old)
+        loaded = app.cfgstore.validate({**app.ED, "tautulli": {"url": "http://[fd00::5]:8181/?apikey=abc"}}, None)
+        self.assertEqual(loaded["tautulli"]["url"], "http://[fd00::5]:8181/", "an IPv6 address keeps its brackets")
+
     def test_a_test_shows_no_text_from_a_service_that_isnt_http(self):
         import socketserver
         import threading

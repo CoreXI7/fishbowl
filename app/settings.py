@@ -333,10 +333,15 @@ def _home_ip(qbit_in):
 
 def _integration_url(v, name, loading):
     """An integration's URL (INTEGRATION_URL). A saved file from before that rule (loading) has its query, fragment and
-    user dropped instead of stopping the dashboard from starting."""
+    user dropped instead of stopping the dashboard from starting; one that can't be read that way (a password with a #
+    in it reads as a port) is dropped: the Setup check then says the integration isn't connected."""
     if loading and isinstance(v, str) and re.search(r"[?#@]", v):
-        u = urllib.parse.urlsplit(v.strip())
-        v = f"{u.scheme}://{u.hostname or ''}{f':{u.port}' if u.port else ''}{u.path}" if u.scheme in ("http", "https") else ""
+        try:
+            u = urllib.parse.urlsplit(v.strip())
+            u.port                                              # (raises for a port that isn't a number)
+            v = f"{u.scheme}://{u.netloc.rpartition('@')[2]}{u.path}" if u.scheme in ("http", "https") else ""
+        except ValueError:
+            v = ""
     return _s(v, 500, f"{name} URL", INTEGRATION_URL)
 
 
