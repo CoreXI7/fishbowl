@@ -73,6 +73,28 @@ class ChunkSize(unittest.TestCase):
         for cls in (upstream.DeadlineHTTPConnection, upstream.DeadlineHTTPSConnection):
             self.assertIs(cls.response_class, upstream.StrictResponse)
 
+class HeaderSize(unittest.TestCase):
+    """http.client takes ~6 MB of headers per answer, and the deadline watcher kept each finished connection (with its
+    last answer and those headers) until its deadline: one Seerr poll's 50 title lookups OOM-killed the dash (audit
+    round 3). Upstream answers' headers are capped at 64 KB, and the watcher holds sockets only."""
+
+    def test_huge_headers_are_refused_and_nothing_big_is_kept(self):
+        def big(h):
+            h.send_response(200)
+            for i in range(30):
+                h.send_header(f"X-Pad-{i}", "a" * 60_000)
+            h.send_header("Content-Type", "image/png")
+            h.send_header("Content-Length", "4")
+            h.end_headers()
+            h.wfile.write(b"\x89PNG")
+        up = Upstream({"/favicon.ico": big})
+        self.addCleanup(up.close)
+        load_app()
+        import upstream
+        self.assertIsNone(upstream.fetch_same_host(up.url + "/favicon.ico", up.url, "big.example", 512_000))
+        self.assertTrue(all(not hasattr(k, "headers") and not hasattr(k, "_HTTPConnection__response")
+                            for k in list(upstream._watched)), "only sockets are kept until the deadline")
+
 
 if __name__ == "__main__":
     unittest.main()

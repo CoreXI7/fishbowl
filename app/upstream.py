@@ -39,37 +39,62 @@ def _reap():
     with _watch_cond:
         while True:
             now = time.monotonic()
-            for conn, at in [(c, t) for c, t in _watched.items() if t <= now]:
-                _watched.pop(conn, None)
+            for sock, at in [(k, t) for k, t in _watched.items() if t <= now]:
+                _watched.pop(sock, None)
                 try:
-                    socket.socket.shutdown(conn._dl_sock, socket.SHUT_RDWR)   # (the plain socket's: stops an SSL read too)
-                except (OSError, TypeError, AttributeError):
+                    socket.socket.shutdown(sock, socket.SHUT_RDWR)   # (the plain socket's: stops an SSL read too)
+                except (OSError, TypeError):
                     pass
             _watch_cond.wait(min(_watched.values()) - now if _watched else None)
 
 
 def watch(conn):
-    """Shut conn's socket down DEADLINE_FACTOR x its timeout from now (called once it's connected). The socket is
-    remembered here: urllib drops conn.sock once the headers are in, while the body is still being read from it."""
-    if not isinstance(conn.timeout, (int, float)):
+    """Shut conn's socket down DEADLINE_FACTOR x its timeout from now (called once it's connected). Only the socket is
+    kept here: urllib drops conn.sock once the headers are in, while the body is still being read from it, and the
+    connection itself holds its last answer and headers (kept to the deadline, 50 of them used up the memory)."""
+    if not isinstance(conn.timeout, (int, float)) or conn.sock is None:
         return
-    conn._dl_sock = conn.sock
     with _watch_cond:
-        _watched[conn] = time.monotonic() + DEADLINE_FACTOR * conn.timeout
+        _watched[conn.sock] = time.monotonic() + DEADLINE_FACTOR * conn.timeout
         if not _reaper:
             _reaper.append(threading.Thread(target=_reap, name="upstream-deadlines", daemon=True))
             _reaper[0].start()
         _watch_cond.notify()
 
 
-def unwatch(conn):
-    with _watch_cond:
-        _watched.pop(conn, None)
+class _HeaderBudget:
+    """A response's file while its status line and headers are read: HEADERS_MAX bytes in all (http.client alone takes
+    100 lines of 64 KB, ~6 MB an answer)."""
+    def __init__(self, f, n):
+        self.f, self.left = f, n
+
+    def readline(self, limit=-1):
+        line = self.f.readline(self.left + 1 if limit < 0 else min(limit, self.left + 1))
+        self.left -= len(line)
+        if self.left < 0:
+            raise http.client.HTTPException("the answer's headers are too big")
+        return line
+
+    def __getattr__(self, name):
+        return getattr(self.f, name)
+
+
+HEADERS_MAX = 64 * 1024
 
 
 class StrictResponse(http.client.HTTPResponse):
-    """A response whose chunk sizes must be plain hex: http.client takes "-1" as "read to the end" (CVE-2026-103995,
-    still in 3.12.16), which bypassed every byte cap here and let one hostile upstream use up the memory."""
+    """A response whose headers are at most HEADERS_MAX and whose chunk sizes must be plain hex: http.client takes "-1"
+    as "read to the end" (CVE-2026-103995, still in 3.12.16), which bypassed every byte cap here and let one hostile
+    upstream use up the memory."""
+    def begin(self):
+        real = self.fp
+        self.fp = _HeaderBudget(real, HEADERS_MAX)
+        try:
+            super().begin()
+        finally:
+            if self.fp is not None:   # (begin() may have closed it: an answer without a body)
+                self.fp = real
+
     def _read_next_chunk_size(self):
         line = self.fp.readline(1025)
         if len(line) > 1024:
