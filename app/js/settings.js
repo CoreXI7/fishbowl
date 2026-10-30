@@ -656,7 +656,7 @@ function renderCollector() {
     ${ccheck("security.details", "Detail views (click a box's title on the dashboard's Security & backups card)")}
     <details class="adv" data-did="watch"${watcher ? " open" : ""}><summary>Advanced: your own watch script, and fail2ban's log</summary>
       ${ctext("security.fail2ban_log", "fail2ban's log (for the recent bans list)", "Usually <code>/var/log/fail2ban.log</code>. Empty: off.")}
-      <div class="field" id="c-security-watcher" data-ck="security.watcher"><span class="flabel">Your own watch script</span>${chip("security.watcher")}
+      <div class="field" id="c-security-watcher" data-ck="security.watcher"><div class="lrow"><span class="flabel">Your own watch script</span>${chip("security.watcher")}</div>
         <small id="c-security-watcher-d">A script that runs from cron, shown in the Process watch details: when it last ran and what it alerted on.</small></div>
       ${[["label", "Its name", ""], ["heartbeat", "A file it rewrites every run", "Its age is the time since the last run."],
          ["alerts", "A file with one line per problem it alerted on", "Lines look like kind:detail."]].map(([f, l, h]) =>
@@ -674,13 +674,37 @@ function renderCollector() {
     ${ctext("backup.success_regex", "A line that means the run went fine (optional)", pat, "regex pattern regular expression")}
     ${ctext("backup.failure_regex", "A line that means it failed", "Like <code>error</code> or <code>failed</code>. Empty: off (no line counts as a failure).", "regex pattern regular expression")}
     ${cnum("backup.max_age_hours", "A backup is overdue after (hours)", 1, 8760, "This one applies by itself.")}
-    <div class="field" id="c-backup-jobs" data-ck="backup.jobs" data-kw="regex pattern"><h3 class="jobs-h">Backup jobs</h3>${chip("backup.jobs")}
-      <small>One per backup: the log line that marks it done, the files it leaves, where it goes. Shown in the Backups view.
-        (Counted checks and file patterns, <code>[[backup.checks]]</code> and <code>[[backup.artifacts]]</code>, are set in collector.toml.)</small></div>
+    <div class="field" id="c-backup-jobs" data-ck="backup.jobs" data-kw="regex pattern"><div class="lrow"><h3 class="jobs-h">Backup jobs</h3>${chip("backup.jobs")}</div>
+      <small>One per backup: the log line that marks it done, the files it leaves, where it goes. Shown in the Backups view.</small></div>
     <div id="c-jobs">${jobs.map((j, i) => jobCard(j, i)).join("")}</div>
-    <button type="button" id="c-add-job" class="ibtn"${dis()}>+ Add a backup job</button>`;
+    <button type="button" id="c-add-job" class="ibtn"${dis()}>+ Add a backup job</button>
+    <div class="field" id="c-backup-checks" data-ck="backup.checks" data-kw="regex pattern count offsite"><div class="lrow"><h3 class="jobs-h">Counted checks</h3>${chip("backup.checks")}</div>
+      <small>Lines to count in the last run of the log, like "offsite copy ok" twice when you keep two copies. Fewer than that
+        marks the run as failed.</small></div>
+    <div>${tableCards("backup.checks")}</div>
+    <div class="field" id="c-backup-artifacts" data-ck="backup.artifacts" data-kw="glob pattern files"><div class="lrow"><h3 class="jobs-h">Backup files</h3>${chip("backup.artifacts")}</div>
+      <small>Files your backups leave behind. For each pattern, the newest file must be newer than the overdue time above.</small></div>
+    <div>${tableCards("backup.artifacts")}</div>`;
   document.querySelectorAll("#drives details, #security details, #backups details").forEach(d => { if (open.includes(d.dataset.did)) d.open = true; });
   applySearch();
+}
+// counted checks and backup file patterns: small tables, edited like the jobs
+const TABLES = {
+  "backup.checks": {one: "check", fresh: "New check", fields: [
+    ["label", "Name", ""],
+    ["regex", "A line to count in the last run", "Text the line contains, like <code>offsite copy ok</code>."],
+    ["min_count", "At least this many times (empty = once)", "", "number"]]},
+  "backup.artifacts": {one: "file pattern", fresh: "New file pattern", fields: [
+    ["label", "Name", ""],
+    ["glob", "Its files (* and ? work as wildcards)", "Like <code>/srv/backups/db/*.sql.gz</code>."]]},
+};
+function tableCards(k) {
+  const t = TABLES[k], p = cid(k), items = clist(k).filter(x => x && typeof x === "object" && !Array.isArray(x));
+  return items.map((x, i) => `<div class="jobcard" role="group" aria-labelledby="${p}-${i}-h"><div class="gh"><h4 id="${p}-${i}-h">${esc(x.label || t.fresh)}</h4>
+      <button type="button" class="ibtn danger" data-tdel="${esc(k)}" data-ti="${i}" aria-label="Remove the ${t.one} ${esc(x.label || "")}"${dis()}>Remove</button></div>
+    ${t.fields.map(([f, label, help, type = "text"]) => `<div class="field"><label for="${p}-${i}-${f}">${esc(label)}</label>
+      <input type="${type}" id="${p}-${i}-${f}" data-tk="${esc(k)}" data-ti="${i}" data-f="${f}" value="${esc(x[f] ?? "")}" spellcheck="false"${type === "number" ? ' min="1" max="1000" step="1"' : ""} aria-describedby="${help ? `${p}-${i}-${f}-d ` : ""}${p}-st"${dis()}>${help ? `<small id="${p}-${i}-${f}-d">${help}</small>` : ""}</div>`).join("")}
+  </div>`).join("") + `<button type="button" class="ibtn" data-tadd="${esc(k)}"${dis()}>+ Add a ${t.one}</button>`;
 }
 function jobCard(j, i) {
   const f = (k, label, help = "", type = "text") => `<div class="field"><label for="c-j${i}-${k}">${esc(label)}</label>
@@ -768,6 +792,17 @@ document.addEventListener("input", e => {
     Object.keys(j).forEach(k => (j[k] === "" || j[k] === false || (Array.isArray(j[k]) && !j[k].length)) && delete j[k]);
     cset("backup.jobs", jobs);
     if (f === "label") t.closest(".jobcard").querySelector(".gh h4").textContent = j.label || "New backup job";
+  } else if (t.dataset.tk) {
+    const k = t.dataset.tk, list = structuredClone(clist(k)), x = list[+t.dataset.ti], f = t.dataset.f;
+    if (!TABLES[k] || !x || typeof x !== "object") return;
+    if (f === "min_count") {
+      if (t.value === "") delete x.min_count;
+      else if (!Number.isInteger(+t.value) || +t.value < 1 || +t.value > 1000) return fieldErr(t, "A whole number from 1 to 1000.");
+      else { clearErr(t); x.min_count = +t.value; }
+    } else x[f] = t.value.trim();
+    Object.keys(x).forEach(kk => x[kk] === "" && delete x[kk]);
+    cset(k, list);
+    if (f === "label") t.closest(".jobcard").querySelector(".gh h4").textContent = x.label || TABLES[k].fresh;
   } else if (t.dataset.mlabel) {
     const l0 = cget("mount_labels", {}), l = {...(l0 && typeof l0 === "object" && !Array.isArray(l0) ? l0 : {})};
     if (t.value.trim()) l[t.dataset.mlabel] = t.value.trim(); else delete l[t.dataset.mlabel];
@@ -794,6 +829,17 @@ document.addEventListener("click", e => {
     for (let i = 2; have.has(name); i++) name = `New backup job ${i}`;
     cset("backup.jobs", [...structuredClone(clist("backup.jobs")), {label: name}]);
     renderCollector(); const n = clist("backup.jobs").length - 1; $(`c-j${n}-label`).focus(); $(`c-j${n}-label`).select();
+  } else if (t.dataset.tadd && TABLES[t.dataset.tadd]) {
+    const k = t.dataset.tadd, have = new Set(clist(k).map(x => x && x.label));   // each needs its own name
+    let name = TABLES[k].fresh;
+    for (let i = 2; have.has(name); i++) name = `${TABLES[k].fresh} ${i}`;
+    cset(k, [...structuredClone(clist(k)), {label: name}]);
+    renderCollector(); const el = $(`${cid(k)}-${clist(k).length - 1}-label`); el.focus(); el.select();
+  } else if (t.dataset.tdel && TABLES[t.dataset.tdel]) {
+    const k = t.dataset.tdel, list = structuredClone(clist(k)), i = +t.dataset.ti;
+    if (!confirm(`Remove the ${TABLES[k].one} "${(list[i] || {}).label || ""}"?`)) return;
+    list.splice(i, 1); cset(k, list); renderCollector();
+    ($(`${cid(k)}-${Math.min(i, list.length - 1)}-label`) || document.querySelector(`[data-tadd="${k}"]`)).focus();
   } else if (t.dataset.jdel !== undefined) {
     const jobs = structuredClone(clist("backup.jobs")), i = +t.dataset.jdel;
     if (!confirm(`Remove the backup job "${jobs[i].label || ""}"?`)) return;

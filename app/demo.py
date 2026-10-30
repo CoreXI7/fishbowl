@@ -273,6 +273,8 @@ COLLECTOR = {
                  "security.process_watch": True, "security.cron_watch": True, "security.firewall": True,
                  "security.immutable_files": ["/opt/app/config.ini"], "backup.log": "/var/log/backup.log",
                  "backup.max_age_hours": 26,
+                 "backup.checks": [{"label": "Offsite copy", "regex": "offsite copy ok", "min_count": 1}],
+                 "backup.artifacts": [{"label": "Database dumps", "glob": "/srv/backups/db/*.sql.gz"}],
                  "backup.jobs": [{"label": "Nightly snapshot", "regex": "snapshot done", "dest": "/mnt/backup", "size": True, "every": "nightly"},
                                  {"label": "DB dumps", "regex": "dumped (?P<name>\\S+)", "files": ["/srv/backups/db/*.sql.gz"]}]},
 }
