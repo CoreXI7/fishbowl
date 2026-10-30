@@ -73,7 +73,7 @@ proxy's SSO), but the reasoning applies to any install.
 | Source | Sink | Control |
 |---|---|---|
 | qBittorrent / Seerr / Tautulli JSON | page `innerHTML` | the server passes on only typed, clipped fields (`num()`, `text()`; ids must be ints); the page escapes every integration value, numbers included (the collector's own numbers are typed by the collector); CSP `script-src 'self'` with no inline script or handlers |
-| Tautulli poster art | `/api/plexart` on the dash's origin | raster image types only, `Content-Security-Policy: default-src 'none'` |
+| Tautulli poster art, service icons | `/api/plexart`, `/api/icon` on the dash's origin | raster image types only (the type read case-blind, trimmed); icons only from the service's own origin (`/` and `/favicon.ico`, never its URL's path or query); `Content-Security-Policy: default-src 'none'; sandbox` and `Cross-Origin-Resource-Policy: same-origin` (as on every answer) |
 | NPM `server_name`, settings text | page `innerHTML`, attributes | `esc()`; settings validated server-side |
 | Log lines, process names, cron lines | `hw.json` / `sec-detail.json` → page | `clip()` (length, control and bidi characters), `redact()` (secrets), `esc()` in the page |
 | Request path, headers | dash container log | `log_safe()`: control characters shown as `\xNN`, clipped; `X-Real-IP` and the user header count only from the proxy |

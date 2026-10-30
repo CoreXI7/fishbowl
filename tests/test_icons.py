@@ -1,9 +1,11 @@
 """Service icons come from attacker-controllable services and are served on the dashboard's own origin (audit
 2026-10-30): an SVG must never get through, whatever its spelling; the fetch must stay on the service's own origin (a
-service URL with a path or query isn't a way to read other pages of that host)."""
+service URL with a path or query isn't a way to read other pages of that host); and anything passed through is a
+sandboxed resource that other sites can't load."""
+import http.client
 import unittest
 
-from helpers import Upstream, load_app
+from helpers import Upstream, load_app, serve
 from test_redirects import PNG, npm_conf
 
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><form action="https://evil.example/"></form></foreignObject></svg>'
@@ -37,6 +39,17 @@ class Icons(unittest.TestCase):
         finally:
             self.app.read_npm_hosts = real
         self.assertEqual(sorted(h[1] for h in self.cam.hits), ["/", "/favicon.ico"])
+
+    def test_passed_through_answers_are_sandboxed(self):
+        srv, url = serve(self.app.Handler)
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
+        c = http.client.HTTPConnection(url.split("//")[1])
+        c.request("GET", "/api/icon?host=nice.example")
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.status, 200)
+        self.assertIn("sandbox", r.getheader("Content-Security-Policy"))
+        self.assertEqual(r.getheader("Cross-Origin-Resource-Policy"), "same-origin", "other sites can't load it")
 
 
 if __name__ == "__main__":

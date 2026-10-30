@@ -1510,10 +1510,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")   # other sites can't load (or probe) our answers
         if ctype.startswith("text/html"):
             self.send_header("Content-Security-Policy", CSP)
         elif "Content-Security-Policy" not in (extra or {}):   # never framed, never a document with powers
-            self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; sandbox")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         for c in cookies:
@@ -2359,12 +2360,12 @@ class Handler(BaseHTTPRequestHandler):
                 art = None
             if not art:
                 return self.send(404, {"error": "no art"})
-            self.send(200, art[0], art[1], "private, max-age=86400", {"Content-Security-Policy": "default-src 'none'"})
+            self.send(200, art[0], art[1], "private, max-age=86400", {"Content-Security-Policy": "default-src 'none'; sandbox"})
         elif p == "/api/icon" and not DEMO:
             ico = favicon(query.get("host", [""])[0])
             if not ico:
                 return self.send(404, {"error": "no icon"})
-            self.send(200, ico[0], ico[1], "private, max-age=86400", {"Content-Security-Policy": "default-src 'none'"})
+            self.send(200, ico[0], ico[1], "private, max-age=86400", {"Content-Security-Policy": "default-src 'none'; sandbox"})
         elif p == "/favicon.ico":
             self.path = "/static/favicon.svg"
             return self.get()
@@ -2380,7 +2381,7 @@ class Handler(BaseHTTPRequestHandler):
                      "jpg": "image/jpeg", "gif": "image/gif", "woff2": "font/woff2"}[m[3]]
             cache = "private, max-age=604800" if m[1] == "uploads" and AUTH == "login" else "public, max-age=604800"
             self.send(200, open(f, "rb").read(), ctype, cache,
-                      {"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"})
+                      {"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"})
         elif p == "/healthz":
             self.send(200, {"ok": True})
         else:

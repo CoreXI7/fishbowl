@@ -29,7 +29,7 @@ class PlexArt(unittest.TestCase):
         self.answer[0] = (200, {"Content-Type": "image/png"}, PNG)
         r = self.get()
         self.assertEqual(r.headers["Content-Type"], "image/png")
-        self.assertEqual(r.headers["Content-Security-Policy"], "default-src 'none'")
+        self.assertEqual(r.headers["Content-Security-Policy"], "default-src 'none'; sandbox")
 
     def test_script_types_are_refused(self):
         for ctype, body in (("image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"),
