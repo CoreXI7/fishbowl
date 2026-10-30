@@ -378,6 +378,18 @@ class SignIn(Base):
         self.app.THROTTLE.ip_ok("127.0.0.1")
         self.assertEqual(self.login()[0], 200, "unlock on the host works without a restart")
 
+    def test_status_shows_a_damaged_name(self):
+        # (a lone surrogate in auth.json's user name made status crash; audit round 3)
+        self.create()
+        with open(self.auth.AUTH_FILE) as f:
+            d = json.load(f)
+        with open(self.auth.AUTH_FILE, "w") as f:
+            json.dump({**d, "user": "ad\udc80min"}, f)   # (escaped as \udc80 in the file; the app never writes one)
+        out = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "app", "auth.py"), "status"], capture_output=True, text=True,
+                             env={**os.environ, "DATA_DIR": self.auth.DATA_DIR})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("Account: ad\\udc80min", out.stdout)
+
     def test_https_cookie(self):
         app = load_app(AUTH="login", ORIGIN="https://dash.example.com")
         srv, url = serve(app.Handler)

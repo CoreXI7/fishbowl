@@ -745,6 +745,7 @@ def _cli(argv):
              "  setup-code  a new one-time code for creating the account (only while there's no account)\n"
              "  signout     sign every browser out and forget trusted browsers (the account stays)\n"
              "  reset       delete the account and every session (settings and keys stay), and print a new setup code")
+    sys.stdout.reconfigure(errors="backslashreplace")   # (a damaged account file's name must not crash status)
     if not argv or argv[0] not in ("status", "unlock", "setup-code", "signout", "reset"):
         print(usage)
         return 2
