@@ -1595,6 +1595,21 @@ class Audit(Base):
         self.assertIn("signed in with before", d["error"])
         self.assertTrue(d.get("hint"), "the sign-in page shows this text instead of its own")
 
+    def test_one_code_works_once_across_two_processes(self):
+        # Two dashboards on one data folder: each checked "used before?" under its own lock only, so both could accept
+        # the same code in the moment between one's check and the other's save (audit 2026-10-30).
+        _, secret, _, _ = self.two_step()
+        other = load_app(**self.env, DATA_DIR=os.path.dirname(self.auth.AUTH_FILE))
+        epoch, before = self.app.ACCOUNT.get()["epoch"], other.ACCOUNT.get()   # (the other one read the account...)
+        code = self.auth.totp_code(secret, int(time.time() // 30) + 1)
+        self.assertEqual(self.app.Handler.code_ok(None, code, epoch), "ok")    # (...then this one used the code)
+        real = other.ACCOUNT.get
+        other.ACCOUNT.get = lambda: before
+        try:
+            self.assertEqual(other.Handler.code_ok(None, code, epoch), "used")
+        finally:
+            other.ACCOUNT.get = real
+
 
 if __name__ == "__main__":
     unittest.main()

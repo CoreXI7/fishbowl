@@ -2030,7 +2030,8 @@ class Handler(BaseHTTPRequestHandler):
     def code_ok(self, code, epoch):
         """"ok" for a right authenticator code or recovery code (each works once), "used" for a right code that was
         already used, "wrong", or "stale" when the account changed since the password was checked. Checked and used up under one lock, on a fresh read: two
-        requests with the same code can't both get through."""
+        requests with the same code can't both get through (and checked again inside the file-locked save, for a second
+        dashboard on the same data folder)."""
         code = code if isinstance(code, str) else ""
         with _try_lock:
             d = ACCOUNT.get()
@@ -2049,8 +2050,10 @@ class Handler(BaseHTTPRequestHandler):
             step = auth.totp_match(d["totp"]["secret"], code, d["totp"].get("last_step", 0))
             if step is None:
                 return "used" if auth.totp_used(d["totp"]["secret"], code, d["totp"].get("last_step", 0)) else "wrong"
-            ACCOUNT.update(lambda x: x["totp"].update(last_step=max(step, x["totp"].get("last_step", 0))))
-            return "ok"
+            used = []   # checked again inside the file-locked update: another dashboard on this data folder may have used it
+            ACCOUNT.update(lambda x: (used.append(1), x["totp"].update(last_step=step))
+                           if step > x["totp"].get("last_step", 0) and x["epoch"] == epoch else None)
+            return "ok" if used else "used"
 
     def auth_post(self, path):
         try:
