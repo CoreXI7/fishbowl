@@ -228,7 +228,7 @@ class Page(unittest.TestCase):
             b.js("(el => { el.value = '10.0.0'; el.dispatchEvent(new Event('input', {bubbles: true})); })(document.getElementById('f-known'))")
             b.js("document.getElementById('save').click()")
             self.assertTrue(b.wait_for("!document.getElementById('err-sum').hidden", 10), "a refused save shows the summary")
-            self.assertEqual(b.js("document.querySelector('#err-sum a').getAttribute('href')"), "#security")
+            self.assertEqual(b.js("document.querySelector('#err-sum a').getAttribute('href')"), "#f-known", "links to the field itself")
             self.assertEqual(b.js("document.getElementById('f-known').getAttribute('aria-invalid')"), "true")
             self.assertEqual(b.csp_violations(), [])
         finally:

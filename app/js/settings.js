@@ -15,16 +15,19 @@ const post = (url, body) => api(url, {method: "POST", headers: {"Content-Type": 
 const upload = f => api("/api/upload", {method: "POST", headers: {"Content-Type": "application/octet-stream"}, body: f});
 
 // the header's height, for the sticky menu and for where a section scrolls to
+// (it can grow after load: a long title, the demo tag or a late font wraps it)
 const setHH = () => document.documentElement.style.setProperty("--hh", document.querySelector("header").offsetHeight + "px");
-setHH(); addEventListener("resize", setHH);
+setHH(); new ResizeObserver(setHH).observe(document.querySelector("header"));
 
 // ---------- unsaved changes: the Save bar, and a dot on each section in the menu that has some ----------
 const SECTION_NAMES = {setup: "Setup", look: "Look & feel", themes: "Themes", services: "Services", integrations: "Integrations",
                        security: "Security", about: "About"};
+const secName = k => Object.hasOwn(SECTION_NAMES, k) ? SECTION_NAMES[k] : "";
+const narrow = matchMedia("(max-width:600px)");
 const PERSONALITY = ["tagline", "tagline_down", "click_emoji", "greeting", "quotes", "mascot", "mascot_credit", "favicon"];
 const slices = d => ({   // which part of the settings each section edits (for the unsaved-changes dots)
-  look: [d.site.title, d.site.theme, d.site.hidden_panels],
-  themes: [PERSONALITY.map(k => d.site[k]), d.site.themes],
+  look: [d.site.title, d.site.hidden_panels],
+  themes: [d.site.theme, PERSONALITY.map(k => d.site[k]), d.site.themes],
   services: [d.groups, d.apps, d.services, d.skip_hosts, d.via_proxy],
   integrations: [d.qbittorrent, d.seerr, d.tautulli],
   security: [d.known_ips],
@@ -37,16 +40,19 @@ function changedSections() {
   return out;
 }
 const andList = xs => xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
+function setMsg(html) { if ($("msg").innerHTML !== html) $("msg").innerHTML = html; }   // a status region: only announce real changes
 function setDirty(d = true) {
   dirty = d;
   const ch = changedSections();
   if (d && !ch.length) dirty = false;   // edited back to what's saved
   $("save").disabled = !dirty || !V.ui_enabled;
+  $("reload").disabled = !dirty;
   document.querySelectorAll(".set-nav a").forEach(a => a.classList.toggle("unsaved", ch.includes(a.hash.slice(1))));
-  $("msg").innerHTML = !V.ui_enabled ? '<span class="warn-t">Read-only: the settings page is turned off (SETTINGS_UI=0).</span>'
+  setMsg(!V.ui_enabled ? '<span class="warn-t">Read-only: the settings page is turned off (SETTINGS_UI=0).</span>'
     : !V.writable ? '<span class="crit-t">✗ The data folder isn\'t writable, so saving will fail. See Setup.</span>'
-    : dirty ? `<span class="warn-t">● Unsaved changes in ${esc(andList(ch.map(k => SECTION_NAMES[k])))}</span>`
-    : '<span class="mute">All changes saved.</span>';
+    : dirty ? (narrow.matches ? `<span class="warn-t">● ${ch.length} section${ch.length > 1 ? "s" : ""} unsaved</span>`
+                              : `<span class="warn-t">● Unsaved changes in ${esc(andList(ch.map(secName)))}</span>`)
+    : '<span class="mute">No unsaved changes.</span>');
 }
 addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 addEventListener("keydown", e => {   // Ctrl+S / ⌘+S saves
@@ -61,14 +67,14 @@ function bindFields() {
   document.querySelectorAll("[data-k]").forEach(el => {
     const v = getPath(S, el.dataset.k);
     el.value = el.hasAttribute("data-list") ? (v || []).join("\n") : (v ?? "");
-    el.disabled = !V.ui_enabled;
+    el.disabled = el.disabled || !V.ui_enabled;   // keeps a lock from the renderer (an address set in the environment)
     el.oninput = () => { setPath(S, el.dataset.k, el.hasAttribute("data-list") ? lines(el.value) : el.value); clearErr(el); setDirty(); };
   });
   // set in the environment: shown, locked (the environment always wins)
   if (V.via_proxy_env.length) {
     const f = $("f-via");
     f.value = V.via_proxy_env.join("\n"); f.disabled = true;
-    $("d-via").innerHTML = '<span class="lockt">🔒 Set by <code>CHECK_VIA_PROXY</code> in docker-compose.yml, which wins over this page.</span>';
+    $("d-via").innerHTML = '<span class="lockt">🔒 Set by <code>CHECK_VIA_PROXY</code> in docker-compose.yml / .env, which wins over this page.</span>';
   }
 }
 
@@ -76,11 +82,11 @@ function bindFields() {
 const CHECKS = {
   // IPv4: a full address or a prefix ending in a dot; IPv6 (has a colon): only rough here, the server checks the rest
   "f-known": l => /^[\d.]+$/.test(l) ? /^(\d{1,3}\.){3}\d{1,3}$|^(\d{1,3}\.){1,3}$/.test(l) : l.includes(":") && /^[0-9a-fA-F:.]{2,45}$/.test(l),
-  "f-via": l => /^[A-Za-z0-9.-]{1,253}(\/[A-Za-z0-9._~%+,;=:@\/-]{0,200})?$/.test(l) && !l.split("/").slice(1).join("/").includes(".."),
+  "f-via": l => /^[A-Za-z0-9.-]{1,253}(\/[A-Za-z0-9._~%+,;=:@\/-]{0,200})?$/.test(l) && !/\.\.|%2e/i.test(l.split("/").slice(1).join("/")),
 };
 const CHECK_MSG = {
   "f-known": l => `"${l}" isn't an IP address or a prefix ending in a dot or a colon.`,
-  "f-via": l => `"${l}" isn't a host name with an optional /path (no spaces, ? or #).`,
+  "f-via": l => `"${l}" isn't a host name with an optional /path (no spaces, ?, # or "..").`,
 };
 document.addEventListener("focusout", e => {
   const ok = CHECKS[e.target.id];
@@ -97,28 +103,32 @@ function fieldErr(el, msg) {
   el.insertAdjacentElement("afterend", m);
 }
 function clearErr(el) {
-  const m = $((el.id || "f") + "-err");
-  if (!m) return;
-  m.remove(); el.removeAttribute("aria-invalid");
-  el.setAttribute("aria-describedby", (el.getAttribute("aria-describedby") || "").split(" ").filter(x => x !== m.id).join(" "));
+  const id = (el.id || "f") + "-err";
+  $(id)?.remove();
+  el.removeAttribute("aria-invalid");
+  if (el.hasAttribute("aria-describedby")) el.setAttribute("aria-describedby", el.getAttribute("aria-describedby").split(" ").filter(x => x !== id).join(" "));
 }
 
-// ---------- error summary (a failed save): what's wrong, and a link to where ----------
-function showErr(msg, section) {
+// ---------- error summary (a failed save, upload or load): what's wrong, and a link to the field or section ----------
+const FIELD_OF = {"known IP": "f-known", "check through the proxy": "f-via", "title": "f-title", "home IP": "i-home",
+                  "qbittorrent URL": "i-qbittorrent-url", "seerr URL": "i-seerr-url", "tautulli URL": "i-tautulli-url"};
+function showErr(msg, section, title = "Not saved") {
+  const k = Object.keys(FIELD_OF).find(k => msg.startsWith(k + ":")), field = k && $(FIELD_OF[k]);
+  if (field) {
+    if (field.closest("details")) field.closest("details").open = true;
+    fieldErr(field, msg.slice(k.length + 1).trim());
+  }
   const box = $("err-sum");
-  box.innerHTML = `<h2>Not saved</h2><p>${esc(msg)}</p>` +
-    (SECTION_NAMES[section] ? `<p><a href="#${section}">Go to ${esc(SECTION_NAMES[section])} →</a></p>` : "");
+  box.innerHTML = `<h2>${esc(title)}</h2><p>${esc(msg)}</p>` +
+    (field ? `<p><a href="#${field.id}" data-focus="${field.id}">Go to the field →</a></p>`
+     : secName(section) ? `<p><a href="#${section}">Go to ${esc(secName(section))} →</a></p>` : "");
   box.hidden = false;
   box.scrollIntoView({block: "start"}); box.focus({preventScroll: true});
-  // point at the field too, when the message names one this page can find
-  const field = {"known IP": "f-known", "check through the proxy": "f-via", "title": "f-title"};
-  for (const [k, id] of Object.entries(field)) if (msg.startsWith(k + ":")) {
-    if (id === "f-via") $("adv-services").open = true;
-    fieldErr($(id), msg.slice(k.length + 1).trim());
-  }
-  const m = msg.match(/^(qbittorrent|seerr|tautulli) URL:|^home IP:/);
-  if (m) { const el = document.querySelector(`[data-k="${m[1] ? m[1] + ".url" : "qbittorrent.home_ip"}"]`); if (el) fieldErr(el, msg.split(":").slice(1).join(":").trim()); }
 }
+$("err-sum").addEventListener("click", e => {   // the link to a field also puts the cursor in it
+  const a = e.target.closest("[data-focus]"); if (!a) return;
+  e.preventDefault(); $(a.dataset.focus).focus();
+});
 function hideErr() { $("err-sum").hidden = true; }
 
 // ---------- Setup checklist ----------
@@ -126,15 +136,18 @@ const STATE = {problem: ["✗", "needs fixing"], warn: ["!", "worth fixing"], to
 const ORDER = {problem: 0, warn: 1, todo: 2, ok: 3};
 function codeBlock(code) {
   code = code.replaceAll("%ORIGIN%", location.origin);
-  return `<div class="code"><pre><code>${esc(code)}</code></pre><button type="button" class="ibtn" data-copy="${esc(code)}">Copy</button></div>`;
+  return `<div class="code"><pre><code>${esc(code)}</code></pre><button type="button" class="ibtn" data-copy="${esc(code)}"
+    aria-label="Copy: ${esc(code.split("\n")[0])}">Copy</button></div>`;
 }
 function chk(i) {
   const [icon, word] = STATE[i.state] || STATE.todo, link = /^#[a-z]+$/.test(i.link || "") ? i.link : "";
+  const doc = /^https:\/\/github\.com\/[\w./#-]+$/.test(i.doc || "") ? i.doc : "";
   return `<div class="chk chk-${esc(i.state)}"><span class="chk-ic" aria-hidden="true">${icon}</span><div class="chk-b">
     <h3 class="chk-t">${esc(i.title)}<span class="vh"> (${word})</span>${i.optional ? ' <small class="mute">optional</small>' : ""}</h3>
     <p>${esc(i.detail)}</p>
-    ${(i.steps || []).map(s => `<p class="chk-step">${esc(s.text)}</p>${s.code ? codeBlock(s.code) : ""}`).join("")}
-    ${link && SECTION_NAMES[link.slice(1)] ? `<a class="chk-go" href="${link}">Go to ${esc(SECTION_NAMES[link.slice(1)])} →</a>` : ""}
+    ${(i.steps || []).map(s => (s.text ? `<p class="chk-step">${esc(s.text)}</p>` : "") + (s.code ? codeBlock(s.code) : "")).join("")}
+    ${link && secName(link.slice(1)) ? `<a class="chk-go" href="${link}">Go to ${esc(secName(link.slice(1)))} →</a>` : ""}
+    ${doc ? `<a class="chk-go" href="${esc(doc)}" target="_blank" rel="noopener">How to, in the docs ↗</a>` : ""}
   </div></div>`;
 }
 function renderSetup() {
@@ -147,17 +160,18 @@ function renderSetup() {
     (fix.length ? `<p class="chk-sum bad"><span aria-hidden="true">⚠ </span>${fix.length} thing${fix.length > 1 ? "s" : ""} to fix</p>`
                 : `<p class="chk-sum good"><span aria-hidden="true">✓ </span>All set${todo.length ? `, with ${todo.length} optional extra${todo.length > 1 ? "s" : ""} below` : ""}</p>`) +
     fix.map(chk).join("") + todo.map(chk).join("") +
-    (ok.length ? `<details class="chk-ok-list"${fix.length + todo.length ? "" : " open"}><summary>${ok.length} check${ok.length > 1 ? "s" : ""} passed</summary>${ok.map(chk).join("")}</details>` : "");
+    (ok.length ? `<details class="chk-ok-list"><summary>${ok.length} check${ok.length > 1 ? "s" : ""} passed</summary>${ok.map(chk).join("")}</details>` : "");
 }
 $("setup-list").addEventListener("click", async e => {
   const b = e.target.closest("[data-copy]"); if (!b) return;
-  try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied ✓"; }
-  catch { const r = document.createRange(); r.selectNodeContents(b.previousElementSibling); getSelection().removeAllRanges(); getSelection().addRange(r); b.textContent = "Press Ctrl+C"; }
-  setTimeout(() => { b.textContent = "Copy"; }, 2500);
+  try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied ✓"; $("copy-st").textContent = "Copied"; }
+  catch { const r = document.createRange(); r.selectNodeContents(b.previousElementSibling); getSelection().removeAllRanges(); getSelection().addRange(r);
+          b.textContent = "Press Ctrl+C"; $("copy-st").textContent = "Selected: press Ctrl+C to copy"; }
+  setTimeout(() => { b.textContent = "Copy"; $("copy-st").textContent = ""; }, 2500);
 });
 $("setup-again").onclick = async () => {
   $("setup-again").disabled = true;
-  try { V.setup = (await api("/api/settings")).setup; renderSetup(); } catch (err) { showErr("Couldn't check: " + err.message); }
+  try { V.setup = (await api("/api/settings")).setup; renderSetup(); applySearch(); } catch (err) { showErr(err.message, "", "Couldn't check"); }
   $("setup-again").disabled = false;
 };
 
@@ -196,12 +210,16 @@ function renderThemes() {
 $("theme-tabs").addEventListener("click", e => {
   const b = e.target.closest("[data-t]"); if (!b) return;
   edTheme = b.dataset.t; document.documentElement.dataset.theme = edTheme;   // live preview of the theme being edited
-  renderThemes();
+  renderThemes(); $("theme-tabs").querySelector(`[data-t="${CSS.escape(edTheme)}"]`).focus();
 });
 const tget = k => edTheme === "bubbles" ? S.site[k] : (S.site.themes[edTheme] || {})[k];
 function tset(k, v) {
   if (edTheme === "bubbles") S.site[k] = v;
-  else S.site.themes[edTheme] = {...(S.site.themes[edTheme] || {}), [k]: v};
+  else {   // an emptied field = the theme's own text again (the server stores only what's set)
+    const t = {...(S.site.themes[edTheme] || {}), [k]: v};
+    if (!v || (Array.isArray(v) && !v.length)) delete t[k];
+    if (Object.keys(t).length) S.site.themes[edTheme] = t; else delete S.site.themes[edTheme];
+  }
   setDirty();
 }
 function imgPicker(k, label, help) {   // mascot or tab icon of the theme being edited
@@ -215,7 +233,8 @@ function imgPicker(k, label, help) {   // mascot or tab icon of the theme being 
 }
 function renderThemeEd() {
   const id = edTheme, def = V.themes[id], bub = id === "bubbles";
-  const ph = k => bub ? "" : (def[k] ?? S.site[k] ?? "");
+  // what an empty field falls back to (as the dashboard does): the theme's own text, and for these four the Bubbles value
+  const ph = k => bub ? "" : (def[k] ?? (["tagline", "tagline_down", "click_emoji", "favicon"].includes(k) ? S.site[k] : "") ?? "");
   const tf = (k, label, max, help) => `<div class="field"><label for="tf-${k}">${esc(label)}</label>
       <input type="text" id="tf-${k}" data-tk="${k}" maxlength="${max}" placeholder="${esc(ph(k))}">${help ? `<small>${esc(help)}</small>` : ""}</div>`;
   $("theme-ed").innerHTML = `<div class="form">
@@ -236,11 +255,12 @@ function renderThemeEd() {
     el.disabled = !V.ui_enabled;
     el.oninput = () => tset(k, k === "quotes" ? lines(el.value) : el.value);
   });
+  applySearch();
 }
 $("theme-ed").addEventListener("change", async e => {
   const k = e.target.dataset.tup, f = e.target.files && e.target.files[0]; if (!k || !f) return;
-  if (f.size > 2 * 1024 * 1024) return showErr("That image is over 2 MB.", "themes");
-  try { tset(k, (await upload(f)).url); renderThemeEd(); } catch (err) { showErr("Upload failed: " + err.message, "themes"); }
+  if (f.size > 2 * 1024 * 1024) return showErr("That image is over 2 MB.", "themes", "Not uploaded");
+  try { tset(k, (await upload(f)).url); renderThemeEd(); } catch (err) { showErr(err.message, "themes", "Upload failed"); }
 });
 $("theme-ed").addEventListener("click", e => { const k = e.target.dataset.trm; if (k) { tset(k, ""); renderThemeEd(); } });
 
@@ -257,21 +277,24 @@ function cleanApp(host) { const a = S.apps[host]; if (a && !a.label && !a.icon &
 
 function srow(host, gi, idx, len) {
   const a = S.apps[host] || {}, found = V.discovered.includes(host) || S.services.some(x => x.name === host);
-  const opts = [`<option value="">move to…</option>`, ...S.groups.map((g, i) => i === gi ? "" : `<option value="${i}">${esc(g.name)}</option>`),
-                gi >= 0 ? `<option value="-1">(no group)</option>` : ""].join("");
-  const src = iconSrc(host), letter = esc(((a.label || host)[0] || "?").toUpperCase());
-  return `<div class="srow" data-host="${esc(host)}">
+  const opts = S.groups.map((g, i) => `<option value="${i}"${i === gi ? " selected" : ""}>${esc(g.name)}</option>`).join("")
+    + `<option value="-1"${gi < 0 ? " selected" : ""}>(no group)</option>`;
+  const src = iconSrc(host), letter = esc(((a.label || host)[0] || "?").toUpperCase()), h = esc(host);
+  return `<div class="srow" data-host="${h}">
     ${src ? `<img src="${esc(src)}" alt="" data-letter="${letter}">` : `<span class="lt">${letter}</span>`}
-    <div class="host" title="${esc(host)}">${esc(host)}${found ? "" : "<small>not found any more</small>"}</div>
-    <input type="text" placeholder="${esc(host.split(".")[0])}" value="${esc(a.label || "")}" data-f="label" aria-label="label for ${esc(host)}">
-    <input type="text" placeholder="icon (auto)" value="${esc(a.icon || "")}" data-f="icon" aria-label="icon for ${esc(host)}">
+    <div class="host" title="${h}">${h}${found ? "" : "<small>not found any more</small>"}</div>
+    <label class="sl"><span class="sl-t">Name<span class="vh"> on the dashboard for ${h}</span></span>
+      <input type="text" placeholder="${esc(host.split(".")[0])}" value="${esc(a.label || "")}" data-f="label"></label>
+    <label class="sl"><span class="sl-t">Icon<span class="vh"> for ${h}</span></span>
+      <input type="text" placeholder="automatic" value="${esc(a.icon || "")}" data-f="icon"></label>
     <span class="acts">
-      ${gi >= 0 ? `<button type="button" class="ibtn" data-a="up" ${idx === 0 ? "disabled" : ""} aria-label="move ${esc(host)} up" title="move up">↑</button>`
-                + `<button type="button" class="ibtn" data-a="down" ${idx === len - 1 ? "disabled" : ""} aria-label="move ${esc(host)} down" title="move down">↓</button>` : ""}
-      <select data-a="move" aria-label="move ${esc(host)} to a group">${opts}</select>
-      <button type="button" class="ibtn danger" data-a="hide" title="hide from the dashboard">hide</button>
+      ${gi >= 0 ? `<button type="button" class="ibtn" data-a="up" ${idx === 0 ? "disabled" : ""} aria-label="Move ${h} up" title="move up">↑</button>`
+                + `<button type="button" class="ibtn" data-a="down" ${idx === len - 1 ? "disabled" : ""} aria-label="Move ${h} down" title="move down">↓</button>` : ""}
+      <label class="sl"><span class="sl-t">Group<span class="vh"> for ${h}</span></span><select data-a="move">${opts}</select></label>
+      <button type="button" class="ibtn danger" data-a="hide" aria-label="Hide ${h} from the dashboard" title="hide from the dashboard">hide</button>
     </span></div>`;
 }
+const SROW_HEAD = '<div class="srow-h" aria-hidden="true"><span></span><span>Service</span><span>Name on the dashboard</span><span>Icon</span><span>Group</span></div>';
 
 function renderServices() {
   const grouped = new Set(S.groups.flatMap(g => g.hosts)), hidden = new Set(S.skip_hosts);
@@ -281,34 +304,45 @@ function renderServices() {
   $("svc-empty").innerHTML = 'No services found yet. <a href="#setup">Setup</a> says how to connect Nginx Proxy Manager, '
     + 'or add services by hand under <a href="#h-extras">Services not in NPM</a> below.';
   $("groups").innerHTML = S.groups.map((g, gi) => `<div class="grp-ed" data-g="${gi}">
-      <div class="gh"><input type="text" value="${esc(g.name)}" data-gname aria-label="group name">
+      <div class="gh"><input type="text" value="${esc(g.name)}" data-gname aria-label="Group name">
         <button type="button" class="ibtn" data-ga="up" ${gi === 0 ? "disabled" : ""} aria-label="move group ${esc(g.name)} up" title="move group up">↑</button>
         <button type="button" class="ibtn" data-ga="down" ${gi === S.groups.length - 1 ? "disabled" : ""} aria-label="move group ${esc(g.name)} down" title="move group down">↓</button>
-        <button type="button" class="ibtn danger" data-ga="del" title="delete group (its services become ungrouped)">delete</button>
+        <button type="button" class="ibtn danger" data-ga="del" aria-label="Delete group ${esc(g.name)}" title="delete group (its services become ungrouped)">delete</button>
         <small class="mute" style="margin-left:auto">${g.hosts.length} service${g.hosts.length === 1 ? "" : "s"}</small></div>
-      ${g.hosts.map((h, i) => srow(h, gi, i, g.hosts.length)).join("") || '<div class="hint">Empty. Move services here with "move to…".</div>'}
+      ${g.hosts.length ? SROW_HEAD + g.hosts.map((h, i) => srow(h, gi, i, g.hosts.length)).join("") : '<div class="hint">Empty. Put services here with their Group menu.</div>'}
     </div>`).join("");
   const loose = all.filter(h => !grouped.has(h));
   $("unassigned").innerHTML = loose.length ? `<div class="grp-ed" data-g="-1"><div class="gh"><b>Not in a group</b>
-      <small class="mute">shown as "New / other" on the dashboard</small></div>${loose.map(h => srow(h, -1, 0, 0)).join("")}</div>` : "";
+      <small class="mute">shown as "New / other" on the dashboard</small></div>${SROW_HEAD}${loose.map(h => srow(h, -1, 0, 0)).join("")}</div>` : "";
   $("hidden-wrap").innerHTML = S.skip_hosts.length ? `<div class="hint" style="margin-bottom:6px">Hidden from the dashboard (click to show again):</div>
-      <div class="chiplist">${S.skip_hosts.map(h => `<button type="button" data-unhide="${esc(h)}">${esc(h)} ✕</button>`).join("")}</div>` : "";
+      <div class="chiplist">${S.skip_hosts.map(h => `<button type="button" data-unhide="${esc(h)}" aria-label="Show ${esc(h)} on the dashboard again">↩ ${esc(h)}</button>`).join("")}</div>` : "";
   document.querySelectorAll("#groups input, #groups button, #groups select, #unassigned input, #unassigned button, #unassigned select, #hidden-wrap button, #add-group")
     .forEach(el => el.disabled = el.disabled || !V.ui_enabled);
   applySearch();
 }
 
+function refocus(...sels) {   // the first of these that exists and isn't disabled
+  for (const sel of sels) { const el = sel && document.querySelector(sel); if (el && !el.disabled) return el.focus(); }
+}
+const rowSel = (host, what) => `.srow[data-host="${CSS.escape(host)}"] ${what}`;
 function onServicesEvent(e) {
   const t = e.target, row = t.closest(".srow"), grp = t.closest(".grp-ed");
   const gi = grp ? +grp.dataset.g : null;
-  if (t.dataset.unhide) { S.skip_hosts = S.skip_hosts.filter(h => h !== t.dataset.unhide); renderServices(); return setDirty(); }
+  if (t.dataset.unhide) {
+    const h = t.dataset.unhide;
+    S.skip_hosts = S.skip_hosts.filter(x => x !== h); renderServices(); setDirty();
+    return refocus(rowSel(h, "[data-a=hide]"), "#hidden-wrap button", "#add-group");
+  }
   if (t.hasAttribute("data-gname")) { if (e.type === "input") { S.groups[gi].name = t.value; setDirty(); } return; }
   if (t.dataset.ga && e.type === "click") {
-    const g = S.groups;
-    if (t.dataset.ga === "up") [g[gi - 1], g[gi]] = [g[gi], g[gi - 1]];
-    if (t.dataset.ga === "down") [g[gi + 1], g[gi]] = [g[gi], g[gi + 1]];
-    if (t.dataset.ga === "del" && confirm(`Delete the group "${g[gi].name}"? Its services become ungrouped.`)) g.splice(gi, 1);
-    renderServices(); return setDirty();
+    const g = S.groups, ga = t.dataset.ga;
+    let to = gi;
+    if (ga === "up") { [g[gi - 1], g[gi]] = [g[gi], g[gi - 1]]; to = gi - 1; }
+    if (ga === "down") { [g[gi + 1], g[gi]] = [g[gi], g[gi + 1]]; to = gi + 1; }
+    if (ga === "del") { if (!confirm(`Delete the group "${g[gi].name}"? Its services become ungrouped.`)) return; g.splice(gi, 1); to = Math.max(0, gi - 1); }
+    renderServices(); setDirty();
+    return ga === "del" ? refocus(`.grp-ed[data-g="${to}"] [data-gname]`, "#add-group")
+                        : refocus(`.grp-ed[data-g="${to}"] [data-ga=${ga}]`, `.grp-ed[data-g="${to}"] [data-gname]`);
   }
   if (!row) return;
   const host = row.dataset.host;
@@ -321,7 +355,8 @@ function onServicesEvent(e) {
     return;
   }
   const a = t.dataset.a;
-  if (a === "move" && e.type === "change" && t.value !== "") {
+  if (a === "move" && e.type === "change") {   // the menu shows the row's group: picking one puts it there
+    if (+t.value === gi) return;
     S.groups.forEach(g => g.hosts = g.hosts.filter(h => h !== host));
     if (+t.value >= 0) S.groups[+t.value].hosts.push(host);
   } else if ((a === "up" || a === "down") && e.type === "click") {
@@ -332,25 +367,44 @@ function onServicesEvent(e) {
     if (!S.skip_hosts.includes(host)) S.skip_hosts.push(host);
   } else return;
   renderServices(); setDirty();
+  if (a === "hide") refocus(`[data-unhide="${CSS.escape(host)}"]`);
+  else refocus(rowSel(host, `[data-a=${a}]`), rowSel(host, `[data-a=${a === "up" ? "down" : "up"}]`), rowSel(host, "[data-a=move]"));
 }
 ["click", "input", "change"].forEach(ev => {
   $("groups").addEventListener(ev, onServicesEvent); $("unassigned").addEventListener(ev, onServicesEvent); $("hidden-wrap").addEventListener(ev, onServicesEvent);
 });
-$("add-group").onclick = () => { S.groups.push({name: "New group", hosts: []}); renderServices(); setDirty(); };
+$("add-group").onclick = () => {
+  S.groups.push({name: "New group", hosts: []}); renderServices(); setDirty();
+  const n = document.querySelector(`.grp-ed[data-g="${S.groups.length - 1}"] [data-gname]`); n.focus(); n.select();
+};
 
 // ---------- services not in NPM ----------
 function renderExtras() {
   $("extras").innerHTML = S.services.map((x, i) => `<div class="xrow" data-i="${i}">
       <div class="field"><label for="x-name-${i}">Name</label><input type="text" id="x-name-${i}" value="${esc(x.name)}" data-x="name" aria-describedby="x-d-${i}">
-        <small id="x-d-${i}">Shown on the tile; it links to https://name.</small></div>
-      <div class="field"><label for="x-url-${i}">Address to check</label><input type="url" id="x-url-${i}" value="${esc(x.url)}" data-x="url" placeholder="http://192.168.1.5:5000"></div>
-      <label class="xauth"><input type="checkbox" ${x.auth ? "checked" : ""} data-x="auth"> Behind sign-in (SSO)</label>
-      <button type="button" class="ibtn danger" data-xdel>Remove</button></div>`).join("") || '<div class="hint">None yet.</div>';
+        <small id="x-d-${i}">A host name, like nas.lan. It's the tile's name.</small></div>
+      <div class="field"><label for="x-url-${i}">Address to check</label><input type="url" id="x-url-${i}" value="${esc(x.url)}" data-x="url" aria-describedby="x-u-${i}">
+        <small id="x-u-${i}">What the dashboard checks, like http://192.168.1.5:5000.</small></div>
+      <div class="field"><label for="x-link-${i}">Link on the tile (optional)</label><input type="url" id="x-link-${i}" value="${esc((S.apps[x.name] || {}).url || "")}" data-x="link" aria-describedby="x-l-${i}">
+        <small id="x-l-${i}">Empty: https://${esc(x.name || "name")}</small></div>
+      <div class="field xauth"><label><input type="checkbox" ${x.auth ? "checked" : ""} data-x="auth" aria-describedby="x-a-${i}"> Behind your sign-in</label>
+        <small id="x-a-${i}">Only a label in the tile's tooltip.</small></div>
+      <button type="button" class="ibtn danger" data-xdel aria-label="Remove ${esc(x.name || "this service")}">Remove</button></div>`).join("") || '<div class="hint">None yet.</div>';
   $("extras").querySelectorAll("input,button").forEach(el => el.disabled = !V.ui_enabled);
   $("add-extra").disabled = !V.ui_enabled;
+  applySearch();
 }
-$("extras").addEventListener("input", e => { const row = e.target.closest("[data-i]"); if (!row) return; const x = S.services[+row.dataset.i], k = e.target.dataset.x;
-  x[k] = k === "auth" ? e.target.checked : e.target.value.trim(); setDirty(); });
+$("extras").addEventListener("input", e => {
+  const row = e.target.closest("[data-i]"); if (!row) return;
+  const x = S.services[+row.dataset.i], k = e.target.dataset.x, v = e.target.value.trim();
+  if (k === "auth") x.auth = e.target.checked;
+  else if (k === "link") { app(x.name).url = v; cleanApp(x.name); }
+  else if (k === "name") {   // a rename keeps the tile's label, icon and link
+    if (S.apps[x.name] && !S.apps[v]) { S.apps[v] = S.apps[x.name]; delete S.apps[x.name]; }
+    x.name = v; $("x-l-" + row.dataset.i).textContent = "Empty: https://" + (v || "name");
+  } else x[k] = v;
+  setDirty();
+});
 $("extras").addEventListener("click", e => {
   if (!e.target.hasAttribute("data-xdel")) return;
   S.services.splice(+e.target.closest("[data-i]").dataset.i, 1);
@@ -361,28 +415,29 @@ $("add-extra").onclick = () => { S.services.push({name: "", url: "", auth: false
 // ---------- integrations ----------
 const INTEG = [
   {k: "qbittorrent", title: "qBittorrent", what: "torrents + VPN-leak check", fields: [["qbit_user", "Username", "text"], ["qbit_pass", "Password", "password"]],
-   extra: `<div class="field"><label for="i-home">Your real home IP (optional)</label><input type="text" id="i-home" data-k="qbittorrent.home_ip" aria-describedby="i-home-d">`
-        + `<small id="i-home-d">If qBittorrent ever reports this as its address, the VPN leaked: big red banner.</small></div>`,
-   url: "http://192.168.1.10:8080"},
+   extra: `<div class="field"><label for="i-home">Your home's public IP (optional)</label><input type="text" id="i-home" data-k="qbittorrent.home_ip" aria-describedby="i-home-d">`
+        + `<small id="i-home-d">What a "what is my IP" site shows with the VPN off. If qBittorrent ever reports this address, the VPN leaked: big red banner.</small></div>`,
+   url: "http://qbittorrent:8080 or http://192.168.1.10:8080"},
   {k: "seerr", title: "Seerr / Overseerr / Jellyseerr", what: "approve requests", fields: [["seerr_key", "API key", "password"]], url: "http://overseerr:5055",
-   help: "in Seerr: Settings → General → API Key"},
+   help: "In Seerr: Settings → General → API Key."},
   {k: "tautulli", title: "Tautulli", what: "Plex now playing", fields: [["tautulli_key", "API key", "password"]], url: "http://tautulli:8181",
-   help: "in Tautulli: Settings → Web Interface → API Key"},
+   help: "In Tautulli: Settings → Web Interface → API Key."},
 ];
+const LOCKED = "🔒 set in .env / docker-compose.yml";
 function renderInteg() {
   $("integ").innerHTML = INTEG.map(it => {
     const urlLocked = V.locked_urls[it.k], on = S[it.k].url && it.fields.every(([f]) => V.secrets[f].set);
-    return `<div class="integ" data-it="${it.k}">
-      <h3><span>${esc(it.title)} <small class="mute">${esc(it.what)}</small></span>
-        <span class="${on ? "ok-t" : "mute"} integ-st">${on ? "● on" : "○ off"}</span></h3>
-      <div class="field"><label for="i-${it.k}-url">Address</label><input type="url" id="i-${it.k}-url" data-k="${it.k}.url" placeholder="${esc(it.url)}" ${urlLocked ? "disabled" : ""}>
-        ${urlLocked ? '<small class="lockt">🔒 set in docker-compose.yml</small>' : ""}</div>
+    return `<div class="integ" data-it="${it.k}" role="group" aria-labelledby="ih-${it.k}">
+      <h3><span id="ih-${it.k}">${esc(it.title)} <small class="mute">${esc(it.what)}</small></span>
+        <span class="${on ? "ok-t" : "mute"} integ-st">${on ? "● set up" : "○ not set up"}</span></h3>
+      <div class="field"><label for="i-${it.k}-url">Address</label><input type="url" id="i-${it.k}-url" data-k="${it.k}.url" aria-describedby="i-${it.k}-ud" ${urlLocked ? "disabled" : ""}>
+        <small id="i-${it.k}-ud">${urlLocked ? `<span class="lockt">${LOCKED}</span>` : `Like ${esc(it.url)}`}</small></div>
       ${it.fields.map(([f, label, type]) => { const st = V.secrets[f];
-        return `<div class="field"><label for="i-${f}">${esc(label)}</label>
-          <input type="${type}" id="i-${f}" data-secret="${f}" autocomplete="${type === "password" ? "new-password" : "off"}" ${st.locked ? "disabled" : ""}
-            placeholder="${st.locked ? "🔒 set in docker-compose.yml" : st.set ? "•••••• saved (leave empty to keep)" : "not set"}"${it.help && type === "password" ? ` aria-describedby="i-${f}-d"` : ""}>
+        return `<div class="field"><label for="i-${f}">${esc(label)} <span class="kst ${st.set ? "on" : ""}">${st.locked ? LOCKED : st.set ? "saved" : "not set"}</span></label>
+          <input type="${type}" id="i-${f}" data-secret="${f}" autocomplete="${type === "password" ? "new-password" : "off"}" ${st.locked || !V.ui_enabled ? "disabled" : ""}
+            placeholder="${st.set && !st.locked ? "leave empty to keep the saved one" : ""}"${it.help && type === "password" ? ` aria-describedby="i-${f}-d"` : ""}>
           ${it.help && type === "password" ? `<small id="i-${f}-d">${esc(it.help)}</small>` : ""}
-          ${st.set && !st.locked ? `<label class="clr"><input type="checkbox" data-clear="${f}"> Remove the saved ${esc(label.toLowerCase())}</label>` : ""}</div>`; }).join("")}
+          ${st.set && !st.locked ? `<label class="clr"><input type="checkbox" data-clear="${f}"${V.ui_enabled ? "" : " disabled"}> Remove the saved ${esc(label.toLowerCase())}</label>` : ""}</div>`; }).join("")}
       ${it.extra || ""}
       <div class="integ-test"><button type="button" class="ibtn" data-test="${it.k}">Test</button><span class="res" data-res="${it.k}" role="status"></span></div>
     </div>`; }).join("");
@@ -395,7 +450,7 @@ $("integ").addEventListener("input", e => {
 $("integ").addEventListener("click", async e => {
   const k = e.target.dataset.test; if (!k) return;
   const res = document.querySelector(`[data-res="${k}"]`);
-  if (dirty) { res.innerHTML = '<span class="warn-t">Save first: Test uses the saved settings.</span>'; return; }
+  if (changedSections().includes("integrations")) { res.innerHTML = '<span class="warn-t">Save first: Test uses the saved settings.</span>'; return; }
   res.textContent = "testing…";
   try { const r = await post("/api/settings/test", {name: k}); res.innerHTML = `<span class="${r.ok ? "ok-t" : "crit-t"}">${r.ok ? "✓" : "✗"} ${esc(r.detail)}</span>`; }
   catch (err) { res.innerHTML = `<span class="crit-t">✗ ${esc(err.message)}</span>`; }
@@ -423,6 +478,7 @@ const navLinks = [...document.querySelectorAll(".set-nav a")];
 const sections = [...document.querySelectorAll(".set-main > section")];
 let curId = "";
 function markCurrent() {
+  if (performance.now() < spyPausedUntil) return;
   const nav = document.querySelector(".set-nav"), barOnTop = getComputedStyle(nav).position === "sticky" && nav.offsetWidth > innerWidth * .8;
   const line = document.querySelector("header").offsetHeight + (barOnTop ? nav.offsetHeight : 0) + 40;
   let cur = sections.filter(s => !s.classList.contains("q-out")).filter(s => s.getBoundingClientRect().top <= line).pop() || sections[0];
@@ -433,8 +489,17 @@ function markCurrent() {
   const a = navLinks.find(a => a.hash === "#" + curId), ul = a.closest("ul");
   if (ul.scrollWidth > ul.clientWidth) ul.scrollTo({left: a.offsetLeft - ul.offsetLeft - 16});   // phone: keep it in view
 }
-let spyQueued = false;
-addEventListener("scroll", () => { if (!spyQueued) { spyQueued = true; requestAnimationFrame(() => { spyQueued = false; markCurrent(); }); } }, {passive: true});
+let spyQueued = false, spyPausedUntil = 0;
+addEventListener("scroll", () => {
+  if (performance.now() < spyPausedUntil) { spyPausedUntil = performance.now() + 150; return; }   // until a menu jump settles
+  if (!spyQueued) { spyQueued = true; requestAnimationFrame(() => { spyQueued = false; markCurrent(); }); }
+}, {passive: true});
+document.querySelector(".set-nav ul").addEventListener("click", e => {
+  const a = e.target.closest("a"); if (!a) return;
+  curId = ""; spyPausedUntil = performance.now() + 600;
+  navLinks.forEach(l => l === a ? l.setAttribute("aria-current", "true") : l.removeAttribute("aria-current"));
+  curId = a.hash.slice(1);
+});
 addEventListener("resize", markCurrent);
 
 // Search: shows the sections and settings whose text (label, help, current value) contains what you typed.
@@ -444,20 +509,21 @@ const UNITS = ".field, .integ, .xrow, .chk, .grp-ed";
 function applySearch() {
   const q = $("set-q").value.trim().toLowerCase();
   document.querySelectorAll(".q-out").forEach(el => el.classList.remove("q-out"));
-  if (!q) { $("q-none").hidden = true; return; }
+  if (!q) { $("q-none").hidden = true; $("q-count").textContent = ""; return; }
   const has = el => (el.textContent + " " + [...el.querySelectorAll("input:not([type=checkbox]):not([type=file]),textarea,select")]
     .map(i => `${i.value} ${i.placeholder || ""} ${i.getAttribute("aria-label") || ""}`).join(" ")).toLowerCase().includes(q);
+  const rowHas = r => [r.dataset.host, ...[...r.querySelectorAll("input[data-f]")].map(i => i.value)].join(" ").toLowerCase().includes(q);
   const reveal = el => { for (let d = el.closest("details"); d; d = d.parentElement.closest("details")) d.open = true; };
-  let any = false;
+  let any = false, n = 0;
   document.querySelectorAll(".set-main > section").forEach(sec => {
-    let hit = sec.querySelector("h2").textContent.toLowerCase().includes(q);
+    let hit = [sec.querySelector("h2"), ...sec.querySelectorAll("#theme-tabs button")].some(el => el.textContent.toLowerCase().includes(q));
     if (!hit) {
       const hits = [];
       sec.querySelectorAll(UNITS).forEach(u => {
         if (hits.some(h => h.contains(u))) return;            // inside a unit that already matched: keep it
         if (u.matches(".grp-ed")) {
           if (has(u.querySelector(".gh"))) { hits.push(u); return; }
-          u.querySelectorAll(".srow").forEach(r => r.classList.toggle("q-out", !has(r)));
+          u.querySelectorAll(".srow").forEach(r => r.classList.toggle("q-out", !rowHas(r)));
           if (u.querySelector(".srow:not(.q-out)")) hits.push(u); else u.classList.add("q-out");
           return;
         }
@@ -466,10 +532,12 @@ function applySearch() {
       hit = hits.length > 0;
     }
     sec.classList.toggle("q-out", !hit);
-    any = any || hit;
+    navLinks.find(a => a.hash === "#" + sec.id)?.parentElement.classList.toggle("q-out", !hit);
+    any = any || hit; n += hit;
   });
   $("q-none").hidden = any;
   $("q-none").textContent = `No settings match "${$("set-q").value.trim()}".`;
+  $("q-count").textContent = n ? `${n} section${n > 1 ? "s" : ""} match` : "Nothing matches";
   markCurrent();
 }
 $("set-q").addEventListener("input", applySearch);
@@ -480,6 +548,7 @@ function render() {
   S = structuredClone(V.settings); SEC = {};
   if (V.settings.site.favicon) document.querySelector("link[rel=icon]").href = V.settings.site.favicon;
   document.title = "Settings · " + S.site.title; $("site-title").textContent = S.site.title; $("demo-tag").hidden = !V.demo;
+  document.querySelectorAll("[aria-invalid]").forEach(clearErr);
   renderInteg(); bindFields(); renderPanels(); renderThemes(); renderServices(); renderExtras(); renderInfra(); renderSetup();
   document.querySelectorAll(".ferr").forEach(m => m.remove());
   hideErr(); setDirty(false); applySearch(); markCurrent();
@@ -489,11 +558,11 @@ $("reload").onclick = () => { if (!dirty || confirm("Discard your unsaved change
 $("save").onclick = async () => {
   $("save").disabled = true; $("msg").textContent = "Saving…";
   try {
-    S.services = S.services.filter(x => x.name || x.url);
-    V = await post("/api/settings", {settings: S, secrets: SEC});
-    render(); $("msg").innerHTML = V.demo_not_saved ? '<span class="ok-t">✓ Looks valid! (Demo: nothing is really saved, so the next visitor sees the original.)</span>'
-      : '<span class="ok-t">✓ Saved. The dashboard uses the new settings right away.</span>';
-  } catch (e) { setDirty(true); showErr(e.message, e.section); }
+    // empty "not in NPM" rows aren't sent; S keeps them, so the rows on the page still match S if the save is refused
+    V = await post("/api/settings", {settings: {...S, services: S.services.filter(x => x.name || x.url)}, secrets: SEC});
+    render(); setMsg(V.demo_not_saved ? '<span class="ok-t">✓ Looks valid! (Demo: nothing is really saved, so the next visitor sees the original.)</span>'
+      : '<span class="ok-t">✓ Saved. The dashboard uses the new settings right away.</span>');
+  } catch (e) { setDirty(true); showErr(e.message, e.section); setMsg('<span class="crit-t">✗ Not saved: see the message at the top.</span>'); }
 };
 (function bubbles() {
   const box = $("bubbles"); if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -502,4 +571,4 @@ $("save").onclick = async () => {
                             animationDuration: 16 + Math.random() * 20 + "s", animationDelay: -Math.random() * 30 + "s"});
     box.appendChild(b); }
 })();
-load().catch(e => showErr("Couldn't load the settings: " + e.message));
+load().catch(e => showErr(e.message, "", "Couldn't load the settings"));

@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="/themes.css">
 <script src="/js/theme-boot.js"></script>
 </head>
-<body>
+<body class="settings">
 <header>
   <h1><a href="/" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:8px"><svg class="cutie logo-miku" viewBox="0 0 40 40" aria-hidden="true">
     <defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#86cecb"/><stop offset="1" stop-color="#139a91"/></linearGradient></defs>
@@ -27,7 +27,8 @@
 <div class="set-layout">
   <nav class="set-nav" aria-label="Settings sections">
     <div class="set-search"><label for="set-q" class="vh">Search settings</label>
-      <input type="search" id="set-q" placeholder="Search settings" autocomplete="off" spellcheck="false"></div>
+      <input type="search" id="set-q" placeholder="Search settings" autocomplete="off" spellcheck="false" aria-describedby="q-count"></div>
+    <p class="vh" id="q-count" role="status"></p>
     <ul>
       <li><a href="#setup">Setup<span class="nb" id="nb-setup" hidden></span></a></li>
       <li><a href="#look">Look &amp; feel</a></li>
@@ -55,9 +56,6 @@
         <div class="field"><label for="f-title">Title</label>
           <input type="text" id="f-title" data-k="site.title" maxlength="60" aria-describedby="d-title">
           <small id="d-title">In the header and the browser tab.</small></div>
-        <div class="field"><label for="theme-default">Default theme</label>
-          <select id="theme-default" aria-describedby="d-theme"></select>
-          <small id="d-theme">What every browser shows until someone picks another one with 🎨 (or T) on the dashboard. Each browser remembers its own pick.</small></div>
         <fieldset class="field"><legend>Panels on the dashboard</legend>
           <div class="panel-picks" id="panels"></div>
           <small>Untick a panel to hide it. Its summary tile at the top stays, so a VPN leak still shows with Torrents hidden.</small></fieldset>
@@ -66,9 +64,15 @@
 
     <section id="themes" aria-labelledby="h-themes">
       <h2 id="h-themes">Themes</h2>
-      <p class="hint">Each theme's mascot, tab icon and what it says. Leave a field empty to use the theme's own text (shown faded).
-        Picking a theme here previews it on this page.</p>
-      <div class="tabs" id="theme-tabs" role="group" aria-label="Theme to edit"></div>
+      <div class="form">
+        <div class="field"><label for="theme-default">Default theme</label>
+          <select id="theme-default" aria-describedby="d-theme"></select>
+          <small id="d-theme">What every browser shows until someone picks another one with 🎨 (or T) on the dashboard. Each browser remembers its own pick.</small></div>
+      </div>
+      <h3 id="h-theme-ed">Edit a theme</h3>
+      <p class="hint">Each theme's mascot, tab icon and what it says. For Miku and Gura, an empty field uses the theme's own text (shown faded).
+        Picking a theme here only previews it on this page; the default is set above.</p>
+      <div class="tabs" id="theme-tabs" role="group" aria-labelledby="h-theme-ed"></div>
       <div id="theme-ed"></div>
     </section>
 
@@ -91,13 +95,15 @@
         <div class="field"><label for="f-via">Check these through the proxy (one per line)</label>
           <textarea id="f-via" data-k="via_proxy" data-list rows="3" spellcheck="false" aria-describedby="d-via"></textarea>
           <small id="d-via">For services on a Docker network the dashboard isn't on: it asks your reverse proxy instead, the way a visitor would.
-            Write the host name; add a path (<code>vault.example.com/alive</code>) when <code>/</code> needs a sign-in.</small></div>
+            Write the host name. Add a path that skips the sign-in (<code>vault.example.com/alive</code>) when <code>/</code> is behind one:
+            otherwise the sign-in page always answers, and the service looks up even when it's down.</small></div>
       </details>
     </section>
 
     <section id="integrations" aria-labelledby="h-integrations">
       <h2 id="h-integrations">Integrations</h2>
-      <p class="hint">Keys are kept on the server and never shown again (you'll only see "saved"). Changing an address means typing its key again,
+      <p class="hint">Each address must be one the dashboard's container can reach: a container name on a Docker network it shares, or your
+        server's LAN IP and port. Keys are kept on the server and never shown again. Changing an address means typing its key again,
         so a key can't be sent to a new server by accident. <b>Test</b> uses what's saved, so save first.</p>
       <form class="integ-grid" id="integ" autocomplete="off"></form>
     </section>
@@ -105,24 +111,28 @@
     <section id="security" aria-labelledby="h-security">
       <h2 id="h-security">Security</h2>
       <div class="form">
-        <div class="field"><label for="f-known">Trusted IPs (one per line)</label>
+        <div class="field"><label for="f-known">Known IPs: yours, not flagged (one per line)</label>
           <textarea id="f-known" data-k="known_ips" data-list rows="4" spellcheck="false" aria-describedby="d-known"></textarea>
           <small id="d-known">A full address, or a prefix ending in a dot (<code>192.168.1.</code>) or a colon (<code>2001:db8:</code>).
-            SSH and sign-in logins from anywhere else are flagged red. This list stays on the server.</small></div>
+            SSH and sign-in logins from anywhere else are flagged red (this needs the collector). It doesn't let anyone in. The list stays on the server.</small></div>
       </div>
     </section>
 
     <section id="about" aria-labelledby="h-about">
       <h2 id="h-about">About</h2>
-      <p class="hint">These are set in <code>docker-compose.yml</code> because they protect the dashboard itself, so a web page can't change them.
-        Every setting is described in <code>docs/SETTINGS.md</code>.</p>
+      <p class="hint">These are set in <code>docker-compose.yml</code> (or <code>.env</code>) because they protect the dashboard itself, so a web page
+        can't change them. Change them there, then run <code>docker compose up -d</code>. Every setting is described in
+        <a href="https://github.com/CoreXI7/homelab-dash/blob/main/docs/SETTINGS.md" target="_blank" rel="noopener">docs/SETTINGS.md</a>.</p>
       <div class="ro" id="infra"></div>
     </section>
     <p class="q-none" id="q-none" hidden></p>
   </main>
 </div>
 
-<div class="savebar"><span class="msg" id="msg" role="status">Loading…</span><button type="button" id="reload">Discard changes</button><button type="button" class="ok" id="save" disabled>Save</button></div>
+<footer class="savebar" aria-label="Save changes"><span class="msg" id="msg" role="status">Loading…</span>
+  <button type="button" id="reload" disabled><span class="long">Discard changes</span><span class="short">Discard</span></button>
+  <button type="button" class="ok" id="save" disabled aria-keyshortcuts="Control+S Meta+S" title="Save (Ctrl+S)">Save</button></footer>
+<p class="vh" id="copy-st" role="status"></p>
 
 <script src="/js/settings.js"></script>
 </body>
