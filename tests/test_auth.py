@@ -1713,6 +1713,22 @@ class Audit(Base):
             self.create()
             good = json.load(open(self.auth.AUTH_FILE))
 
+    def test_a_password_step_left_to_run_out_is_told(self):
+        # someone with the password, two-step on, who never types a code: each try confirms the password and the owner
+        # was never told (audit round 3). A step that runs out without the right code counts like a wrong code.
+        _, secret, _, dev = self.two_step()
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        self.assertTrue(cookie_of(self.login()[1], "fishbowl-pre"))           # the password is right; no code follows
+        with self.app._pending_lock:
+            for v in self.app._pending.values():
+                v["t"] -= self.app.PENDING_FOR + 1                            # (five minutes later)
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        pre = cookie_of(self.login(cookie=dev)[1], "fishbowl-pre")            # the owner
+        st, _, d = call(self.url + "/api/login/code", "POST", {"code": self.auth.totp_code(secret, int(time.time() // 30) + 1)},
+                        cookie=f"{pre}; {dev}")
+        self.assertEqual(st, 200, d)
+        self.assertEqual(d.get("notice", {}).get("code"), 1, "the abandoned step is shown")
+
 
 if __name__ == "__main__":
     unittest.main()

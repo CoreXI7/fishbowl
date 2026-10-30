@@ -63,9 +63,10 @@ if _auth_env == "proxy" and not TRUSTED_PROXY and not DEMO:   # nothing would st
     print("WARNING: AUTH=proxy needs TRUSTED_PROXY (else anyone could skip the proxy's sign-in): using login", flush=True)
 auth.configure(cfgstore.DATA_DIR)
 ACCOUNT, SESSIONS, THROTTLE = auth.Account(), auth.Sessions(), auth.Throttle()
-_pending = {}                 # sha256(pre-sign-in token) -> {"t", "keep", "tries", "dev", "epoch"}: the password was right, a code is due
+_pending = {}                 # sha256(pre-sign-in token) -> {"t", "keep", "tries", "wrong", "dev", "epoch", "tls", "from"}: the password was right, a code is due
+_ran_out = []                 # half-finished sign-ins that ran out, until they're noted as failures (tell_ran_out)
 _pending_totp = {}            # sha256(session token) -> {"t", "secret", "epoch"}: an authenticator being set up, not confirmed yet
-_recent_fails = {}            # trusted-device hash -> [(time, "password" | "code")]: typos in that browser, forgiven at its next sign-in
+_recent_fails = {}            # trusted-device hash -> [(time, "password" | "code", address)]: typos in that browser, forgiven at its next sign-in
 _session_tries = {}           # sha256(session token) -> (wrong tries, last): re-confirming the password in Settings
 SESSION_FAILS = 10            # wrong tries a signed-in browser gets before it's signed out
 _pending_lock = threading.RLock()
@@ -1968,11 +1969,14 @@ class Handler(BaseHTTPRequestHandler):
                 "min_length": auth.PW_MIN, "proxy_asked": _auth_env == "proxy", "gap_hint": gap_hint(self.proxy_gaps())}
 
     def pending(self, consume=False):
-        """The half-finished sign-in for this browser (the password was right; the authenticator code is due)."""
+        """The half-finished sign-in for this browser (the password was right; the authenticator code is due). One that
+        ran out without the right code is told to the owner like a wrong code: someone with the password who never
+        types a code would otherwise confirm it again and again unseen."""
         now = time.time()
         with _pending_lock:
-            for k in [k for k, v in _pending.items() if now - v["t"] > PENDING_FOR]:
-                del _pending[k]
+            _ran_out.extend(_pending.pop(k) for k in [k for k, v in _pending.items() if now - v["t"] > PENDING_FOR])
+            del _ran_out[:-200]
+        with _pending_lock:
             tls = self.https()
             for tok in self.cookie_values("fishbowl-pre"):
                 key = hashlib.sha256(tok.encode()).hexdigest()
@@ -1980,6 +1984,15 @@ class Handler(BaseHTTPRequestHandler):
                 if p and p.get("tls") == tls and (tls or auth.same_place(p.get("from"), self.client_ip())):
                     return _pending.pop(key) if consume else p
         return None
+
+    def tell_ran_out(self):
+        """Note the half-finished sign-ins that ran out (pending() collects them) as failures. Called where no lock is
+        held: noting takes the account's file lock."""
+        with _pending_lock:
+            gone = _ran_out[:]
+            _ran_out.clear()
+        for p in gone:
+            self.note_failure(p.get("from") or "?", "right password, no code (the step ran out)", "code", p.get("dev"))
 
     def begin_try(self, ip, dev=None, account=True, session=None, waits=True):
         """Count a try BEFORE checking it, under one lock: parallel tries can't all slip in under a limit, and a crash
@@ -2195,6 +2208,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(503, {"error": f"Signing in is off: {e}. Reload the page.", "restart": True})
 
     def _auth_post(self, path):
+        self.pending()          # (collects half-finished sign-ins that ran out...)
+        self.tell_ran_out()     # (...and tells the owner about them)
         d_in = self.json_body(8192)
         ip, ua = self.client_ip(), self.headers.get("User-Agent", "")
 

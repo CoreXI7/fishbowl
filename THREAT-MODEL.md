@@ -177,7 +177,8 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   the next sign-in, which shows them once. Only the owner's own typos are left out, and only per browser, never per
   address (an attacker can share the owner's address): wrong codes of that very sign-in, and wrong passwords and codes
   typed in that same trusted browser in the 10 minutes before. A right code typed a second time (used already) is
-  refused but isn't counted as a wrong one. "The right password with a wrong code" adds up into a lasting Setup
+  refused but isn't counted as a wrong one. A half-finished sign-in that runs out without the right code
+  counts as a wrong code (someone with the password who never types a code is shown too). "The right password with a wrong code" adds up into a lasting Setup
   checklist problem until the password changes or the owner says "That was me" (which needs the password, and the
   code when two-step is on).
 - **Sessions**: 256-bit tokens, stored as SHA-256; a new one at every sign-in (no fixation); HttpOnly,
