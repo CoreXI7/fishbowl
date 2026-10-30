@@ -35,6 +35,20 @@ class NpmConf(unittest.TestCase):
         self.write("file.conf", CONF.format(scheme="file", server="/app/static/favicon.svg#", name="file.example"))
         self.assertEqual(self.names(), ["good.example"], "a file:// upstream would make /api/icon read local files")
 
+    def test_a_file_of_blank_lines_parses_quickly(self):
+        # ("^\\s*" with re.M ran across every following blank line: 256 KB of them took ~100 s, holding the GIL;
+        # audit round 2)
+        import threading
+        import time
+        self.write("blank.conf", 'server {\n  server_name blank.example;\n  set $server "10.0.0.7";\n  set $port 80;\n'
+                   + "\n" * 250_000 + "}\n")
+        t = threading.Thread(target=self.names, daemon=True)
+        t0 = time.monotonic()
+        t.start()
+        t.join(10)
+        self.assertFalse(t.is_alive())
+        self.assertLess(time.monotonic() - t0, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

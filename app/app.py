@@ -307,11 +307,11 @@ def parse_npm_conf(path):
         "login": has_login(txt),   # any sign-in in front of / (for the Setup check)
         # NPM's "Cache Assets": caches .css/.js/.png/... for 30 minutes whatever the app says (cookies and
         # Cache-Control ignored), so one visitor's images or a "sign in first" answer could reach everyone
-        "caches": bool(re.search(r"^\s*include\s+conf\.d/include/assets\.conf\s*;", txt, re.M)),
+        "caches": bool(re.search(r"^[ \t]*include\s+conf\.d/include/assets\.conf\s*;", txt, re.M)),
         # NPM believes a visitor's own X-Real-IP from any private address unless the host sets its own trusted list
         # (Advanced: set_real_ip_from), and passes on a visitor's X-Forwarded-Proto unless plain HTTP is redirected
-        "real_ip": real_ip_pinned(re.findall(r"^\s*set_real_ip_from\s+([^\s;]+)\s*;", txt, re.M)),
-        "force_ssl": bool(re.search(r"^\s*include\s+conf\.d/include/force-ssl\.conf\s*;", txt, re.M)),
+        "real_ip": real_ip_pinned(re.findall(r"^[ \t]*set_real_ip_from\s+([^\s;]+)\s*;", txt, re.M)),
+        "force_ssl": bool(re.search(r"^[ \t]*include\s+conf\.d/include/force-ssl\.conf\s*;", txt, re.M)),
     }
 
 
