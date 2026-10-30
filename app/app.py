@@ -2522,6 +2522,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {**self.view(), **({"collector_warning": warning} if warning else {})})
         if path == "/api/settings/test":
             name = self.json_body(1024).get("name", "")
+            if not isinstance(name, str):
+                return self.send(400, {"error": "name: text expected"})
             return self.send(200, test_integration(name))
         if path == "/api/upload":
             if DEMO:
@@ -2550,7 +2552,7 @@ class Handler(BaseHTTPRequestHandler):
                 want = self.json_body(200).get("hash", "")
             except cfgstore.Invalid:
                 want = ""
-            if not re.fullmatch(r"[0-9a-f]{64}", want or ""):
+            if not isinstance(want, str) or not re.fullmatch(r"[0-9a-f]{64}", want):
                 return self.send(400, {"error": "bad hash"})
             if DEMO:
                 return self.send(200, {"ok": True})

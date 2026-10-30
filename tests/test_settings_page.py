@@ -321,6 +321,24 @@ class SettingsText(unittest.TestCase):
             app.cfgstore._write_json(app.cfgstore.SETTINGS_FILE, {"x": "\ud800"})
         self.assertEqual([f for f in os.listdir(folder) if f.startswith(".tmp-")], [])
 
+class OddFields(unittest.TestCase):
+    def test_non_text_fields_are_a_400_not_a_502(self):
+        # (the fuzzer: /api/cron/approve and /api/settings/test answered 502 to {"hash": 5}; on the demo, without
+        # signing in; audit 2026-10-30)
+        import json as _json
+        import urllib.request
+        app = load_app()
+        srv, url = serve(app.Handler)
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
+        for path, body in (("/api/cron/approve", {"hash": 5}), ("/api/settings/test", {"name": ["qbit"]})):
+            req = urllib.request.Request(url + path, data=_json.dumps(body).encode(), method="POST",
+                                         headers={"Content-Type": "application/json", "Origin": url})
+            try:
+                st = urllib.request.urlopen(req, timeout=10).status
+            except urllib.error.HTTPError as e:
+                st = e.code
+            self.assertEqual(st, 400, path)
+
 
 if __name__ == "__main__":
     unittest.main()
