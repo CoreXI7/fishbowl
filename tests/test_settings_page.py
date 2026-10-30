@@ -23,9 +23,18 @@ def post(url, body):
         return e.code, json.load(e)
 
 
-def npm_conf(folder, name):
+def npm_conf(folder, name, extra=""):
     with open(os.path.join(folder, f"{name}.conf"), "w") as f:
-        f.write(f'server {{\n  server_name {name};\n  set $forward_scheme http;\n  set $server "127.0.0.1";\n  set $port 9;\n}}\n')
+        f.write(f'server {{\n  server_name {name};\n  set $forward_scheme http;\n  set $server "127.0.0.1";\n  set $port 9;\n{extra}}}\n')
+
+
+def collector_files(app, age=0):
+    with open(app.HW_FILE, "w") as f:
+        json.dump({"updated": int(time.time()) - age}, f)
+    with open(app.SEC_DETAIL_FILE, "w") as f:
+        json.dump({"updated": int(time.time()) - age}, f)
+    os.utime(app.HW_FILE, (time.time() - age,) * 2)
+    os.utime(app.SEC_DETAIL_FILE, (time.time() - age,) * 2)
 
 
 class ViaProxy(unittest.TestCase):
@@ -34,7 +43,7 @@ class ViaProxy(unittest.TestCase):
         ok = app.cfgstore.validate({"via_proxy": ["a.example.com", "b.example.com/alive", "c.example.com/x/y-z_1.html",
                                                   "a.example.com"]}, {})
         self.assertEqual(ok["via_proxy"], ["a.example.com", "b.example.com/alive", "c.example.com/x/y-z_1.html"])
-        for bad in ["bad host", "a.example.com/x?y=1", "a.example.com/x#y", "a.example.com/../admin",
+        for bad in ["bad host", "a.example.com/x?y=1", "a.example.com/x#y", "a.example.com/../admin", "a.example.com/%2E%2e/admin",
                     "a.example.com/x\r\nHost: evil", "https://a.example.com", "a.example.com/x y"]:
             with self.assertRaises(app.cfgstore.Invalid, msg=bad):
                 app.cfgstore.validate({"via_proxy": [bad]}, {})
@@ -56,6 +65,20 @@ class ViaProxy(unittest.TestCase):
         self.assertEqual(app2.VIA_PROXY, {"y.example.com": "/", "z.example.com": "/health"}, "the environment wins")
         self.assertEqual(app2.settings_view()["via_proxy_env"], ["y.example.com", "z.example.com/health"])
 
+    def test_env_lock_holds_on_save(self):
+        """With CHECK_VIA_PROXY set, a save from the page can't store a list of its own (it would silently take over
+        once the variable is removed)."""
+        app = load_app(CHECK_VIA_PROXY="y.example.com")
+        srv, url = serve(app.Handler)
+        try:
+            base = app.settings_view()["settings"]
+            code, _ = post(url + "/api/settings", {"settings": {**base, "via_proxy": ["attacker.example.com/x"]}, "secrets": {}})
+            self.assertEqual(code, 200)
+            with open(os.path.join(app.cfgstore.DATA_DIR, "settings.json")) as f:
+                self.assertEqual(json.load(f)["via_proxy"], [])
+        finally:
+            srv.shutdown()
+
 
 class ErrorSection(unittest.TestCase):
     """A refused save says which part of the page it's about, so the page can take you there."""
@@ -75,6 +98,8 @@ class ErrorSection(unittest.TestCase):
                 self.assertEqual(body.get("section"), section, body)
             code, body = post(url + "/api/settings", {"settings": base, "secrets": {"qbit_user": 7}})
             self.assertEqual((code, body.get("section")), (400, "integrations"), body)
+            code, body = post(url + "/api/settings", {"settings": base, "secrets": "x"})
+            self.assertEqual(code, 400, "a malformed secrets object is refused clearly, not a 502")
         finally:
             srv.shutdown()
 
@@ -94,7 +119,7 @@ class Setup(unittest.TestCase):
         self.assertEqual(st["integrations"], "todo")
         self.assertNotIn("listen", st, "locking to the proxy only makes sense once TRUSTED_PROXY is set")
         steps = [s["code"] for i in app.setup_checks() for s in i["steps"]]
-        self.assertIn("TRUSTED_PROXY: nginx", steps)
+        self.assertIn("TRUSTED_PROXY: <your proxy's container name>", steps, "a placeholder, not a name to copy blindly")
         self.assertIn("ORIGIN: %ORIGIN%", steps)
         self.assertIn("sudo bash collector/install.sh", steps)
 
@@ -108,15 +133,65 @@ class Setup(unittest.TestCase):
     def test_all_set(self):
         app = load_app(TRUSTED_PROXY="127.0.0.1", ORIGIN="https://dash.example.com", LISTEN="127.0.0.1 10.250.81.2")
         npm_conf(app.NPM_DIR, "plex.example.com")
-        with open(app.HW_FILE, "w") as f:
-            json.dump({"updated": int(time.time())}, f)
+        collector_files(app)
         st = self.states(app)
         for k in ("proxy", "origin", "saving", "services", "collector", "listen"):
             self.assertEqual(st[k], "ok", k)
-        with open(app.HW_FILE, "w") as f:
-            json.dump({"updated": int(time.time()) - 3600}, f)
-        os.utime(app.HW_FILE)                       # read_hw() re-reads on a changed mtime
+        os.remove(app.SEC_DETAIL_FILE)
+        self.assertEqual(self.states(app)["collector"], "warn", "no security details: worth fixing")
+        collector_files(app, age=3600)
         self.assertEqual(self.states(app)["collector"], "problem", "a collector that stopped writing is a problem")
+
+    def test_collector_file_unreadable(self):
+        app = load_app()
+        collector_files(app)
+        os.chmod(app.HW_FILE, 0)
+        try:
+            if os.access(app.HW_FILE, os.R_OK):
+                self.skipTest("running as root: every file is readable")
+            item = {i["id"]: i for i in app.setup_checks()}["collector"]
+            self.assertEqual(item["state"], "problem", "installed but unreadable isn't 'not installed'")
+            self.assertIn("dash_uid", " ".join(s["code"] for s in item["steps"]))
+        finally:
+            os.chmod(app.HW_FILE, 0o644)
+
+    def test_services_count(self):
+        """Hand-added services aren't counted twice, and hidden NPM hosts aren't counted as shown."""
+        app = load_app()
+        for n in ("a.example.com", "b.example.com", "c.example.com"):
+            npm_conf(app.NPM_DIR, n)
+        app.cfgstore.save(app.cfgstore.validate({**app.ED, "skip_hosts": ["c.example.com"],
+                                                 "services": [{"name": "nas.lan", "url": "http://10.0.0.5:5000"}]}, {}), app.STORE)
+        app.apply_settings()
+        item = {i["id"]: i for i in app.setup_checks()}["services"]
+        self.assertEqual(item["detail"], "2 from Nginx Proxy Manager, 1 added by hand.")
+        app.cfgstore.save(app.cfgstore.validate({**app.ED, "skip_hosts": ["a.example.com", "b.example.com", "c.example.com"],
+                                                 "services": []}, {}), app.STORE)
+        app.apply_settings()
+        item = {i["id"]: i for i in app.setup_checks()}["services"]
+        self.assertEqual(item["state"], "ok")
+        self.assertIn("all hidden", item["detail"])
+
+    def test_sign_in(self):
+        """The dashboard has no login of its own: its proxy host must have one."""
+        app = load_app(TRUSTED_PROXY="127.0.0.1")
+        npm_conf(app.NPM_DIR, "dash.example.com")
+        sso = lambda host: {i["id"]: i for i in app.setup_checks(host)}.get("sso", {}).get("state")
+        self.assertEqual(sso("dash.example.com"), "warn")
+        self.assertIsNone(sso("203.0.113.5:8000"), "opened directly: no proxy host to check")
+        npm_conf(app.NPM_DIR, "dash.example.com", "  location / {\n    include /snippets/authelia-authrequest.conf;\n  }\n")
+        self.assertEqual(sso("dash.example.com:443"), "ok", "Authelia's NPM include snippet counts")
+        npm_conf(app.NPM_DIR, "dash.example.com", '  auth_basic "Authorization required";\n')
+        self.assertEqual(sso("DASH.example.com"), "ok", "an NPM access list counts too")
+        npm_conf(app.NPM_DIR, "dash.example.com", "  auth_request /authelia;\n")
+        self.assertEqual(sso("dash.example.com"), "ok")
+
+    def test_test_button_explains(self):
+        """Test says what a failed connection usually means instead of a Python error."""
+        app = load_app(QBIT_URL="http://no-such-host.invalid:8080", QBIT_USER="u", QBIT_PASS="p")
+        r = app.test_integration("qbittorrent")
+        self.assertFalse(r["ok"])
+        self.assertIn("Can't find 'no-such-host.invalid'", r["detail"])
 
     def test_listen_wildcard_is_not_locked(self):
         app = load_app(TRUSTED_PROXY="127.0.0.1", LISTEN="0.0.0.0")

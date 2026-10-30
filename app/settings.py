@@ -204,7 +204,7 @@ def _ip_or_prefix(v):
         ipaddress.ip_address(v)
     except ValueError:
         if not re.fullmatch(r"(\d{1,3}\.){1,3}|[0-9a-fA-F:]{2,39}:", v):
-            raise Invalid(f"known IP: '{v}' is not an IP or a prefix ending in '.'")
+            raise Invalid(f"known IP: '{v}' isn't an IP address or a prefix ending in a dot or a colon")
     return v
 
 
@@ -290,7 +290,8 @@ def _via_proxy(entries):
     out = []
     for e in _list(entries, 100, "check through the proxy"):
         e = _s(e, 460, "check through the proxy", VIA)
-        if ".." in e.partition("/")[2]:
+        path = e.partition("/")[2]
+        if ".." in path or "%2e" in path.lower():
             raise Invalid(f"check through the proxy: '{e[:60]}': a path can't contain '..'")
         if e:
             out.append(e)
