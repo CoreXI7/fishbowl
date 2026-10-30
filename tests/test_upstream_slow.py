@@ -34,6 +34,9 @@ class SlowUpstream(unittest.TestCase):
             "/": trickle(b"HTTP/1.1 200 OK\r\nX-Pad: "),
             "/favicon.ico": trickle(b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 100000\r\n\r\n"),
             "/api/v2": trickle(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100000\r\n\r\n"),
+            # an answer that "will close" (HTTP/1.0, Connection: close, no length): http.client closes the connection
+            # object once the headers are in, and the body is read after that (audit round 2)
+            "/closing.png": trickle(b"HTTP/1.0 200 OK\r\nContent-Type: image/png\r\n\r\n"),
         })
         cls.app = load_app(TAUTULLI_URL=cls.up.url, TAUTULLI_KEY="k")
         import upstream
@@ -63,6 +66,11 @@ class SlowUpstream(unittest.TestCase):
     def test_an_icon_ends_on_a_trickling_body(self):
         r, took = self.finishes(lambda: self.upstream.fetch_same_host(self.up.url + "/favicon.ico", self.up.url,
                                                                            "slow.example.com", 512_000), 10)
+        self.assertIsNone(r)
+
+    def test_a_closing_answer_ends_too(self):
+        r, took = self.finishes(lambda: self.upstream.fetch_same_host(self.up.url + "/closing.png", self.up.url,
+                                                                      "slow.example.com", 512_000), 10)
         self.assertIsNone(r)
 
     def test_an_integration_ends_on_a_trickling_body(self):

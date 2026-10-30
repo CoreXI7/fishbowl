@@ -68,23 +68,17 @@ def unwatch(conn):
 
 
 class DeadlineHTTPConnection(http.client.HTTPConnection):
+    # (no unwatch on close(): http.client closes the connection object as soon as the headers of an answer that "will
+    # close" are in, and its body is still being read; the entry just lapses at the deadline)
     def connect(self):
         super().connect()
         watch(self)
-
-    def close(self):
-        unwatch(self)
-        super().close()
 
 
 class DeadlineHTTPSConnection(http.client.HTTPSConnection):
     def connect(self):
         super().connect()
         watch(self)
-
-    def close(self):
-        unwatch(self)
-        super().close()
 
 
 class _DeadlineHTTP(urllib.request.HTTPHandler):
@@ -110,9 +104,11 @@ def fetch_same_host(url, base, name, limit, timeout=5):
             return None
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA, "Host": name})   # (it can refuse a URL too)
+            t0 = time.monotonic()
             with NOFOLLOW.open(req, timeout=timeout) as r:
                 body = r.read(limit)
-                return None if r.length else (r.headers.get("Content-Type", ""), body)   # (cut short: no half an icon)
+                cut = r.length or time.monotonic() - t0 >= DEADLINE_FACTOR * timeout * 0.9   # (no length: ran out of time)
+                return None if cut else (r.headers.get("Content-Type", ""), body)   # (cut short: no half an icon)
         except urllib.error.HTTPError as e:
             loc = e.headers.get("Location") if 300 <= e.code < 400 else None
             e.close()

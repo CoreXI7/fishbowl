@@ -34,7 +34,7 @@ import auth                             # noqa: E402  (auth.py: Fishbowl's own s
 from hostinfo import (_live_prev, cpu_model, cpu_mhz, cpu_topology, cpu_usage,  # noqa: E402
                       disk_io, hwmon)
 from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _DeadlineHTTP, _DeadlineHTTPS,  # noqa: E402
-                      _NoRedirect, fetch_same_host, num, read_capped, read_json, text, unwatch, watch)
+                      _NoRedirect, fetch_same_host, num, read_capped, read_json, text, watch)
 
 DEMO = cfgstore.DEMO
 HW_FILE = os.environ.get("HW_FILE", "/hw/hw.json")
@@ -410,10 +410,6 @@ class _SNIConnection(http.client.HTTPSConnection):
         sock = socket.create_connection((self.host, self.port), self.timeout)
         self.sock = self._context.wrap_socket(sock, server_hostname=self.sni)
         watch(self)
-
-    def close(self):
-        unwatch(self)
-        super().close()
 
 
 def check_via_proxy(host, path, timeout):
