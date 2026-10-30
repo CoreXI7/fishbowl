@@ -235,7 +235,10 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
 
 - Secrets never reach the browser; errors are scrubbed; changing an integration URL requires re-entering its key.
 - Every POST needs `Origin` = the dashboard (CSRF). Every GET is read-only.
-- `TRUSTED_PROXY`: direct connections from other containers get 403 (every address of the proxy counts).
+- `TRUSTED_PROXY`: direct connections from other containers get 403 (every address of the proxy counts). A name that
+  answers with two addresses of one kind is shared by another container (a compose service called like the proxy
+  gets its name as an alias), so it's trusted for neither; a name that stops existing stops counting (Docker gives its
+  old address to the next container).
 - `LISTEN` (optional): the dash answers only on given addresses, e.g. a network that only the proxy shares with it,
   so other containers can't reach it at all. This is the control for trust boundary 2.
 - CSP `script-src 'self'`, no inline script; fonts and styles from the dashboard only.

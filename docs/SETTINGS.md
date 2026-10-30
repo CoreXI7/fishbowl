@@ -63,7 +63,7 @@ Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes en
 | Variable | Default | What it does |
 |---|---|---|
 | `AUTH` | `login` | `login`: Fishbowl's own sign-in (one account, optional authenticator app). `proxy`: off, because your reverse proxy's sign-in (Authelia, Authentik, an access list) protects the dashboard. Anything else counts as `login`. The demo has no sign-in |
-| `TRUSTED_PROXY` | (empty = anyone) | Your reverse proxy's container name(s) or IP(s), space-separated: the only clients allowed. Others are dropped before a thread is started for them |
+| `TRUSTED_PROXY` | (empty = anyone) | Your reverse proxy's container name(s) or IP(s), space-separated: the only clients allowed. Others are dropped before a thread is started for them. A name that more than one container answers to (another compose service called like your proxy gets it as an alias) is trusted for none of them, and the Setup checklist says so: use a name nothing else has, or the IP |
 | `LISTEN` | `0.0.0.0` | Addresses to answer on, space-separated (IPv4 or IPv6). With `"127.0.0.1 <address on a network only the proxy shares>"` other containers can't reach the dash at all. Don't mix a wildcard (`0.0.0.0`, `::`) with specific addresses |
 | `ORIGIN` | (the address it's opened on) | The dashboard's public URL(s), space-separated: every POST must come from one (CSRF guard) |
 | `SETTINGS_UI` | `1` | `0` makes the settings page read-only |

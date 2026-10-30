@@ -176,19 +176,36 @@ def log_safe(text, limit=300):
 def proxy_ips():
     """Every address of the trusted reverse proxy: TRUSTED_PROXY may list several names or IPs (Docker's DNS answers
     a container's name with its address on one shared network only, so a proxy on two networks may need its second
-    address listed). Looked up at most once a minute (addresses change when it's recreated); for a name whose lookup
-    fails, the last good answer is kept."""
+    address listed). Looked up at most once a minute (addresses change when it's recreated). A name that answers with
+    two addresses of one kind is shared by another container (a compose service named like the proxy gets that alias
+    on the network): either could be the proxy, so neither counts. A lookup that fails for now keeps the last good
+    answer; a name that no longer exists keeps nothing (Docker hands its old address to the next container)."""
     if time.monotonic() - _proxy_ip["at"] > 60:
-        ips = set()
+        ips, shared, by = set(), {}, _proxy_ip.setdefault("by", {})
         for entry in TRUSTED_PROXY.split():
             try:
-                found = {a[4][0] for a in socket.getaddrinfo(entry, None)}
-                _proxy_ip.setdefault("by", {})[entry] = found
+                by[entry] = {a[4][0] for a in socket.getaddrinfo(entry, None)}
+            except socket.gaierror as e:
+                if e.errno in (socket.EAI_NONAME, getattr(socket, "EAI_NODATA", socket.EAI_NONAME)):
+                    by.pop(entry, None)
             except OSError:
-                found = _proxy_ip.get("by", {}).get(entry, set())
+                pass
+            found = by.get(entry, set())
+            if sum(":" not in a for a in found) > 1 or sum(":" in a for a in found) > 1:
+                shared[entry] = sorted(found)
+                if _proxy_ip.get("shared", {}).get(entry) != shared[entry]:
+                    print(log_safe(f"WARNING: TRUSTED_PROXY {entry!r} answers with {', '.join(shared[entry])}: more than "
+                                   "one container has that name, so none of them is trusted (name the proxy by its IP)"), flush=True)
+                continue
             ips |= found
-        _proxy_ip.update(ips=ips, at=time.monotonic())
+        _proxy_ip.update(ips=ips, at=time.monotonic(), shared=shared)
     return _proxy_ip["ips"]
+
+
+def proxy_shared():
+    """The TRUSTED_PROXY names that more than one container answers to: {name: [addresses]} (see proxy_ips)."""
+    proxy_ips()
+    return _proxy_ip.get("shared") or {}
 
 
 _gw = {"t": float("-inf"), "ip": None}
@@ -1117,6 +1134,16 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             "proxy's HTTPS in between. Fishbowl's own sign-in still protects everything.",
             [find_proxy, ("In docker-compose.yml, change the TRUSTED_PROXY line to that name:", "TRUSTED_PROXY: <your proxy's container name>")],
             compose=True)
+    elif proxy_shared():
+        entry, found = next(iter(proxy_shared().items()))
+        add("proxy", "problem", "More than one container answers to the proxy's name",
+            f"TRUSTED_PROXY {entry!r} answers with {', '.join(found)}: another container on the same Docker network has "
+            "that name too (a compose service called like your proxy gets it as an alias), and it could pass for the "
+            "proxy. So none of them is trusted until the name is unique.",
+            [("Find the proxy's own address:", "docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' <your proxy's container name>"),
+             ("Name the proxy by that address (or by a container name nothing else uses) in docker-compose.yml:",
+              "TRUSTED_PROXY: <the proxy's IP>"),
+             ("Better still, lock the dash to a network only the proxy shares: see LISTEN in docs/SETTINGS.md.", "")], compose=True)
     elif not proxy_ips():
         add("proxy", "problem", "The trusted proxy can't be found",
             f"TRUSTED_PROXY is {TRUSTED_PROXY!r}, but that name doesn't resolve, so every connection is refused (except the "

@@ -98,17 +98,47 @@ class Listen(unittest.TestCase):
             srv.shutdown()
             srv.server_close()
 
-    def test_proxy_with_several_addresses(self):
-        app = load_app(TRUSTED_PROXY="proxy.test")
+    def resolving(self, app, answers):
+        """Make app's lookups of "proxy.test" answer from answers[0] (a list of IPs or an exception), then the next..."""
         real = app.socket.getaddrinfo
-        app.socket.getaddrinfo = lambda host, *a, **k: (
-            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0)), (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.9.0.3", 0))]
-            if host == "proxy.test" else real(host, *a, **k))
-        try:
-            self.assertEqual(app.proxy_ips(), {"10.0.0.5", "10.9.0.3"})
-        finally:
-            app.socket.getaddrinfo = real
 
+        def fake(host, *a, **k):
+            if host != "proxy.test":
+                return real(host, *a, **k)
+            got = answers[0] if len(answers) == 1 else answers.pop(0)
+            if isinstance(got, Exception):
+                raise got
+            return [(socket.AF_INET6 if ":" in ip else socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0)) for ip in got]
+        app.socket.getaddrinfo = fake
+        self.addCleanup(lambda: setattr(app.socket, "getaddrinfo", real))
+
+    def again(self, app):
+        app._proxy_ip["at"] = float("-inf")     # (looked up again: normally once a minute)
+        return app.proxy_ips()
+
+    def test_proxy_with_several_addresses(self):
+        # Docker answers a name with one address per lookup, even for a container on two shared networks (the second
+        # one is listed by hand); one IPv4 and one IPv6 address are one dual-stack container.
+        app = load_app(TRUSTED_PROXY="proxy.test 10.9.0.3")
+        self.resolving(app, [["10.0.0.5", "fd00::5"]])
+        self.assertEqual(app.proxy_ips(), {"10.0.0.5", "fd00::5", "10.9.0.3"})
+
+    def test_a_name_two_containers_answer_to_is_trusted_for_neither(self):
+        # Two answers of one kind: another container shares the name (a compose service called nginx on the proxy's
+        # network gets that alias); either could be the proxy, so neither is (audit 2026-10-30).
+        app = load_app(TRUSTED_PROXY="proxy.test")
+        self.resolving(app, [["10.0.0.5", "10.0.0.66"]])
+        self.assertEqual(app.proxy_ips(), set())
+        checks = {c["id"]: c for c in app.setup_checks()}
+        self.assertEqual(checks["proxy"]["state"], "problem")
+        self.assertIn("10.0.0.66", checks["proxy"]["detail"])
+
+    def test_a_removed_proxy_is_trusted_no_more(self):
+        app = load_app(TRUSTED_PROXY="proxy.test")
+        self.resolving(app, [["10.0.0.5"], socket.gaierror(socket.EAI_AGAIN, "busy"), socket.gaierror(socket.EAI_NONAME, "gone")])
+        self.assertEqual(app.proxy_ips(), {"10.0.0.5"})
+        self.assertEqual(self.again(app), {"10.0.0.5"}, "a lookup that failed for now keeps the last answer")
+        self.assertEqual(self.again(app), set(), "a name that no longer exists: its old address (soon someone else's) isn't trusted")
 
 if __name__ == "__main__":
     unittest.main()
