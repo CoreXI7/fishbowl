@@ -157,23 +157,29 @@ def has_login(txt):
     if it's an auth-request snippet (Authelia's NPM guide: authelia-authrequest.conf; authelia-location.conf only defines
     the endpoint); an NPM access list counts when it asks for a user and password (auth_basic). Linear in the file."""
     # quoted text becomes a neutral word (so a brace or # inside quotes means nothing; "off" stays off), comments go
-    txt = re.sub(r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|#[^\n]*""",
-                 lambda m: ("off" if m.group(1)[1:-1].strip() == "off" else "quoted") if m.group(1) else "", txt)
+    txt = re.sub(r"""("(?:\\.|[^"\\])*(?:"|\Z)|'(?:\\.|[^'\\])*(?:'|\Z))|#[^\n]*""",   # an unclosed quote runs to the end
+                 lambda m: ("off" if m.group(1)[1:-1].strip("\"' ") == "off" else "quoted") if m.group(1) else "", txt)
     parts = re.split(r"([{};])", txt)
-    stack, server, root, root_off = [], False, False, False
+    stack, other, nloc = [], 0, 0          # blocks open; how many aren't server / location /; how many are locations
+    server, root, root_off = False, False, False
     for head, sep in zip(parts[0::2], parts[1::2]):
         head = " ".join(head.split())
         if sep == "{":
-            stack.append(head)
+            is_loc = head.startswith("location")
+            fine = head.startswith("server") or (is_loc and re.fullmatch(r"location (\^~\s*)?/", head) is not None)
+            stack.append((is_loc, fine))
+            other += not fine
+            nloc += is_loc
             continue
         if sep == "}":
-            stack = stack[:-1]
+            if stack:
+                is_loc, fine = stack.pop()
+                other -= not fine
+                nloc -= is_loc
             continue
-        locs = [b for b in stack if b.startswith("location")]
-        if any(not re.fullmatch(r"location (\^~\s*)?/", b) for b in locs):
-            continue                                           # another path (or limit_except/if: not for every request)
-        if any(not b.startswith(("location", "server")) for b in stack):
-            continue
+        if other:
+            continue                               # another path, or limit_except/if/map: not for every request to /
+        locs = nloc > 0
         word, _, arg = head.partition(" ")
         arg = arg.strip().strip("\"'")
         if word in ("auth_request", "auth_basic") and arg == "off":

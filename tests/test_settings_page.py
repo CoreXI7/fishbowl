@@ -233,6 +233,8 @@ class Setup(unittest.TestCase):
         t = time.monotonic()
         app.has_login("server { }\n" + "x" * 200_000)
         app.has_login("}\n" + "# c\n" * 50_000)
+        app.has_login('server { x "' + '\\"' * 40_000)                      # an unclosed quote full of escaped quotes
+        app.has_login("server { " + "location /a { " * 20_000 + "x; " * 20_000)   # deep nesting + many directives
         self.assertLess(time.monotonic() - t, 1.0, "a big unterminated tail must not take quadratic time")
 
     def test_integration_that_stopped_answering(self):
