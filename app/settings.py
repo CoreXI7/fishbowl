@@ -88,10 +88,14 @@ def _read_json(path):
 def _write_json(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
-    with os.fdopen(fd, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)   # (a write that failed halfway leaves nothing behind: failed saves can't fill the disk)
+        raise
 
 
 TOML = _read_toml()
@@ -164,8 +168,8 @@ def _s(v, n, what, pattern=None):
     """A text field: at most n characters, no control characters, trimmed, and matching pattern if given."""
     if v is None:
         v = ""
-    if not isinstance(v, str) or len(v) > n or any(ord(c) < 32 for c in v):
-        raise Invalid(f"{what}: text too long or invalid")
+    if not isinstance(v, str) or len(v) > n or any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in v):
+        raise Invalid(f"{what}: text too long or invalid")   # (a lone surrogate, which JSON allows, can't be saved)
     v = v.strip()
     if v and pattern and not re.fullmatch(pattern, v):
         raise Invalid(f"{what}: '{v[:60]}' is not valid")

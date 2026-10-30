@@ -300,6 +300,27 @@ class Page(unittest.TestCase):
             b.close()
             srv.shutdown()
 
+class SettingsText(unittest.TestCase):
+    """A lone surrogate ("\\ud800", which JSON allows) passed the text checks, and every save then failed halfway,
+    leaving a half-written temp file in data/: a signed-in browser could fill the disk (audit, the fuzzer)."""
+
+    def test_a_lone_surrogate_is_refused(self):
+        app = load_app()
+        with self.assertRaises(app.cfgstore.Invalid):
+            app.cfgstore.validate({**app.ED, "site": {**app.ED["site"], "title": "x\ud800"}}, {})
+
+    def test_a_lone_surrogate_in_a_collector_setting_is_refused(self):
+        app = load_app()
+        with self.assertRaises(app.cfgstore.Invalid):
+            app.check_collector_changes({"security.bad_process_names": {"from": "", "to": ["x\ud800"]}})
+
+    def test_a_failed_write_leaves_no_temp_file(self):
+        app = load_app()
+        folder = os.path.dirname(app.cfgstore.SETTINGS_FILE)
+        with self.assertRaises(Exception):
+            app.cfgstore._write_json(app.cfgstore.SETTINGS_FILE, {"x": "\ud800"})
+        self.assertEqual([f for f in os.listdir(folder) if f.startswith(".tmp-")], [])
+
 
 if __name__ == "__main__":
     unittest.main()

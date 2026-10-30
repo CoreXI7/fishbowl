@@ -1099,7 +1099,11 @@ def check_collector_changes(changes):
     last = c.get("last") if isinstance(c, dict) and isinstance(c.get("last"), str) else ""
     text = json.dumps({"v": 3, "id": os.urandom(8).hex(),   # its own id: the same change saved again is a new request
                        "changes": {**unhandled_request(last), **new}}, ensure_ascii=False)
-    if len(text.encode()) > COLLECTOR_REQ_MAX:
+    try:
+        size = len(text.encode())
+    except UnicodeEncodeError:   # (a lone surrogate, which JSON allows: refused, not a 502)
+        raise cfgstore.Invalid("collector settings: invalid text")
+    if size > COLLECTOR_REQ_MAX:
         raise cfgstore.Invalid("collector settings: too big")
     return text
 
