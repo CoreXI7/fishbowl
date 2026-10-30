@@ -200,8 +200,10 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   name too: the dashboard needs a host name of its own.) Sign-out ends the session whatever address it comes from. Sign-out ends it on the
   server and sends `Clear-Site-Data: "cache"` (not `"cookies"`, which would also wipe your SSO's cookies on the same
   site); pages behind the sign-in are `no-store`, and a page brought back by Back reloads, so the back/forward cache
-  never shows them (or recovery codes) after signing out. Cookies are `Priority=High` (in Chrome a cookie flood from a
-  sibling site evicts lower ones first; no browser promises to keep cookies, so a flood can still sign you out).
+  never shows them (or recovery codes) after signing out. Cookies are `Priority=High`, but that doesn't protect them: a
+  sibling subdomain can flood the cookie jar with its own high-priority cookies (Chrome and Firefox), pushing out the
+  session and the trusted-browser cookie. Then that browser is a new one, and if someone's guessing has tripped the
+  account lock it gets the lock until `auth.py unlock` (see "Still open").
 - **Revocation**: a password change, or turning two-step on or off, saves the change together with a new random
   account *epoch* (62 bits, new at every change and for every new account, so nothing made for an account that was
   reset can match the next one). Sessions, half-finished sign-ins and trusted devices carry the epoch they were made
@@ -291,6 +293,12 @@ deeply nested JSON could exhaust memory under the byte caps; several ways a misb
 bloat the collector.
 
 ## Still open
+
+- A hostile page on a sibling subdomain the owner opens can push the dashboard's cookies out of the browser (a cookie
+  flood): signed out, and no longer a trusted browser. Combined with the account lock (a day of someone's guessing),
+  that browser needs `auth.py unlock`. Give the dashboard a host name whose siblings you trust.
+- On plain HTTP by a LAN name or IP, browsers ignore `Cross-Origin-Opener-Policy` and `Clear-Site-Data` (they're for
+  secure origins): use HTTPS for both.
 
 - Over plain HTTP on a LAN name or IP, browsers send no `Sec-Fetch-Site`, so the rule that refuses API reads from
   other sites can't tell them apart there; `Cross-Origin-Resource-Policy: same-origin` still keeps other pages from
