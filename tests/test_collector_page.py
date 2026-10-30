@@ -235,6 +235,12 @@ class PageSettings(unittest.TestCase):
             self.assertEqual(len(f.read()), 64)
         col.apply_config(col.effective())
         self.assertEqual(col.CFG["interval"], 7)
+        send(col, {"interval": ch(7, 1)}, rid="bad1")   # the same refusal again doesn't rewrite the state either
+        col.page_round(DET)
+        refused_at = os.stat(col.PAGE_STATE_FILE).st_mtime_ns
+        send(col, {"interval": ch(7, 1)}, rid="bad2")
+        col.page_round(DET)
+        self.assertEqual(os.stat(col.PAGE_STATE_FILE).st_mtime_ns, refused_at)
 
     def test_choice_survives_a_flaky_detection(self):
         col = self.col

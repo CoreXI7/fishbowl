@@ -1898,8 +1898,9 @@ def take_request(state, det, cfg, force=False):
                 state["safe"][k] = {"v": v} if fv is MISSING else {"v": v, "file": fv}
         else:
             state["pending"][k] = {"from": None if cur is MISSING else cur, "to": v}
-    state["rejected"], state["rejected_more"] = rejected[:20], max(0, len(rejected) - 20)
-    state["rejected_at"] = int(time.time())
+    if (rejected[:20], max(0, len(rejected) - 20)) != (state["rejected"], state["rejected_more"]):   # (a request that changes
+        state["rejected"], state["rejected_more"] = rejected[:20], max(0, len(rejected) - 20)      # nothing rewrites nothing)
+        state["rejected_at"] = int(time.time())
     return True
 
 

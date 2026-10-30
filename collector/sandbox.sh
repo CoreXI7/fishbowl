@@ -26,7 +26,8 @@ try:
 except FileNotFoundError:
     c = {}
 i = c.get("interval", 5)
-print(int(i) if isinstance(i, (int, float)) and 0 < i < 86400 else 5, c.get("out_dir", "/var/lib/homelab-dash"))' "$CONF")
+print(int(i) if isinstance(i, (int, float)) and 0 < i < 86400 else 5, c.get("out_dir", "/var/lib/homelab-dash"))' "$CONF") \
+  || { echo "Can't read $CONF (is it valid TOML?): nothing changed."; exit 1; }
 [[ "$OUT" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "out_dir must be an absolute path of letters, digits and . _ - / only: $OUT"; exit 1; }
 install -d -m 0755 "$OUT"   # ReadWritePaths= needs it to exist (on a fresh install the service hasn't made it yet)
 
