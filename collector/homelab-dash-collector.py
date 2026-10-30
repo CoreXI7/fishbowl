@@ -1133,6 +1133,7 @@ def authelia_detail():
     if data[18:20] == b"\x02\x02":                        # a WAL-mode header can't be used in memory: read it as rollback mode
         data[18:20] = b"\x01\x01"                          # (sign-ins still in the -wal file show up after its next checkpoint)
     con = sqlite3.connect(":memory:")
+    con.text_factory = lambda b: b.decode("utf-8", "replace")   # (a row that isn't UTF-8 mustn't blank the whole view)
     try:
         if hasattr(con, "setconfig"):                     # Python 3.12+
             for opt, on in (("SQLITE_DBCONFIG_DEFENSIVE", True), ("SQLITE_DBCONFIG_TRUSTED_SCHEMA", False),
@@ -1933,7 +1934,7 @@ def real_mounts_from(mountinfo, binds):
     rows, skip = [], tuple(d + "/" for d in (*NOT_DATA, *SYSTEM_DIRS, os.path.normpath(OUT_DIR)))
     unesc = lambda s: re.sub(r"\\([0-7]{3})", lambda x: chr(int(x.group(1), 8)), s)   # \040 = space
     try:
-        with open(mountinfo) as f:
+        with open(mountinfo, encoding="utf-8", errors="surrogateescape") as f:   # (a path is bytes: not always UTF-8)
             for line in f:
                 pre, _, post = line.partition(" - ")
                 p, q = pre.split(), post.split()

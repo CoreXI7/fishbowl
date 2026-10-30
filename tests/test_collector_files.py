@@ -209,6 +209,35 @@ class OddOutput(unittest.TestCase):
         finally:
             self.col.run = real
 
+class Robust(unittest.TestCase):
+    """Odd inputs that stopped one part of the collector for good (audit, the fuzzer and round 2)."""
+
+    def setUp(self):
+        self.col, self.tmp = load_collector()
+
+    def test_a_mount_path_that_isnt_utf8(self):
+        # a user's FUSE mount at a folder named with byte 0xff: detection failed every time, and the settings page's
+        # collector changes were never taken again
+        info = os.path.join(self.tmp, "mountinfo")
+        with open(info, "wb") as f:
+            f.write(b"22 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n"
+                    b"40 22 0:50 / /home/mallory/\xff rw - fuse.sshfs host: rw\n")
+        self.assertIsInstance(self.col.real_mounts_from(info, {}), list)
+
+    def test_an_authelia_row_that_isnt_text(self):
+        import sqlite3
+        path = os.path.join(self.tmp, "db.sqlite3")
+        con = sqlite3.connect(path)
+        con.executescript("CREATE TABLE authentication_logs (id INTEGER PRIMARY KEY, time TEXT, successful INT, banned INT, "
+                          "username TEXT, auth_type TEXT, remote_ip TEXT, request_uri TEXT);")
+        con.execute("INSERT INTO authentication_logs VALUES (1, '2026-10-30 10:00:00', 0, 0, CAST(X'FFFE6E6F74' AS TEXT), "
+                    "'1FA', '203.0.113.9', '/')")
+        con.commit()
+        con.close()
+        self.col.SEC["authelia_db"] = path
+        self.assertIsNotNone(self.col.authelia_detail(), "one odd row doesn't blank the whole view")
+
+
 
 if __name__ == "__main__":
     unittest.main()
