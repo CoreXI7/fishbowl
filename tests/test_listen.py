@@ -173,5 +173,18 @@ class Listen(unittest.TestCase):
         self.assertEqual(app.proxy_ips(), set())
 
 
+    def test_an_ipv4_proxy_on_an_ipv6_socket_counts(self):
+        # (LISTEN "::" takes IPv4 connections as ::ffff:a.b.c.d, which never matched TRUSTED_PROXY; audit round 3)
+        app = load_app(TRUSTED_PROXY="10.9.0.3")
+        self.assertTrue(app.allowed_ip("::ffff:10.9.0.3"))
+        self.assertTrue(app.is_proxy_address("::ffff:10.9.0.3"))
+
+    def test_the_refusal_log_says_why_names_were_skipped(self):
+        app = load_app(TRUSTED_PROXY="proxy.test")
+        self.resolving(app, [["10.0.0.5"]])
+        app.network_count = lambda: 2
+        self.assertIn("more than one", app.proxy_refusal_note())
+
+
 if __name__ == "__main__":
     unittest.main()

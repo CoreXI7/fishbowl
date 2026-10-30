@@ -268,7 +268,24 @@ def allowed_ip(ip, local=None):
     """May this client talk to us at all? Always when no proxy is configured (LAN use) or in the demo, and when the
     connection comes from the dash itself (its source address = the address it arrived on: the health check of the
     dash's own proxy host connects to dash:8000)."""
-    return not TRUSTED_PROXY or DEMO or ip == "127.0.0.1" or ip == local or ip in proxy_ips()
+    return not TRUSTED_PROXY or DEMO or ip == "127.0.0.1" or ip == local or is_proxy_address(ip)
+
+
+def is_proxy_address(ip):
+    """Is ip one of the proxy's addresses? An IPv4 one arriving on an IPv6 socket (LISTEN "::") as ::ffff:a.b.c.d too."""
+    ip = ip[7:] if isinstance(ip, str) and ip.lower().startswith("::ffff:") and "." in ip else ip
+    return ip in proxy_ips()
+
+
+def proxy_refusal_note():
+    """Why every connection is refused, for the log (when that's because of TRUSTED_PROXY), or ""."""
+    if not TRUSTED_PROXY or proxy_ips():
+        return ""
+    if _proxy_ip.get("skipped"):
+        return (f" (TRUSTED_PROXY {TRUSTED_PROXY!r} names the proxy, but the dashboard is on more than one network, where a "
+                "name isn't trusted: give the proxy's IP, or set LISTEN)")
+    return (f" (TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve, so every connection is refused: set it to your proxy's "
+            "container name (docker ps), on a network the dashboard shares)")
 
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -1843,7 +1860,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- Fishbowl's own sign-in (AUTH=login) ----------
 
     def via_proxy(self):
-        return bool(TRUSTED_PROXY) and self.client_address[0] in proxy_ips()
+        return bool(TRUSTED_PROXY) and is_proxy_address(self.client_address[0])
 
     def one_header(self, name):
         """A header the proxy sets, or None when it's missing or repeated (a proxy that appends instead of replacing
@@ -2759,9 +2776,7 @@ class Server(ThreadingHTTPServer):
     def verify_request(self, request, client_address):
         ip = client_address[0]
         if not allowed_ip(ip, request.getsockname()[0]):
-            self._note(ip, f" (TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve, so every connection is refused: set it to "
-                           "your proxy's container name (docker ps), on a network the dashboard shares)"
-                           if TRUSTED_PROXY and not proxy_ips() else "")
+            self._note(ip, proxy_refusal_note())
             return False
         if not Server._reaping:
             Server._reaping.append(True)
@@ -2769,7 +2784,7 @@ class Server(ThreadingHTTPServer):
         key, now = auth.Throttle._key(ip), time.monotonic()   # (IPv6 per /64)
         with self._conn_lock:
             mine = [(v[0], r) for r, v in self._conns.items() if v[1] == key and v[2] != "cut"]
-            if len(mine) >= self.MAX_PER_IP and ip not in proxy_ips():
+            if len(mine) >= self.MAX_PER_IP and not is_proxy_address(ip):
                 # full for this address: cut its own oldest connection still sending its request, so one address
                 # trickling requests (everyone behind a proxy nobody named in TRUSTED_PROXY, say) only crowds itself
                 slow = [x for x in mine if self._conns[x[1]][2] is True]
