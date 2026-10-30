@@ -87,13 +87,19 @@ def hash_password(pw):
 
 
 def _parse_hash(stored):
-    m = re.fullmatch(r"scrypt\$(\d{1,2})\$(\d{1,2})\$(\d{1,2})\$([A-Za-z0-9+/=]{16,64})\$([A-Za-z0-9+/=]{40,64})", stored or "")
+    """(n, r, p, salt, key) of a stored scrypt hash, or None if it isn't one (any shape: a damaged file must read as
+    damaged, never crash the server or `auth.py reset`)."""
+    m = re.fullmatch(r"scrypt\$(\d{1,2})\$(\d{1,2})\$(\d{1,2})\$([A-Za-z0-9+/=]{16,64})\$([A-Za-z0-9+/=]{40,64})",
+                     stored if isinstance(stored, str) else "")
     if not m:
         return None
     n, r, p = 2 ** int(m[1]), int(m[2]), int(m[3])
     if not (2 ** 14 <= n <= 2 ** 20 and 1 <= r <= 16 and 1 <= p <= 16 and 128 * n * r <= SCRYPT_MAXMEM // 2):
         return None
-    return n, r, p, base64.b64decode(m[4]), base64.b64decode(m[5])
+    try:
+        return n, r, p, base64.b64decode(m[4], validate=True), base64.b64decode(m[5], validate=True)
+    except ValueError:   # (binascii.Error: bad padding)
+        return None
 
 
 def verify_password(pw, stored):

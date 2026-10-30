@@ -1695,6 +1695,24 @@ class Audit(Base):
         conn.endheaders(body)
         self.assertEqual(conn.getresponse().status, 403, "the browser's address is unknown: no plain-HTTP sign-in")
 
+    def test_the_cli_fixes_a_damaged_account_file(self):
+        # (a hash that's a list, a number or bad base64 made `auth.py status` and `reset` crash with a traceback, so the
+        # documented way out of a damaged file didn't work; audit, the fuzzer)
+        self.create()
+        good = json.load(open(self.auth.AUTH_FILE))
+        for bad in (["x"], 5, "scrypt$15$8$3$" + "A" * 17 + "$" + "B" * 41):
+            with open(self.auth.AUTH_FILE, "w") as f:
+                json.dump({**good, "hash": bad}, f)
+            run = lambda *a: subprocess.run([sys.executable, "-I", os.path.join(ROOT, "app", "auth.py"), *a], capture_output=True,
+                                            text=True, env={**os.environ, "DATA_DIR": self.auth.DATA_DIR})
+            out = run("status")
+            self.assertIn("damaged", out.stdout, out.stderr[-300:])
+            out = run("reset", "--yes")
+            self.assertEqual(out.returncode, 0, out.stderr[-300:])
+            self.assertFalse(os.path.exists(self.auth.AUTH_FILE))
+            self.create()
+            good = json.load(open(self.auth.AUTH_FILE))
+
 
 if __name__ == "__main__":
     unittest.main()
