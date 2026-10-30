@@ -1,8 +1,12 @@
 """Talking to upstream services safely: openers that never follow redirects off-host, and helpers that only let
 the expected types through from upstream JSON (it is attacker-controlled: a taken-over container can answer anything)."""
+import http.client
 import json
 import re
+import socket
 import ssl
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,8 +24,81 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-NOFOLLOW = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=INSECURE))   # LAN upstreams
-STRICT = urllib.request.build_opener(_NoRedirect)                                                    # integrations
+# ---------- an overall deadline for every outbound request ----------
+# urllib's timeout limits each read, not the whole request: a service sending one byte every few seconds held a
+# request thread (and its connection slot) for ever, and enough of them made the dashboard stop answering. Every
+# outbound connection gets a deadline of DEADLINE_FACTOR x its timeout; at the deadline its socket is shut down, so
+# the read in progress fails at once.
+DEADLINE_FACTOR = 3
+_watched = {}                      # connection -> monotonic deadline
+_watch_cond = threading.Condition()
+_reaper = []
+
+
+def _reap():
+    with _watch_cond:
+        while True:
+            now = time.monotonic()
+            for conn, at in [(c, t) for c, t in _watched.items() if t <= now]:
+                _watched.pop(conn, None)
+                try:
+                    socket.socket.shutdown(conn._dl_sock, socket.SHUT_RDWR)   # (the plain socket's: stops an SSL read too)
+                except (OSError, TypeError, AttributeError):
+                    pass
+            _watch_cond.wait(min(_watched.values()) - now if _watched else None)
+
+
+def watch(conn):
+    """Shut conn's socket down DEADLINE_FACTOR x its timeout from now (called once it's connected). The socket is
+    remembered here: urllib drops conn.sock once the headers are in, while the body is still being read from it."""
+    if not isinstance(conn.timeout, (int, float)):
+        return
+    conn._dl_sock = conn.sock
+    with _watch_cond:
+        _watched[conn] = time.monotonic() + DEADLINE_FACTOR * conn.timeout
+        if not _reaper:
+            _reaper.append(threading.Thread(target=_reap, name="upstream-deadlines", daemon=True))
+            _reaper[0].start()
+        _watch_cond.notify()
+
+
+def unwatch(conn):
+    with _watch_cond:
+        _watched.pop(conn, None)
+
+
+class DeadlineHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        super().connect()
+        watch(self)
+
+    def close(self):
+        unwatch(self)
+        super().close()
+
+
+class DeadlineHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        super().connect()
+        watch(self)
+
+    def close(self):
+        unwatch(self)
+        super().close()
+
+
+class _DeadlineHTTP(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(DeadlineHTTPConnection, req)
+
+
+class _DeadlineHTTPS(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(DeadlineHTTPSConnection, req, context=self._context)
+
+
+NOFOLLOW = urllib.request.build_opener(_NoRedirect, _DeadlineHTTP, _DeadlineHTTPS(context=INSECURE))   # LAN upstreams
+STRICT = urllib.request.build_opener(_NoRedirect, _DeadlineHTTP, _DeadlineHTTPS())                      # integrations
 
 
 def fetch_same_host(url, base, name, limit, timeout=5):
@@ -34,7 +111,8 @@ def fetch_same_host(url, base, name, limit, timeout=5):
         req = urllib.request.Request(url, headers={"User-Agent": UA, "Host": name})
         try:
             with NOFOLLOW.open(req, timeout=timeout) as r:
-                return r.headers.get("Content-Type", ""), r.read(limit)
+                body = r.read(limit)
+                return None if r.length else (r.headers.get("Content-Type", ""), body)   # (cut short: no half an icon)
         except urllib.error.HTTPError as e:
             loc = e.headers.get("Location") if 300 <= e.code < 400 else None
             e.close()

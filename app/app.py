@@ -32,8 +32,8 @@ import settings as cfgstore             # noqa: E402  (settings.py: load / valid
 import auth                             # noqa: E402  (auth.py: Fishbowl's own sign-in)
 from hostinfo import (_live_prev, cpu_model, cpu_mhz, cpu_topology, cpu_usage,  # noqa: E402
                       disk_io, hwmon)
-from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _NoRedirect,  # noqa: E402
-                      fetch_same_host, num, read_capped, read_json, text)
+from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _DeadlineHTTP, _DeadlineHTTPS,  # noqa: E402
+                      _NoRedirect, fetch_same_host, num, read_capped, read_json, text, unwatch, watch)
 
 DEMO = cfgstore.DEMO
 HW_FILE = os.environ.get("HW_FILE", "/hw/hw.json")
@@ -332,6 +332,11 @@ class _SNIConnection(http.client.HTTPSConnection):
     def connect(self):
         sock = socket.create_connection((self.host, self.port), self.timeout)
         self.sock = self._context.wrap_socket(sock, server_hostname=self.sni)
+        watch(self)
+
+    def close(self):
+        unwatch(self)
+        super().close()
 
 
 def check_via_proxy(host, path, timeout):
@@ -654,7 +659,8 @@ class Qbit:
     """qBittorrent Web API client. Keeps the login cookie and logs in again when it expires (403)."""
     def __init__(self):
         self.jar = http.cookiejar.CookieJar()
-        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar), _NoRedirect)
+        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar), _NoRedirect, _DeadlineHTTP,
+                                              _DeadlineHTTPS())
         self.lock = threading.Lock()
         self.sync_lock = threading.Lock()
         self.rid, self.state = 0, {}        # sync/maindata position + hash -> the torrent fields the page shows
