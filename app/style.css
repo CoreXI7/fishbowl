@@ -213,6 +213,7 @@ html[data-motion="still"] .mascot img{animation:none}
 
 /* ===== wall mode (?wall): fits 1920x1080 with no scrolling, glanceable from across the room ===== */
 body.wall{height:100vh;overflow:hidden;font-size:15px}
+body.wall #signout{display:none}
 body.wall.idle,body.wall.idle *{cursor:none!important}
 body.wall header{padding:8px 18px}
 body.wall #p-time{font:600 26px Fredoka,sans-serif;border:0;background:none;box-shadow:none}
@@ -349,7 +350,7 @@ html:has(body.settings){scroll-padding:calc(var(--hh,60px) + 16px) 0 96px}
 input[type=search]{font:inherit;font-size:14px;color:var(--fg);background:color-mix(in srgb,var(--card) 70%,var(--bg));border:1px solid var(--line);border-radius:10px;padding:7px 10px;width:100%}
 .set-main{display:grid;gap:16px;min-width:0}
 .set-main section p.hint,.hint{color:var(--mute);font-size:12.5px;margin:2px 0 10px}
-.set-main a:not(.pill){color:inherit;font-weight:600;text-decoration:underline;text-decoration-color:var(--acc);text-decoration-thickness:2px;text-underline-offset:3px}
+.set-main a:not(.pill),.login-card a{color:inherit;font-weight:600;text-decoration:underline;text-decoration-color:var(--acc);text-decoration-thickness:2px;text-underline-offset:3px}
 .set-main section>h3{font:600 14.5px Fredoka,sans-serif;margin:20px 0 4px}
 /* forms: one column, label above, help under */
 .form{display:grid;gap:16px;max-width:640px}
@@ -674,3 +675,38 @@ body.wall .sd-open i{display:none}                       /* the wall's card stay
 /* hidden panels (site.hidden_panels, set on the settings page): the summary tiles at the top stay */
 .no-services #s-svc,.no-system #s-sys,.no-temps #s-tmp,.no-gpu #s-gpu,.no-mascot #mascot,.no-plex #s-plex,.no-requests #s-req,
 .no-torrents #s-tor,.no-security #s-sec,.no-drives #s-drv{display:none!important}
+
+/* the sign-in page (login.html) */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px;position:relative;z-index:1}
+.login-card{width:100%;max-width:440px;padding:24px 24px 18px;background:var(--card);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow,0 6px 24px rgba(0,0,0,.08))}
+.login-title{display:flex;align-items:center;gap:10px;margin:0 0 14px;font-size:22px}
+.login-logo{width:34px;height:34px}
+.login-card .form{display:flex;flex-direction:column;gap:14px}
+.login-card .ok{align-self:flex-start;padding:9px 22px;font-weight:700;background:var(--fill-up);color:var(--on-fill);border-color:transparent}
+.login-card .ok:disabled{opacity:.5}
+.login-btns{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.login-wait{margin:-6px 0 12px;font:600 13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--mute)}
+#f-notice{display:flex;flex-direction:column;gap:10px}#f-notice[hidden]{display:none}#notice-text p{margin:0 0 10px}
+.pw-row{display:flex;gap:6px}.pw-row input{flex:1;min-width:0}
+.login-msg{border:1px solid var(--down);border-left-width:4px;border-radius:10px;padding:9px 12px;margin:0 0 12px;font-size:13.5px}
+.login-forgot,.login-http{font-size:12.5px;margin:4px 0 0}
+.login-http{color:var(--warn-t)}
+.login-card [aria-invalid="true"]{border-color:var(--down);box-shadow:0 0 0 2px color-mix(in srgb,var(--down) 30%,transparent)}
+/* settings → Account */
+.acct-who{display:flex;align-items:center;gap:10px;margin:4px 0 6px}
+.acct-form{max-width:520px}
+.acct-confirm{padding:12px 14px;border:1px solid var(--line);border-radius:12px;margin:10px 0 4px}.acct-confirm h3{margin:0}
+.acct-msg{margin:0;font-size:13px}
+.acct-form .ibtn,.acct-steps .ibtn{align-self:flex-start;justify-self:start}
+.set-main a.ibtn{text-decoration:none;color:var(--fg);font-weight:inherit;display:inline-flex;align-items:center;border:1px solid var(--line);
+  border-radius:999px;background:var(--bg);cursor:pointer}   /* "Download" looks like the buttons next to it */
+.acct-btns{display:flex;flex-wrap:wrap;gap:8px}
+.acct-list{list-style:none;padding:0;margin:0 0 10px;display:grid;gap:6px}
+.acct-list li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px}
+.acct-list li>button{flex-shrink:0;white-space:nowrap}
+.acct-steps{padding-left:20px;display:grid;gap:12px}
+.acct-qr svg{width:200px;height:200px;display:block;margin:8px 0;border-radius:8px}
+.acct-key{word-break:break-all}
+.acct-rc{font:600 15px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--fg) 7%,var(--bg));white-space:pre;overflow-x:auto;margin:8px 0;
+  font-size:clamp(9px,3vw,15px)}   /* one code per line, even on a phone: half a code on its own line looks like a code */

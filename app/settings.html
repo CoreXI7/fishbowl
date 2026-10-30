@@ -38,6 +38,7 @@
       <li><a href="#drives">Drives &amp; hardware</a></li>
       <li><a href="#security">Security</a></li>
       <li><a href="#backups">Backups</a></li>
+      <li id="nav-account" hidden><a href="#account">Account</a></li>
       <li><a href="#about">About</a></li>
     </ul>
   </nav>
@@ -147,6 +148,53 @@
       <p class="hint col-hint">Files and patterns here wait for your OK on the host after you save (the overdue time applies by itself).</p>
       <div class="col-wait" data-col-msg></div>
       <div class="form" id="c-backups"></div>
+    </section>
+
+    <section id="account" aria-labelledby="h-account" hidden>
+      <h2 id="h-account" data-kw="password two-step 2fa mfa totp authenticator recovery codes sessions browsers sign out login">Account</h2>
+      <p class="hint">Who signs in to this dashboard. These buttons act right away (the Save bar is for the other sections).</p>
+      <div class="acct-who"><span id="acct-who"></span> <button type="button" class="ibtn" id="acct-signout">Sign out</button></div>
+      <div id="acct-alerts"></div>
+      <p class="acct-msg" id="acct-alert-msg" role="status" aria-live="polite"></p>
+
+      <form class="form acct-form acct-confirm" id="acct-confirm" method="post" novalidate autocomplete="on" aria-labelledby="h-acct-confirm">
+        <h3 id="h-acct-confirm">Confirm it's you</h3>
+        <p class="hint" id="acct-confirm-d">Every change in Account asks for this first, each time (with two-step on, a new
+          code each time: a code works once).</p>
+        <input type="text" autocomplete="username" class="acct-user" hidden>
+        <div class="field"><label for="acct-cur">Current password</label>
+          <input type="password" id="acct-cur" autocomplete="current-password" aria-describedby="acct-confirm-d acct-confirm-msg"></div>
+        <div class="field" id="acct-code-f" hidden><label for="acct-code">A code from your authenticator app, or a recovery code</label>
+          <input type="text" id="acct-code" autocomplete="one-time-code" maxlength="40" spellcheck="false" autocapitalize="characters"
+                 aria-describedby="acct-confirm-msg"></div>
+        <p class="acct-msg" id="acct-confirm-msg" role="status" aria-live="polite"></p>
+      </form>
+
+      <h3 id="h-acct-pw" tabindex="-1">Password</h3>
+      <form class="form acct-form" id="acct-pw" method="post" novalidate>
+        <input type="text" autocomplete="username" class="acct-user" hidden>
+        <div class="field"><label for="acct-pw-new">New password</label>
+          <input type="password" id="acct-pw-new" autocomplete="new-password" aria-describedby="acct-pw-d">
+          <small id="acct-pw-d">At least <span class="pw-min">15</span> characters. Every other browser is signed out when it changes.</small></div>
+        <div class="field"><label for="acct-pw-new2">New password again</label>
+          <input type="password" id="acct-pw-new2" autocomplete="new-password"></div>
+        <button type="submit" class="ibtn">Change the password</button>
+        <p class="acct-msg" id="acct-pw-msg" role="status" aria-live="polite"></p>
+      </form>
+
+      <h3 id="h-acct-totp" tabindex="-1">Authenticator app (two-step sign-in)</h3>
+      <div id="acct-totp"></div>
+      <p class="acct-msg" id="acct-totp-msg" role="status" aria-live="polite"></p>
+
+      <h3 id="h-acct-sessions" tabindex="-1">Signed-in browsers</h3>
+      <div id="acct-sessions"></div>
+      <p class="acct-msg" id="acct-s-msg" role="status" aria-live="polite"></p>
+
+      <h3>Recent sign-ins and changes</h3>
+      <div id="acct-events"></div>
+
+      <h3>Recent failed tries</h3>
+      <div id="acct-fails"></div>
     </section>
 
     <section id="about" aria-labelledby="h-about">

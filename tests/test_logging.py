@@ -31,7 +31,7 @@ class Logging(unittest.TestCase):
 
     def test_control_characters_are_escaped(self):
         reply, out, err = self.raw(b"GET /\x1b[2J\x1b]0;owned\x07 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
-        self.assertIn(b"404", reply.split(b"\r\n")[0])
+        self.assertIn(b"400", reply.split(b"\r\n")[0], "control characters in a path: refused")
         self.assertTrue(out.strip(), "the request was logged")
         self.assertNotIn("\x1b", out + err)
         self.assertNotIn("\x07", out + err)
@@ -49,7 +49,8 @@ class Logging(unittest.TestCase):
             with contextlib.redirect_stdout(out), socket.create_connection(("127.0.0.1", srv.server_address[1]), timeout=5) as s:
                 port = srv.server_address[1]
                 s.sendall(b"POST /api/security/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://127.0.0.1:%d\r\n"
-                          b"Remote-User: alice\r\nX-Real-IP: 198.51.100.9\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}" % (port, port))
+                          b"Remote-User: alice\r\nX-Real-IP: 198.51.100.9\r\nContent-Type: application/json\r\nContent-Length: 2\r\n"
+                          b"Connection: close\r\n\r\n{}" % (port, port))
                 while s.recv(65536):
                     pass
             line = [l for l in out.getvalue().splitlines() if "marked as reviewed" in l][0]

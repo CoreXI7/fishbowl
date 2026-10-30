@@ -82,8 +82,12 @@ function kpi(id, state, value, sub) {
   setHTML(k.querySelector(".ks"), sub || "&nbsp;");
 }
 
+// Fishbowl's own sign-in ended (expired, or signed out elsewhere): go sign in, then come back here
+function toSignIn() { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search); }   // ?wall stays
+
 async function getJSON(url) {
   const r = await fetch(url, {credentials: "same-origin"});
+  if (r.status === 401) { toSignIn(); throw new Error("signed out"); }
   // An auth proxy (Authelia etc.) answering instead of us means the login expired: reload to log in again.
   if (r.redirected || (r.headers.get("content-type") || "").indexOf("json") < 0) { location.reload(); throw new Error("session expired"); }
   const j = await r.json();
@@ -93,6 +97,7 @@ async function getJSON(url) {
 
 async function postJSON(url, body) {
   const r = await fetch(url, {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  if (r.status === 401) { toSignIn(); throw new Error("signed out"); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.status);
   return j;
@@ -108,6 +113,7 @@ function applyConfig() {
   applyMotion(); showMotion();
   $("site-title").textContent = CFG.title;
   $("gear").hidden = !CFG.settings_ui;
+  $("signout").hidden = CFG.auth !== "login";
   if (CFG.demo) {
     $("demo-pill").hidden = false;
     if (CFG.repo) $("demo-pill").href = CFG.repo; else $("demo-pill").removeAttribute("href");
@@ -171,3 +177,8 @@ addEventListener("keydown", e => { if (e.key.toLowerCase() === "m" && noTyping(e
 matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => { applyMotion(); showMotion(); bubbles(); });
 showMotion();
 
+
+$("signout").addEventListener("click", async () => {
+  try { await postJSON("/api/logout", {}); } catch (e) { /* signed out either way */ }
+  location.href = "/login";
+});

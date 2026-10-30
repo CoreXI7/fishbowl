@@ -8,12 +8,14 @@ hosts show up automatically. Hardware/security stats come from the optional root
 """
 import gzip
 import hashlib
+import hmac
 import http.client
 import http.cookiejar
 import ipaddress
 import json
 import os
 import re
+import secrets
 import socket
 import sys
 import threading
@@ -27,6 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import settings as cfgstore             # noqa: E402  (settings.py: load / validate / save)
+import auth                             # noqa: E402  (auth.py: Fishbowl's own sign-in)
 from hostinfo import (_live_prev, cpu_model, cpu_mhz, cpu_topology, cpu_usage,  # noqa: E402
                       disk_io, hwmon)
 from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _NoRedirect,  # noqa: E402
@@ -47,6 +50,81 @@ LISTEN = os.environ.get("LISTEN", "")
 # which then wins and locks the field.
 VIA_PROXY_ENV = os.environ.get("CHECK_VIA_PROXY", "").split()
 _cfg_lock = threading.Lock()
+
+# Who may see the dashboard. AUTH=login (the default): Fishbowl's own sign-in (auth.py). AUTH=proxy: your reverse
+# proxy's sign-in (Authelia, Authentik, ...) protects it and Fishbowl's own is off. Anything else counts as login
+# (fail closed). The demo has neither: it holds no secrets and saves nothing.
+_auth_env = os.environ.get("AUTH", "login").strip().lower() or "login"
+AUTH = "off" if DEMO else ("proxy" if _auth_env == "proxy" and TRUSTED_PROXY else "login")
+if _auth_env not in ("login", "proxy") and not DEMO:
+    print(f"WARNING: AUTH={_auth_env[:20]!r} isn't login or proxy: using login (Fishbowl's own sign-in)", flush=True)
+if _auth_env == "proxy" and not TRUSTED_PROXY and not DEMO:   # nothing would stand in front: never open
+    print("WARNING: AUTH=proxy needs TRUSTED_PROXY (else anyone could skip the proxy's sign-in): using login", flush=True)
+auth.configure(cfgstore.DATA_DIR)
+ACCOUNT, SESSIONS, THROTTLE = auth.Account(), auth.Sessions(), auth.Throttle()
+_pending = {}                 # sha256(pre-sign-in token) -> {"t", "keep", "tries", "dev", "epoch"}: the password was right, a code is due
+_pending_totp = {}            # sha256(session token) -> {"t", "secret", "epoch"}: an authenticator being set up, not confirmed yet
+_recent_fails = {}            # trusted-device hash -> [(time, "password" | "code")]: typos in that browser, forgiven at its next sign-in
+_session_tries = {}           # sha256(session token) -> (wrong tries, last): re-confirming the password in Settings
+SESSION_FAILS = 10            # wrong tries a signed-in browser gets before it's signed out
+_pending_lock = threading.RLock()
+_try_lock = threading.Lock()  # counting a try, and using up a code, happen one at a time
+PENDING_FOR = 300             # seconds to type the code after the password
+CODE_USED = "That code was just used. Wait for the next one in your app (a new one every 30 seconds)."
+TOO_LATE = {"error": "The password or two-step sign-in changed meanwhile: reload the page (sign in again if asked) and "
+                     "try again.", "restart": True}
+# Reached without a session: the sign-in page and what it needs, the health check
+PUBLIC_GET = {"/login", "/healthz", "/favicon.ico", "/style.css", "/themes.css", "/fonts.css", "/api/auth/state"}
+# (and /static/ and every /js/ app script: see gate())
+PUBLIC_POST = {"/api/login", "/api/login/code", "/api/setup-account", "/api/logout"}
+FORWARD_HEADERS = ("X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto", "Forwarded")   # a proxy in front adds these
+# "Your own network" for passwords over plain HTTP: private ranges, loopback, link-local. Spelled out: Python's
+# is_private also counts TEST-NETs, 6to4/Teredo, 0.0.0.0, 240/4 and more.
+OWN_NETWORKS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8",
+                                                   "169.254.0.0/16", "fc00::/7", "fe80::/10", "::1/128")]
+_NEXT_RE = re.compile(r"/(?:settings)?(?:\?[A-Za-z0-9_=&-]{1,100})?")
+
+
+def safe_next(n):
+    """Where to go after signing in: one of our own pages, with a plain query (?wall, ?security=fw); else "/"."""
+    return n if isinstance(n, str) and _NEXT_RE.fullmatch(n) else "/"
+
+
+def fmt_wait(sec):
+    return f"{sec // 60} min {sec % 60} s" if sec >= 60 else f"{sec} s"
+
+
+PROXY_HEADERS = ("X-Real-IP", "X-Forwarded-Proto")
+
+
+def gap_hint(gaps):
+    """What the proxy setup is missing, in a sentence or two (the sign-in page shows it and its refusals start with
+    it), or "". The one place this is worded."""
+    if "untrusted" in gaps:
+        return ("The dashboard sits behind a proxy it wasn't told about, so it can't see where you connect from, and "
+                "signing in is refused. Set TRUSTED_PROXY to the proxy's container name in docker-compose.yml.")
+    what = {"X-Real-IP": "Your reverse proxy doesn't send X-Real-IP, so the dashboard can't tell visitors apart: they "
+                         "share one count of wrong tries, and signing in over plain HTTP is refused.",
+            "X-Forwarded-Proto": "Your reverse proxy doesn't send X-Forwarded-Proto, so the dashboard can't tell whether "
+                                 "you use https, and signing in from outside your network is refused."}
+    heads = [g for g in gaps if g in PROXY_HEADERS]
+    if heads:
+        return " ".join(what[g] for g in heads) + " See \"Signing in\" in docs/SETTINGS.md for the line to add."
+    return ""
+
+
+def local_name(host):
+    """A Host no website can own: an IP address, localhost, a name without dots, or a LAN-only suffix. Over plain HTTP
+    with ORIGIN unset, only these may sign in or change anything: a website can point its own name at your dashboard's
+    address (DNS rebinding) and pass the Origin check with it."""
+    h = (host or "").strip().lower()
+    h = h[1:h.index("]")] if h.startswith("[") and "]" in h else h.rsplit(":", 1)[0]
+    try:
+        ipaddress.ip_address(h)
+        return True
+    except ValueError:
+        pass
+    return bool(h) and ("." not in h.rstrip(".") or h.rstrip(".").endswith((".lan", ".local", ".home.arpa", ".internal", ".localhost")))
 
 
 def apply_settings():
@@ -113,6 +191,26 @@ def proxy_ips():
     return _proxy_ip["ips"]
 
 
+_gw = {"t": float("-inf"), "ip": None}
+
+
+def default_gateway():
+    """The container's default gateway (from /proc/net/route, looked up once a minute), or None. Every request comes
+    from it with Docker's userland proxy or rootless Docker/Podman: then visitors can't be told apart."""
+    if time.monotonic() - _gw["t"] > 60:
+        _gw["t"], _gw["ip"] = time.monotonic(), None
+        try:
+            with open("/proc/net/route") as f:
+                for line in f.read(65536).splitlines()[1:]:
+                    p = line.split()
+                    if len(p) > 2 and p[1] == "00000000" and p[2] != "00000000":
+                        _gw["ip"] = socket.inet_ntoa(int(p[2], 16).to_bytes(4, "little"))
+                        break
+        except (OSError, ValueError):
+            pass
+    return _gw["ip"]
+
+
 def allowed_ip(ip, local=None):
     """May this client talk to us at all? Always when no proxy is configured (LAN use) or in the demo, and when the
     connection comes from the dash itself (its source address = the address it arrived on: the health check of the
@@ -122,7 +220,7 @@ def allowed_ip(ip, local=None):
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
        "font-src 'self'; img-src 'self' data: https://cdn.jsdelivr.net https://image.tmdb.org; "
-       "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+       "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 
 
@@ -147,6 +245,9 @@ def parse_npm_conf(path):
         # behind an SSO proxy: its auth_request block, or the include snippet Authelia's NPM guide uses
         "auth": bool(re.search(r"auth_request\s+/(authelia|authentik|outpost)|include\s+\S*(authelia|authentik)\S*\s*;", txt)),
         "login": has_login(txt),   # any sign-in in front of / (for the Setup check)
+        # NPM's "Cache Assets": caches .css/.js/.png/... for 30 minutes whatever the app says (cookies and
+        # Cache-Control ignored), so one visitor's images or a "sign in first" answer could reach everyone
+        "caches": bool(re.search(r"^\s*include\s+conf\.d/include/assets\.conf\s*;", txt, re.M)),
     }
 
 
@@ -756,13 +857,14 @@ def page_config():
         "groups": ED["groups"], "apps": ED["apps"],
         "features": {"qbit": QBIT["on"], "seerr": SEERR["on"], "plex": TAUTULLI["on"]},
         "hidden_panels": SITE["hidden_panels"], "motion": SITE["motion"], "settings_ui": cfgstore.UI_ENABLED, "demo": DEMO,
+        "auth": AUTH,
         "repo": os.environ.get("REPO_URL", "") if re.fullmatch(r"https://[\w./-]+", os.environ.get("REPO_URL", "")) else "",
     }
 
 
 # ---------- settings page API ----------
 
-def settings_view(host=None):
+def settings_view(host=None, https=None, proxy_gaps=()):
     """Everything the settings page needs. Secrets are reported only as set / not set, never their values."""
     secrets = {}
     for name, (_url_env, fields) in cfgstore.INTEGRATIONS.items():
@@ -779,7 +881,8 @@ def settings_view(host=None):
         "themes": cfgstore.THEMES,   # built-in themes and their defaults (shown as placeholders in the editor)
         "panels": cfgstore.PANELS,
         "via_proxy_env": VIA_PROXY_ENV,   # set in the environment: wins over the page and locks the field
-        "setup": setup_checks(host),
+        "setup": setup_checks(host, https, proxy_gaps),
+        "auth": AUTH,
         "collector": collector_view(),
         "collector_labels": COLLECTOR_LABELS,
         "about": {"listen": LISTEN or "0.0.0.0 (all addresses)", "user_header": USER_HEADER or "", "data_dir": cfgstore.DATA_DIR,
@@ -966,12 +1069,13 @@ def _ago(secs):
 DOCS = "https://github.com/CoreXI7/fishbowl/blob/main/docs/SETTINGS.md"
 
 
-def setup_checks(host=None):
+def setup_checks(host=None, https=None, proxy_gaps=()):
     """The settings page's Setup checklist: [{id, state, title, detail, why, steps: [{text, code}], link, doc, optional,
     compose}]. compose = its fix edits docker-compose.yml (the page then says once: run docker compose up -d).
     state: ok | problem (needs fixing) | warn (works, but worth fixing) | todo (optional, not set up).
     Facts and fixes only: no secrets, no file contents. "%ORIGIN%" in a code line = the page's own address.
-    host = the Host the page was opened with (to find the dashboard's own proxy host and its sign-in)."""
+    host = the Host the page was opened with (to find the dashboard's own proxy host and its sign-in); https = whether
+    this browser reached it over HTTPS (for the sign-in's cookie)."""
     out = []
 
     def add(id, state, title, detail, steps=(), link="", doc="", optional=False, why="", compose=False, alt=""):
@@ -991,10 +1095,10 @@ def setup_checks(host=None):
     shown = read_npm_hosts()             # also fills _npm["conf"] (every proxy host, hidden ones too)
     find_proxy = ("Find your reverse proxy's container name (for Nginx Proxy Manager, the one running jc21/nginx-proxy-manager):",
                   "docker ps --format '{{.Names}}  {{.Image}}'")
-    if not TRUSTED_PROXY:
-        add("proxy", "problem", "Anyone who can reach the dashboard can change it",
-            "TRUSTED_PROXY is empty, so anything that can reach port 8000 can open this page and change settings without "
-            "going through your sign-in. That's only fine if you run it on your LAN only, on purpose.",
+    if not TRUSTED_PROXY:   # (then AUTH is login: AUTH=proxy needs TRUSTED_PROXY, and the demo returned above)
+        add("proxy", "warn", "The dashboard can be reached without your reverse proxy",
+            "TRUSTED_PROXY is empty, so anything that can reach port 8000 gets the sign-in page directly, without your "
+            "proxy's HTTPS in between. Fishbowl's own sign-in still protects everything.",
             [find_proxy, ("In docker-compose.yml, change the TRUSTED_PROXY line to that name:", "TRUSTED_PROXY: <your proxy's container name>")],
             compose=True)
     elif not proxy_ips():
@@ -1011,19 +1115,79 @@ def setup_checks(host=None):
 
     name = (host or "").rsplit(":", 1)[0].lower() if host and not host.startswith("[") else ""
     mine = next((h for h in _npm["conf"] if h["name"].lower() == name), None) if name else None
-    if mine and mine.get("login"):
+    if AUTH == "login":
+        acct = ACCOUNT.get()   # (this page needs a session, so the file is fine: a damaged one signs everyone out)
+        if acct:
+            add("signin", "ok", "Fishbowl's own sign-in protects the dashboard",
+                f"Account {acct['user'][:64]}; authenticator app {'on' if acct['totp'].get('on') else 'off'}.", link="#account")
+            if acct.get("failures", 0) >= auth.LOCK_AT:
+                add("locked", "problem", "Sign-ins from new browsers are locked",
+                    f"{acct['failures']} wrong tries in a row from browsers that never signed in here. Browsers that did "
+                    "(like this one) still can. If those tries weren't yours, someone is guessing: keep two-step sign-in on.",
+                    [("When you're ready, unlock it on the host:", "docker exec -it <container> python /app/auth.py unlock")])
+            if (acct.get("notice") or {}).get("code"):
+                add("password-out", "problem", "Someone may know your password",
+                    f"The right password was typed with a wrong code {acct['notice']['code']} time(s), and not just before one of "
+                    "your own sign-ins. If that wasn't you, change the password. If it was, choose \"That was me\" in Account.",
+                    link="#account")
+            if not acct["totp"].get("on"):
+                add("totp", "warn", "Turn on two-step sign-in",
+                    "Signing in needs only the password. With an authenticator app, a stolen or guessed password isn't enough.",
+                    link="#account")
+        if _auth_env == "proxy":
+            add("auth-proxy", "warn", "AUTH: proxy is set, but Fishbowl's own sign-in is on",
+                "AUTH: proxy needs TRUSTED_PROXY too (otherwise anyone could skip your proxy's sign-in), so the dashboard "
+                "uses its own sign-in instead.", [("In docker-compose.yml, set TRUSTED_PROXY to your proxy's container name:",
+                                                   "TRUSTED_PROXY: <your proxy's container name>")], compose=True)
+        heads = [g for g in proxy_gaps if g in PROXY_HEADERS]
+        if heads:
+            add("realip", "warn", f"Your proxy leaves out {' and '.join(heads)}",
+                " ".join(({"X-Real-IP": "Without X-Real-IP every visitor shares one count of wrong tries, and nobody counts "
+                                        "as being on your own network.",
+                           "X-Forwarded-Proto": "Without X-Forwarded-Proto the dashboard can't tell HTTPS visitors from "
+                                                "plain-HTTP ones, so signing in from outside your network is refused."}[g]
+                          for g in heads)) + " Nginx Proxy Manager sends both.",
+                [("If you use Caddy: in the reverse_proxy block for the dashboard, add:", "header_up X-Real-IP {remote_host}"),
+                 ("Or, if you use HAProxy: in the dashboard's backend, add:",
+                  "http-request set-header X-Real-IP %[src]\nhttp-request set-header X-Forwarded-Proto https if { ssl_fc }"),
+                 ("Or, with any other proxy: send X-Real-IP (the visitor's address) and X-Forwarded-Proto (http or https).", "")])
+        if "gateway" in proxy_gaps:
+            add("gateway", "warn", "Every visitor looks like the same address",
+                "This request came from the container's own gateway, as every request does with Docker's userland proxy or "
+                "rootless Docker/Podman. Then the dashboard can't tell visitors apart: they share one count of wrong tries, "
+                "and all of them count as being on your own network (so passwords are accepted over plain HTTP).",
+                [("Put your reverse proxy in front (same Docker network) and set TRUSTED_PROXY to its container name:",
+                  "TRUSTED_PROXY: <your proxy's container name>")], compose=True)
+        if https is False:
+            add("https", "warn", "Signing in over plain HTTP",
+                "This browser reached the dashboard without HTTPS, so the password and the sign-in cookie travel "
+                "unencrypted on your network. (Does the address bar show https? Then your proxy tells the dashboard "
+                "otherwise, for example when HTTPS ends before it: make it send X-Forwarded-Proto: https.)",
+                [("Reach it through your reverse proxy's https address, and set ORIGIN in docker-compose.yml to that address:",
+                  "ORIGIN: https://dash.example.com")], compose=True)
+        if mine and mine.get("caches"):
+            add("cache", "warn", "Turn off Cache Assets for the dashboard",
+                f"{mine['name']}'s proxy host has Nginx Proxy Manager's Cache Assets on: it keeps images and files for 30 "
+                "minutes for everyone, ignoring the dashboard's sign-in, so uploaded images could reach people who aren't "
+                "signed in.", [("In Nginx Proxy Manager, edit that proxy host and switch off Cache Assets.", "")])
+        if mine and mine.get("login"):
+            add("sso", "ok", "Your proxy asks for a sign-in too",
+                f"{mine['name']}'s proxy host has a sign-in step as well. If that's enough for you, AUTH: proxy in "
+                "docker-compose.yml turns Fishbowl's own off (one sign-in instead of two).", optional=True)
+    elif mine and mine.get("login"):
         add("sso", "ok", "Sign-in in front of the dashboard", f"{mine['name']}'s proxy host in Nginx Proxy Manager has a sign-in step.")
     elif mine:
         add("sso", "warn", "No sign-in found in front of the dashboard",
-            f"{mine['name']}'s proxy host in Nginx Proxy Manager has no sign-in step (Authelia, Authentik or an access list). "
-            "The dashboard has no login of its own, so anyone who can reach that address sees it and can change these settings. "
-            "(Using another kind of sign-in? Then this check can't see it.)",
+            f"{mine['name']}'s proxy host in Nginx Proxy Manager has no sign-in step (Authelia, Authentik or an access list), "
+            "and AUTH: proxy turns Fishbowl's own sign-in off, so anyone who can reach that address sees it and can change "
+            "these settings. (Using another kind of sign-in? Then this check can't see it.)",
             [("In Nginx Proxy Manager, open that proxy host and add your sign-in: your SSO's snippet under Advanced "
-              "(Authelia and Authentik both have an NPM guide), or an Access List with a username and password.", "")])
-    elif TRUSTED_PROXY and name:
+              "(Authelia and Authentik both have an NPM guide), or an Access List with a username and password.", ""),
+             ("Or turn Fishbowl's own sign-in back on: remove the AUTH: proxy line from docker-compose.yml.", "")])
+    elif name:
         add("sso", "todo", "Couldn't check the sign-in",
             f"{name[:100]} isn't one of Nginx Proxy Manager's proxy hosts here, so this page can't see what's in front of it. "
-            "The dashboard has no login of its own: make sure your sign-in (SSO) is in front of it.")
+            "AUTH: proxy turns Fishbowl's own sign-in off: make sure your sign-in (SSO) is in front of it.")
 
     if ALLOWED_ORIGINS:
         add("origin", "ok", "Changes only come from your dashboard's address", ", ".join(sorted(ALLOWED_ORIGINS)))
@@ -1302,17 +1466,18 @@ class Handler(BaseHTTPRequestHandler):
         """Who sent this request, for the log. The proxy's X-Real-IP (and USER_HEADER, if set) count only when the
         request really came from the proxy; anyone else could send those headers themselves."""
         ip, headers = self.client_address[0], getattr(self, "headers", None)
-        via_proxy = bool(TRUSTED_PROXY) and ip in proxy_ips() and headers is not None
-        who = (headers.get("X-Real-IP") if via_proxy else None) or ip
+        via_proxy = headers is not None and self.via_proxy()
+        who = (self.real_ip() if via_proxy else None) or ip   # (checked: never the header's raw text)
         user = headers.get(USER_HEADER) if via_proxy and USER_HEADER else None
         return log_safe(f"{user} ({who})" if user else who, 120)
 
-    def send(self, code, body, ctype="application/json", cache="no-store", extra=None):
+    def send(self, code, body, ctype="application/json", cache="no-store", extra=None, cookies=()):
         if not isinstance(body, bytes):
             body = json.dumps(body).encode()
-        # gzip text answers (the proxy only compresses HTML): /api/system shrinks ~4x. No answer carries a secret,
-        # so compressing next to request-controlled text can't leak one (BREACH).
-        gz = len(body) > 1024 and ctype.split(";")[0] in COMPRESSIBLE and accepts_gzip(self.headers.get("Accept-Encoding"))
+        # gzip text answers (the proxy only compresses HTML): /api/system shrinks ~4x. Not the account's answers (the
+        # authenticator secret, recovery codes): compressing a secret next to request-controlled text can leak it (BREACH).
+        gz = (len(body) > 1024 and ctype.split(";")[0] in COMPRESSIBLE and accepts_gzip(self.headers.get("Accept-Encoding"))
+              and not (self.path or "").startswith("/api/account"))
         if gz:
             body = gzip.compress(body, 6)
         self.send_response(code)
@@ -1329,18 +1494,38 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         if ctype.startswith("text/html"):
             self.send_header("Content-Security-Policy", CSP)
+        elif "Content-Security-Policy" not in (extra or {}):   # never framed, never a document with powers
+            self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
+        for c in cookies:
+            self.send_header("Set-Cookie", c)
         self.end_headers()
         self.wfile.write(body)
+
+    def send_error(self, code, message=None, explain=None):
+        """http.server's own refusals (bad request line, headers too long, unknown method): as JSON, with the same
+        headers as every other answer (CSP, nosniff, no framing), and the connection closed."""
+        self.close_connection = True
+        if not hasattr(self, "headers"):
+            self.headers = http.client.HTTPMessage()   # (the request never got that far)
+        if self.request_version == "HTTP/0.9":         # (an answer without a status line or headers helps nobody)
+            self.request_version = "HTTP/1.0"
+        try:
+            self.send(code, {"error": str(message or code)[:200]})
+        except OSError:
+            pass
 
     def send_revalidated(self, body, ctype):
         """A page, CSS or JS file with an ETag: the browser revalidates every time (no-cache), and gets an empty
         304 when it already has this version. Weak tag: the same content may go out gzipped or not."""
         tag = 'W/"' + hashlib.sha256(body).hexdigest()[:20] + '"'
+        # Behind the sign-in, pages are no-store: after signing out, Back mustn't show them (or recovery codes) again
+        # from the browser's back/forward cache. CSS and scripts are the same for everyone: revalidated as before.
+        cache = ("no-store" if ctype.startswith("text/html") else "private, no-cache") if AUTH == "login" else "no-cache"
         if tag in (self.headers.get("If-None-Match") or "").replace(" ", "").split(","):
-            return self.send(304, b"", ctype, "no-cache", {"ETag": tag})
-        self.send(200, body, ctype, "no-cache", {"ETag": tag})
+            return self.send(304, b"", ctype, cache, {"ETag": tag})
+        self.send(200, body, ctype, cache, {"ETag": tag})
 
     def safe(self, fn):
         try:
@@ -1356,32 +1541,54 @@ class Handler(BaseHTTPRequestHandler):
         self.send(403, {"error": "forbidden"})
         return False
 
-    def same_origin(self):
-        """CSRF guard for every POST: the browser's Origin must be the dashboard itself
-        (ORIGIN / site.origin if set, otherwise the Host the request was sent to)."""
+    def origin_problem(self):
+        """Why this POST is refused ("" = fine). CSRF guard for every POST: the browser's Origin must be the dashboard itself (ORIGIN / site.origin if set,
+        otherwise the Host the request was sent to); the browser's own Sec-Fetch-Site, when it sends one, must say
+        same-origin (a sibling subdomain is "same-site", not enough); and the body must be JSON (or an upload's raw
+        bytes), which no HTML form on another site can send."""
         if DEMO:
-            return True
+            return ""
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        want = "application/octet-stream" if urllib.parse.urlsplit(self.path).path == "/api/upload" else "application/json"
+        if ctype != want:
+            return f"it wasn't sent as {want}"
+        if (self.headers.get("Sec-Fetch-Site") or "same-origin").strip().lower() != "same-origin":
+            return "your browser says it came from another site"
         origin = (self.headers.get("Origin") or "").rstrip("/")
         if ALLOWED_ORIGINS:
-            return origin in ALLOWED_ORIGINS
-        return bool(origin) and urllib.parse.urlparse(origin).netloc == self.headers.get("Host", "")
+            return "" if origin in ALLOWED_ORIGINS else "it didn't come from the address set in ORIGIN"
+        host = self.headers.get("Host", "")
+        try:
+            netloc = urllib.parse.urlsplit(origin).netloc
+        except ValueError:   # "http://[" and the like
+            netloc = None
+        if not host or netloc != host:
+            return "it didn't come from this dashboard's own page"
+        if AUTH == "login" and not self.https() and not local_name(host):
+            return "over plain HTTP, only a LAN address (an IP, a name without dots, .lan, .local) is trusted without ORIGIN"
+        return ""
 
     def body(self, limit):
-        try:
-            n = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
+        cl = (self.headers.get("Content-Length") or "0").strip()
+        if not re.fullmatch(r"[0-9]{1,9}", cl):
             raise cfgstore.Invalid("bad Content-Length")
-        if n < 0 or n > limit:
+        n = int(cl)
+        if n > limit:
             raise cfgstore.Invalid(f"too large (max {limit // 1024} KB)")
-        return self.rfile.read(n)
+        data = self.rfile.read(n)
+        self.read_done()
+        return data
 
     def json_body(self, limit):
         """Parse a JSON object safely: deeply nested input ([[[[...) would overflow the parser's C stack and kill
         the whole process, so nesting is checked with a cheap scan first."""
-        raw = self.body(limit)
+        try:
+            raw = self.body(limit).decode("utf-8")   # (json.loads would also take UTF-16, past the scan below)
+        except UnicodeDecodeError:
+            raise cfgstore.Invalid("not UTF-8")
         depth = deepest = 0
         in_str = esc_next = False
-        for ch in raw.decode("utf-8", "replace"):
+        for ch in raw:
             if in_str:
                 if esc_next:
                     esc_next = False
@@ -1406,18 +1613,682 @@ class Handler(BaseHTTPRequestHandler):
             raise cfgstore.Invalid("expected a JSON object")
         return d
 
+    # ---------- Fishbowl's own sign-in (AUTH=login) ----------
+
+    def via_proxy(self):
+        return bool(TRUSTED_PROXY) and self.client_address[0] in proxy_ips()
+
+    def one_header(self, name):
+        """A header the proxy sets, or None when it's missing or repeated (a proxy that appends instead of replacing
+        would let the client pick the first copy)."""
+        vals = self.headers.get_all(name) or []
+        return vals[0].strip() if len(vals) == 1 else None
+
+    def real_ip(self):
+        """The browser's own address when it's known: the proxy's X-Real-IP for requests through the proxy (anyone else
+        could send that header themselves; X-Forwarded-For's first entry is the client's to choose), otherwise the
+        connection's address. None when the proxy doesn't say (Caddy doesn't send X-Real-IP by default)."""
+        if not self.via_proxy() and any(self.headers.get(h) for h in FORWARD_HEADERS):
+            return None   # a proxy we weren't told about: the connection's address is the proxy's, not the browser's
+        if self.via_proxy():
+            try:
+                a = ipaddress.ip_address(self.one_header("X-Real-IP") or "")
+            except ValueError:
+                return None
+            if a.version == 6 and a.scope_id:   # "fe80::1%<any text>": not an address the owner should read
+                return None
+            return str(getattr(a, "ipv4_mapped", None) or a)
+        return self.client_address[0]
+
+    def client_ip(self):
+        """The address sign-in limits count against (the proxy's own when it doesn't say who's behind it: one shared count)."""
+        return self.real_ip() or self.client_address[0]
+
+    def https(self):
+        """Does the browser reach us over HTTPS? Through the proxy: its X-Forwarded-Proto says. Otherwise (or when the
+        proxy doesn't say) ORIGIN decides: every change must come from that address (origin_problem), and a browser only
+        sends an https Origin from a page it loaded over HTTPS. Decides the cookies' Secure flag and __Host- name."""
+        if self.via_proxy():
+            xfp = (self.one_header("X-Forwarded-Proto") or "").lower()
+            if xfp in ("http", "https"):
+                return xfp == "https"
+        return bool(ALLOWED_ORIGINS) and all(o.startswith("https://") for o in ALLOWED_ORIGINS)
+
+    def cookie_values(self, base):
+        """Every value sent for one of our cookies that has our tokens' shape, read by hand (http.cookies drops every
+        cookie when one is odd). All of them, in any position: a site that can set cookies for a parent domain could
+        otherwise push ours out by sending junk ones first. Over HTTPS only the __Host- name counts, which no other
+        site or subdomain can set."""
+        name = ("__Host-" + base) if self.https() else base
+        vals, seen = [], set()
+        for part in "; ".join(self.headers.get_all("Cookie") or []).split(";"):   # (a header line is at most 64 KB)
+            k, sep, v = part.strip(" \t").partition("=")
+            v = v.strip(" \t")
+            if sep and k == name and v not in seen and auth.TOKEN.fullmatch(v):
+                seen.add(v)
+                vals.append(v)
+                if len(vals) >= 300:   # a browser keeps at most ~180 cookies per site: more can only come from a script
+                    break
+        return vals
+
+    def make_cookie(self, base, value, max_age=None, clear=False):
+        """HttpOnly (scripts can't read it), SameSite=Strict (never sent on a request another site starts; a link from
+        elsewhere bounces through /login, which sees the session and comes straight back), and over HTTPS Secure with
+        the __Host- name (no other site or subdomain can set or read it)."""
+        secure = self.https()
+        parts = [f"{'__Host-' + base if secure else base}={'' if clear else value}", "Path=/", "HttpOnly", "SameSite=Strict",
+                 "Priority=High"]   # (Chrome evicts lower-priority cookies first when a sibling site floods the jar)
+        if secure:
+            parts.append("Secure")
+        if clear:
+            parts.append("Max-Age=0")
+        elif max_age:
+            parts.append(f"Max-Age={int(max_age)}")
+        return "; ".join(parts)
+
+    def proxy_gaps(self):
+        """What keeps the dashboard from seeing who's connecting, and how: headers the trusted proxy leaves out, a proxy
+        it wasn't told about ("untrusted"), or every request coming from the container's gateway ("gateway")."""
+        gaps = []
+        if self.via_proxy():
+            gaps += ["X-Real-IP"] if not self.real_ip() else []
+            gaps += ["X-Forwarded-Proto"] if (self.one_header("X-Forwarded-Proto") or "").lower() not in ("http", "https") else []
+        elif AUTH == "login" and any(self.headers.get(h) for h in FORWARD_HEADERS):
+            gaps.append("untrusted")
+        elif AUTH == "login" and self.client_address[0] == default_gateway():
+            gaps.append("gateway")
+        return gaps
+
+    def view(self):
+        """The settings page's data, with what only this request can tell (the address it was opened at, HTTPS, and
+        whether the proxy says who's connecting)."""
+        return settings_view(self.headers.get("Host"), self.https(), self.proxy_gaps())
+
+    def account(self):
+        """The account, or None when there's none or its file is damaged (then nobody is signed in)."""
+        try:
+            return ACCOUNT.get()
+        except auth.Broken:
+            return None
+
+    def session_token(self):
+        """This request's session token if it's valid (looked up once per request). Sessions from before the last
+        password change or two-step change (an older epoch) don't count."""
+        if self._token is None:
+            d = self.account()
+            tls = self.https()
+            # a plain-HTTP session counts only on your own network, and only over plain HTTP (it was exposed there)
+            ok = d and (tls or self.plain_http_ok())
+            self._token = next((t for t in self.cookie_values("fishbowl") if SESSIONS.check(t, d["epoch"], self.client_ip(), tls)), "") if ok else ""
+        return self._token or None
+
+    def device(self, acct):
+        """This browser's trusted-device token hash (it signed in here before), or None."""
+        return next((h for h in (auth.device_of(acct, t, self.https()) for t in self.cookie_values("fishbowl-device")) if h), None) if acct else None
+
+    def gate(self, p, post=False, q=""):
+        """AUTH=login: everything except the sign-in page (and the open-source CSS/JS/fonts it uses) needs a session.
+        Pages send you to sign in (and back to the same page afterwards); the API answers 401. Public paths are
+        matched exactly."""
+        if AUTH != "login" or p in (PUBLIC_POST if post else PUBLIC_GET):
+            return True
+        if not post and (p.startswith("/static/") or (re.fullmatch(r"/js/[a-z-]+\.js", p) and p[4:-3] in SCRIPTS)):
+            return True
+        if self.session_token():
+            return True
+        if not post and p in PAGES:
+            nxt = safe_next(p + ("?" + q if q else ""))
+            self.send(303, b"", "text/plain", extra={"Location": "/login?next=" + urllib.parse.quote(nxt, safe="/")})
+        else:
+            self.send(401, {"error": "Sign in first.", "signin": True})
+        return False
+
+    def login_page(self, query):
+        nxt = safe_next((query.get("next") or ["/"])[0])   # only our own pages: never an open redirect
+        if AUTH != "login" or self.session_token():
+            return self.send(303, b"", "text/plain", extra={"Location": nxt})
+        page = open(os.path.join(HERE, "login.html"), "rb").read().replace(
+            b'<html lang="en">', f'<html lang="en" data-theme="{SITE["theme"]}" data-site-motion="{SITE["motion"]}">'.encode(), 1)
+        self.send_revalidated(page, "text/html; charset=utf-8")
+
+    def proxy_says_https(self):
+        return self.via_proxy() and (self.one_header("X-Forwarded-Proto") or "").lower() == "https"
+
+    def plain_http_ok(self):
+        """May a password come over this connection? Only on positive evidence: the trusted proxy says the browser used
+        HTTPS, or the browser's address is known and on your own network (LAN, loopback, link-local). ORIGIN alone
+        isn't enough: a browser on http:// would send the password before the Origin check refuses it."""
+        if self.proxy_says_https():
+            return True
+        try:
+            a = ipaddress.ip_address(self.real_ip() or "")
+        except ValueError:
+            return False
+        a = getattr(a, "ipv4_mapped", None) or a
+        return any(a in n for n in OWN_NETWORKS)
+
+    def auth_state(self):
+        """What the sign-in page needs to know (nothing about the account itself)."""
+        if AUTH != "login":
+            return {"mode": AUTH}
+        try:
+            broken, setup = False, ACCOUNT.get() is None
+        except auth.Broken:
+            broken, setup = True, False
+        return {"mode": "login", "setup": setup, "broken": broken, "signed_in": bool(self.session_token()),
+                "code_due": bool(self.pending()), "https": self.https(), "http_ok": self.plain_http_ok(),
+                "min_length": auth.PW_MIN, "proxy_asked": _auth_env == "proxy", "gap_hint": gap_hint(self.proxy_gaps())}
+
+    def pending(self, consume=False):
+        """The half-finished sign-in for this browser (the password was right; the authenticator code is due)."""
+        now = time.time()
+        with _pending_lock:
+            for k in [k for k, v in _pending.items() if now - v["t"] > PENDING_FOR]:
+                del _pending[k]
+            for tok in self.cookie_values("fishbowl-pre"):
+                key = hashlib.sha256(tok.encode()).hexdigest()
+                if key in _pending:
+                    return _pending.pop(key) if consume else _pending[key]
+        return None
+
+    def begin_try(self, ip, dev=None, account=True, session=None, waits=True):
+        """Count a try BEFORE checking it, under one lock: parallel tries can't all slip in under a limit, and a crash
+        mid-check still counted it. 0 = go ahead, -1 = locked, -2 = this session used up its tries; otherwise the
+        seconds to wait. A trusted device (signed in here before) counts on its own, so someone hammering the account
+        can't lock its owner out; so does a signed-in browser re-confirming the password (session), which then gets
+        10 tries before it's signed out. waits=False (the code step): counted the same, toward the lock too, but
+        never made to wait, or someone else's guessing could make every wait outlast the 5-minute step (that step
+        has its own cap: 5 codes)."""
+        now = time.time()
+        with _try_lock:
+            if session:
+                fails, last = _session_tries.get(session, (0, 0))
+                if fails >= SESSION_FAILS:
+                    return -2
+                wait = THROTTLE.wait_for(fails, last, now)
+                if not wait:
+                    if len(_session_tries) > 1000:
+                        _session_tries.clear()
+                    _session_tries[session] = (fails + 1, now)
+                return wait
+            d = ACCOUNT.get() if account else None
+            if d and dev and dev in d.get("devices", {}):
+                v = d["devices"][dev]
+                wait = THROTTLE.wait_for(v.get("fails", 0), v.get("last", 0), now) if waits else 0
+                if not wait:
+                    ACCOUNT.update(lambda x: x["devices"][dev].update(fails=x["devices"][dev].get("fails", 0) + 1, last=int(now))
+                                   if dev in x.get("devices", {}) else None)
+                return wait
+            wait = THROTTLE.ip_wait(ip, now) if waits else 0
+            if d:
+                if d.get("failures", 0) >= auth.LOCK_AT:
+                    return -1
+                if waits:
+                    wait = max(wait, THROTTLE.wait_for(d.get("failures", 0), d.get("last_fail", 0), now))
+            if wait:
+                return wait
+            THROTTLE.ip_failed(ip, now)
+            if d:
+                ACCOUNT.update(lambda x: x.update(failures=x.get("failures", 0) + 1, last_fail=int(now)))
+            return 0
+
+    def try_ok(self, ip, dev=None, session=None):
+        """A right answer: this address's count starts again, and the browser's own: the session's, a trusted
+        device's, or (from any other browser) the account's. A trusted device never clears the account's count, so
+        someone else's guessing keeps counting toward the lock while the owner signs in."""
+        THROTTLE.ip_ok(ip)
+        if session:
+            _session_tries.pop(session, None)
+            return
+        ACCOUNT.update(lambda x: x["devices"][dev].update(fails=0) if dev and dev in x.get("devices", {})
+                       else x.update(failures=0, last_fail=0))   # (a device forgotten mid-try was counted on the account)
+
+    def refuse_wait(self, wait):
+        if wait == -2:
+            SESSIONS.end(self._token or "")
+            ip = self.client_ip()
+            try:
+                ACCOUNT.update(lambda x: ACCOUNT.fail(x, f"signed out after {SESSION_FAILS} wrong tries in Settings", ip, "settings"))
+            except auth.Broken:
+                pass
+            print(log_safe(f"sign-in: a browser at {ip} signed out after {SESSION_FAILS} wrong tries in Settings"), flush=True)
+            return self.send(401, {"error": f"{SESSION_FAILS} wrong tries in this browser: it's signed out. Sign in again.",
+                                   "signin": True}, cookies=(self.make_cookie("fishbowl", "", clear=True),))
+        if wait < 0:
+            return self.send(423, {"error": f"Sign-ins from new browsers are locked after {auth.LOCK_AT} wrong tries in a row. "
+                                            "A browser that signed in here before can still sign in; or unlock it on the host: "
+                                            "docker exec -it <container> python /app/auth.py unlock"})
+        return self.send(429, {"error": f"Too many tries. Wait {fmt_wait(wait)}, then try again.", "retry": wait},
+                         extra={"Retry-After": str(wait)})
+
+    def note_failure(self, ip, what, count=None, dev=None):
+        """Log a failure; count = "password" or "code" counts it toward the next sign-in's notice. One made in a trusted
+        browser (dev) is remembered for that browser: if the same browser then signs in, it was a typo. (Never by
+        address: an attacker can share one with the owner, or every visitor can look alike.)"""
+        try:
+            ACCOUNT.update(lambda d: ACCOUNT.fail(d, what, ip, count))
+        except auth.Broken:
+            pass
+        if count and dev:
+            with _pending_lock:
+                if len(_recent_fails) > 1000:
+                    _recent_fails.clear()
+                _recent_fails.setdefault(dev, []).append((time.time(), count))
+        print(log_safe(f"sign-in: {what} from {ip}"), flush=True)
+
+    @staticmethod
+    def own_typos(dev, wrong_codes=0):
+        """What the sign-in that follows forgives: this trusted browser's own wrong passwords and codes of the last 10
+        minutes, and the wrong codes of this very sign-in (its half-finished step). Every other record is dropped:
+        after a sign-in, older ones can only be stale."""
+        now = time.time()
+        with _pending_lock:
+            mine = [k for t, k in _recent_fails.get(dev, []) if now - t < 600] if dev else []
+            _recent_fails.clear()
+        return {"password": mine.count("password"), "code": max(mine.count("code"), wrong_codes)}
+
+    def revoke_everything(self, ip, why, change, epoch):
+        """One way out for every change that must end other access (password changed, two-step turned on or off): the
+        change and a new epoch are saved together, so every session, half-finished sign-in and trusted device from
+        before is worthless from that moment, even one being created right now. Applied only if the account is still
+        at the epoch the change was approved under (and this browser's session still counts): a change approved just
+        before another one can't land after it. This browser gets a new session and device (returned as cookies);
+        None when it was too late."""
+        ua = self.headers.get("User-Agent", "")
+        cur = SESSIONS.check(self._token, epoch) if self._token else None
+        if not cur:
+            return None
+        new = {}
+
+        def apply(x):   # (under the account's file lock, which every sign-out also takes)
+            if x["epoch"] != epoch or not SESSIONS.on_disk(self._token, epoch):
+                return
+            change(x)
+            x["epoch"] = auth.new_epoch(epoch)
+            x["devices"] = {}
+            new.update(dev=auth.new_device(x, self.https()), epoch=x["epoch"])
+            ACCOUNT.event(x, why, ip, ua)
+        ACCOUNT.update(apply)
+        if not new:
+            return None
+        SESSIONS.end_all()
+        with _pending_lock:
+            _pending.clear()
+            _pending_totp.clear()
+        token, max_age = SESSIONS.create(bool(cur.get("keep")), ip, ua, new["epoch"], self.https())
+        self._token = token
+        print(log_safe(f"sign-in: {why} from {ip}: every other browser signed out"), flush=True)
+        return (self.make_cookie("fishbowl", token, max_age), self.make_cookie("fishbowl-device", new["dev"], auth.DEVICE_FOR))
+
+    def signed_in_now(self, ip, keep, what, dev, epoch, extra_cookies=(), wrong_codes=0):
+        """Start a session (a new token: never one the browser brought) for the account as it was when the password was
+        checked (epoch), and remember this browser as a trusted device. Failures since the last sign-in are shown once."""
+        ua = self.headers.get("User-Agent", "")
+        token, max_age = SESSIONS.create(keep, ip, ua, epoch, self.https())
+        mine = self.device(ACCOUNT.get())   # (forgive only this browser's own typos: a step planted from elsewhere isn't)
+        out, typos = {}, self.own_typos(dev if dev and dev == mine else None, wrong_codes if dev and dev == mine else 0)
+
+        def apply(x):
+            if x["epoch"] != epoch:   # the password or two-step changed meanwhile: that session is already worthless
+                return
+            if not dev:
+                out["dev"] = auth.new_device(x, self.https())
+            ACCOUNT.event(x, what, ip, ua)
+            since = {k: v - typos.get(k, 0) for k, v in x.get("since", {}).items()
+                     if k in ("password", "code", "settings") and v > typos.get(k, 0)}
+            x["since"] = {}
+            if since.get("code"):   # the lasting alarm adds up until the password changes (or "That was me")
+                x["notice"] = {"code": x.get("notice", {}).get("code", 0) + since["code"], "t": int(time.time())}
+            out.update(ok=True, since=since, recovery_left=len(x.get("recovery", [])))
+        ACCOUNT.update(apply)
+        if not out.get("ok"):
+            SESSIONS.end(token)
+            return self.send(401, {"error": "The password or two-step sign-in just changed: sign in again.", "restart": True},
+                             cookies=(self.make_cookie("fishbowl-pre", "", clear=True),))
+        self.try_ok(ip, dev)
+        cookies = [self.make_cookie("fishbowl", token, max_age), *extra_cookies]
+        if out.get("dev"):
+            cookies.append(self.make_cookie("fishbowl-device", out["dev"], auth.DEVICE_FOR))
+        print(log_safe(f"sign-in: {what} from {ip}"), flush=True)
+        notice = dict(out["since"])
+        if "recovery code" in what:
+            notice["recovery_left"] = out["recovery_left"]
+        self.send(200, {"ok": True, **({"notice": notice} if notice else {})}, cookies=cookies)
+
+    def account_view(self):
+        d = ACCOUNT.get()
+        return {"user": d["user"], "totp": bool(d["totp"].get("on")), "recovery_left": len(d.get("recovery", [])),
+                "sessions": SESSIONS.listing(self.session_token(), d["epoch"]), "events": d.get("events", [])[:20],
+                "fails": d.get("fails", [])[:20], "notice": d.get("notice") or {}, "failures": d.get("failures", 0),
+                "locked": d.get("failures", 0) >= auth.LOCK_AT, "min_length": auth.PW_MIN}
+
+    def code_ok(self, code, epoch):
+        """"ok" for a right authenticator code or recovery code (each works once), "used" for a right code that was
+        already used, "wrong", or "stale" when the account changed since the password was checked. Checked and used up under one lock, on a fresh read: two
+        requests with the same code can't both get through."""
+        code = code if isinstance(code, str) else ""
+        with _try_lock:
+            d = ACCOUNT.get()
+            if not d or d["epoch"] != epoch:
+                return "stale"
+            if not d["totp"].get("on"):
+                return "wrong"
+            if auth.looks_like_recovery(code):
+                h = auth.rc_hash(code)
+                if not any(hmac.compare_digest(h, x) for x in d.get("recovery", [])):
+                    return "wrong"
+                used = []   # still there inside the update (new codes made meanwhile end the old ones)
+                ACCOUNT.update(lambda x: (used.append(1), x.update(recovery=[r for r in x["recovery"] if r != h]))
+                               if h in x["recovery"] and x["epoch"] == epoch else None)
+                return "ok" if used else "wrong"
+            step = auth.totp_match(d["totp"]["secret"], code, d["totp"].get("last_step", 0))
+            if step is None:
+                return "used" if auth.totp_used(d["totp"]["secret"], code, d["totp"].get("last_step", 0)) else "wrong"
+            ACCOUNT.update(lambda x: x["totp"].update(last_step=max(step, x["totp"].get("last_step", 0))))
+            return "ok"
+
+    def auth_post(self, path):
+        try:
+            return self._auth_post(path)
+        except auth.Broken as e:   # e.g. the account was reset on the host in the middle of this request
+            return self.send(503, {"error": f"Signing in is off: {e}. Reload the page.", "restart": True})
+
+    def _auth_post(self, path):
+        d_in = self.json_body(8192)
+        ip, ua = self.client_ip(), self.headers.get("User-Agent", "")
+
+        def s(k):   # a text field, or "" (wrong types, too long, unpaired surrogates)
+            v = d_in.get(k)
+            return v if auth.is_text(v, 2048) else ""
+        keep = d_in.get("keep") is True
+
+        if path == "/api/logout":
+            tok = self.session_token()
+            if tok:
+                SESSIONS.end(tok)
+                print(log_safe(f"sign-in: signed out from {ip}"), flush=True)
+            self.pending(consume=True)   # a half-finished sign-in in this browser ends too ("Start over")
+            # (not Clear-Site-Data "cookies": that wipes every cookie of the whole site, your SSO's included)
+            return self.send(200, {"ok": True}, extra={"Clear-Site-Data": '"cache"'},
+                             cookies=(self.make_cookie("fishbowl", "", clear=True), self.make_cookie("fishbowl-pre", "", clear=True)))
+        try:
+            acct = ACCOUNT.get()
+        except auth.Broken as e:
+            return self.send(503, {"error": f"Signing in is off: {e}. On the host: docker exec -it <container> "
+                                            "python /app/auth.py reset (settings and keys stay)."})
+        if path in ("/api/login", "/api/login/code", "/api/setup-account") and not self.plain_http_ok():
+            return self.send(403, {"error": gap_hint(self.proxy_gaps()) or "Use the dashboard's https address to sign in: "
+                                            "over plain HTTP, passwords are only accepted from your own network."})
+
+        if path == "/api/setup-account":
+            if acct is not None:
+                return self.send(409, {"error": "The account already exists. Sign in instead.", "restart": True})
+            if not s("code").strip():
+                return self.send(400, {"error": "Type the setup code.", "field": "code"})
+            wait = self.begin_try(ip, account=False)
+            if wait:
+                return self.refuse_wait(wait)
+            wrong_code = {"error": "That's not the setup code. Use the newest one in the container's log: "
+                                   "docker logs <container> 2>&1 | grep '^SETUP CODE' | tail -n 1 (or the one auth.py "
+                                   "reset or setup-code printed).", "field": "code"}
+            if not auth.setup_code_matches(s("code")):
+                print(log_safe(f"sign-in: wrong setup code from {ip}"), flush=True)
+                return self.send(403, wrong_code)
+            THROTTLE.ip_ok(ip)   # the right code: retrying a too-weak password doesn't count as guessing
+            bad_name = auth.name_problem(s("user"))
+            problem = bad_name or auth.password_problem(s("password"), s("user").strip())
+            if problem:
+                return self.send(400, {"error": problem, "field": "user" if bad_name else "password"})
+            d = {"v": 1, "user": s("user").strip(), "hash": auth.hash_password(s("password")), "totp": {}, "recovery": [],
+                 "failures": 0, "last_fail": 0, "devices": {}, "events": [], "fails": [], "epoch": auth.new_epoch(),
+                 "created": int(time.time())}   # (hashed before taking the locks: nothing else waits for scrypt)
+            ACCOUNT.event(d, "account created", ip, ua)
+            with ACCOUNT.lock, auth.file_lock():   # one account, even when raced (and never over a reset on the host)
+                if ACCOUNT.exists():
+                    return self.send(409, {"error": "The account already exists. Sign in instead.", "restart": True})
+                if not auth.setup_code_matches(s("code")):   # used (or replaced on the host) meanwhile
+                    return self.send(403, wrong_code)
+                ACCOUNT.save(d)
+                auth.clear_setup_code()
+            print(log_safe(f"sign-in: account created from {ip}"), flush=True)
+            return self.signed_in_now(ip, keep, "signed in (new account)", None, d["epoch"])
+
+        if acct is None:
+            return self.send(409, {"error": "There's no account yet: create it first.", "setup": True, "restart": True})
+        dev = self.device(acct)
+
+        if path == "/api/login":
+            if not s("user").strip() or not s("password"):
+                return self.send(400, {"error": "Type your name and password.", "field": "user" if not s("user").strip() else "password"})
+            wait = self.begin_try(ip, dev)
+            if wait:
+                return self.refuse_wait(wait)
+            acct = ACCOUNT.get()   # fresh: the account as it is now that this try is counted
+            if acct is None:
+                return self.send(409, {"error": "There's no account yet: create it first.", "setup": True, "restart": True})
+            name_ok = hmac.compare_digest(auth.norm(s("user").strip()).casefold().encode(), auth.norm(acct["user"]).casefold().encode())
+            pw_ok, rehash = auth.verify_password(s("password"), acct["hash"])   # always runs: a wrong name takes as long
+            if not (name_ok and pw_ok):
+                self.note_failure(ip, "wrong name or password", "password", dev)
+                return self.send(401, {"error": "Wrong name or password.", "field": "password"})
+            if rehash:   # stronger settings since it was saved; only if the password didn't change meanwhile
+                new_hash = auth.hash_password(s("password"))
+                ACCOUNT.update(lambda x: x.update(hash=new_hash) if x["hash"] == acct["hash"] else None)
+            if acct["totp"].get("on"):
+                pre = secrets.token_urlsafe(32)
+                with _pending_lock:
+                    if len(_pending) > 200:
+                        _pending.clear()
+                    _pending[hashlib.sha256(pre.encode()).hexdigest()] = {"t": time.time(), "keep": keep, "tries": 0, "dev": dev,
+                                                                          "epoch": acct["epoch"]}
+                return self.send(200, {"code_due": True}, cookies=(self.make_cookie("fishbowl-pre", pre, PENDING_FOR),))
+            return self.signed_in_now(ip, keep, "signed in", dev, acct["epoch"])
+
+        if path == "/api/login/code":
+            p = self.pending()
+            if not p:
+                return self.send(401, {"error": "That step expired (it lasts 5 minutes, and ends when the dashboard restarts): "
+                                                "sign in again.", "restart": True})
+            if not s("code").strip():
+                return self.send(400, {"error": "Type a code from your authenticator app, or a recovery code.", "field": "code"})
+            wait = self.begin_try(ip, p.get("dev"), waits=False)
+            if wait:
+                return self.refuse_wait(wait)
+            result = self.code_ok(s("code"), p["epoch"])
+            if result == "used":   # (refused, but no guess: no strike, nothing for the alarm)
+                return self.send(401, {"error": CODE_USED, "field": "code"})
+            if result != "ok":
+                with _pending_lock:
+                    p["tries"] += 1
+                    over = result == "stale" or p["tries"] >= 5
+                    if over:
+                        self.pending(consume=True)
+                if result == "stale":
+                    return self.send(401, {"error": "The password or two-step sign-in just changed: sign in again.", "restart": True})
+                self.note_failure(ip, "right password, wrong code", "code", p.get("dev"))
+                return self.send(401, {"error": "Wrong code 5 times: sign in with your password again." if over else
+                                                "Wrong code. Use the newest 6-digit code from your app, or a recovery code.",
+                                       "restart": over, "field": "code"})
+            p = self.pending(consume=True) or p
+            used = "recovery code" if auth.looks_like_recovery(s("code")) else "authenticator code"
+            return self.signed_in_now(ip, p["keep"], f"signed in (password + {used})", p.get("dev"), p["epoch"],
+                                      (self.make_cookie("fishbowl-pre", "", clear=True),), wrong_codes=p["tries"])
+
+        # ---- everything below changes the account: a session is needed (the gate checked it) ----
+        tok = self.session_token()
+        if not tok:
+            return self.send(401, {"error": "Sign in first.", "signin": True})
+        tok_key = hashlib.sha256(tok.encode()).hexdigest()
+
+        if path == "/api/account/totp/confirm":
+            if acct["totp"].get("on"):
+                return self.send(409, {"error": "The authenticator app is already on."})
+            if not s("code").strip():
+                return self.send(400, {"error": "Type the 6-digit code your app shows.", "field": "code"})
+            wait = self.begin_try(ip, session=tok_key)
+            if wait:
+                return self.refuse_wait(wait)
+            with _try_lock:   # one confirm at a time: a double click can't show recovery codes that were then replaced
+                with _pending_lock:
+                    pend = _pending_totp.pop(tok_key, None)
+                if not pend or time.time() - pend["t"] > 900:
+                    return self.send(409, {"error": "Start again: that setup took more than 15 minutes, or the server restarted.",
+                                           "restart": True})
+                step = auth.totp_match(pend["secret"], s("code"), 0)
+                if step is None:
+                    with _pending_lock:
+                        _pending_totp[tok_key] = pend   # another try with the same QR code
+            if step is None:
+                self.note_failure(ip, "wrong code while setting up the authenticator")
+                return self.send(400, {"error": "That code doesn't match. Check the app's clock, and type the newest code.", "field": "code"})
+            self.try_ok(ip, session=tok_key)
+            codes, hashes = auth.new_recovery_codes()
+            cookies = self.revoke_everything(ip, "authenticator app turned on",
+                                             lambda x: x.update(totp={"secret": pend["secret"], "on": True, "last_step": step}, recovery=hashes),
+                                             pend["epoch"])
+            if not cookies:
+                return self.send(409, TOO_LATE)
+            return self.send(200, {"ok": True, "recovery": codes}, cookies=cookies)
+
+        if path not in ("/api/account/password", "/api/account/totp/start", "/api/account/totp/off", "/api/account/recovery",
+                        "/api/account/sessions/end", "/api/account/notice/dismiss"):
+            return self.send(404, {"error": "not found"})
+        needs_code = acct["totp"].get("on") and path != "/api/account/totp/start"   # (a stolen session + password isn't enough)
+        # cheap checks first: nothing is counted (or a code used up) for a request that can't succeed anyway
+        if path == "/api/account/totp/start" and acct["totp"].get("on"):
+            return self.send(409, {"error": "The authenticator app is already on."})
+        if path in ("/api/account/totp/off", "/api/account/recovery") and not acct["totp"].get("on"):
+            return self.send(409, {"error": "The authenticator app is already off." if path.endswith("off")
+                                            else "Recovery codes come with the authenticator app: turn it on first."})
+        if path == "/api/account/password":
+            problem = auth.password_problem(s("new"), acct["user"])
+            if problem:
+                return self.send(400, {"error": problem, "field": "new"})
+            if hmac.compare_digest(auth.norm(s("new")).encode(), auth.norm(s("password")).encode()):
+                return self.send(400, {"error": "That's the same password.", "field": "new"})
+        if not s("password"):
+            return self.send(400, {"error": "Type your current password.", "field": "password"})
+        if needs_code and not s("code").strip():
+            return self.send(400, {"error": "Type a code from your authenticator app, or a recovery code.", "field": "code"})
+        # the current password again (and the code, when the authenticator is on): counted for this session
+        wait = self.begin_try(ip, session=tok_key)
+        if wait:
+            return self.refuse_wait(wait)
+        acct = ACCOUNT.get()
+        if acct is None:
+            return self.send(409, {"error": "There's no account any more: reload the page.", "restart": True})
+        if not auth.verify_password(s("password"), acct["hash"])[0]:
+            self.note_failure(ip, "wrong password (account change)", "settings")
+            return self.send(403, {"error": "That's not the current password.", "field": "password"})
+        needs_code = acct["totp"].get("on") and path != "/api/account/totp/start"   # (as the account is now)
+        if needs_code:
+            result = self.code_ok(s("code"), acct["epoch"])
+            if result == "stale":
+                return self.send(409, TOO_LATE)
+            if result == "used":   # (a try, as it cost a password hash; not a wrong code: nothing for the alarm)
+                return self.send(403, {"error": CODE_USED, "field": "code"})
+            if result != "ok":
+                self.note_failure(ip, "wrong code (account change)", "settings")
+                return self.send(403, {"error": "Wrong code. Use the newest 6-digit code from your app, or a recovery code.", "field": "code"})
+        self.try_ok(ip, session=tok_key)
+
+        # (the password again for these too, as ASVS asks: a session alone, say at a wall screen, can't end the
+        # owner's other sessions or silence the "someone may know your password" warning)
+        if path == "/api/account/sessions/end":
+            if d_in.get("all") is True:   # every other browser's session and half-finished sign-in. Trusted devices
+                if not SESSIONS.end_all(but_token=tok):   # stay: forgetting them is part of a password change. Half-finished
+                    return self.send(409, TOO_LATE)       # sign-ins stay too: they aren't sessions, and the owner's own
+                ACCOUNT.update(lambda x: ACCOUNT.event(x, "signed out everywhere else", ip, ua))
+                return self.send(200, {"ok": True})
+            ended = SESSIONS.end_id(s("id"), tok)
+            if ended is None:
+                return self.send(409, TOO_LATE)
+            if not ended:
+                return self.send(404, {"error": "That browser isn't signed in any more."})
+            return self.send(200, {"ok": True})
+
+        if path == "/api/account/notice/dismiss":   # "That was me": the owner says those wrong codes were theirs
+            seen = d_in.get("seen") if isinstance(d_in.get("seen"), int) else None   # what the page showed: newer ones stay
+
+            def dismiss(x):
+                left = 0 if seen is None else x.get("notice", {}).get("code", 0) - max(0, seen)
+                x["notice"] = {**x["notice"], "code": left} if left > 0 else {}
+                ACCOUNT.event(x, "warning dismissed (wrong codes were mine)", ip, ua)
+            ACCOUNT.update(dismiss)
+            return self.send(200, {"ok": True})
+
+        if path == "/api/account/password":
+            h, now = auth.hash_password(s("new")), int(time.time())
+            cookies = self.revoke_everything(ip, "password changed", lambda x: (
+                x.update(hash=h, changed=now), x.get("notice", {}).pop("code", None), x.get("since", {}).pop("code", None)), acct["epoch"])
+            return self.send(200, {"ok": True}, cookies=cookies) if cookies else self.send(409, TOO_LATE)
+
+        if path == "/api/account/totp/start":
+            secret = auth.new_totp_secret()
+            with _pending_lock:
+                if len(_pending_totp) > 50:
+                    _pending_totp.clear()
+                _pending_totp[tok_key] = {"t": time.time(), "secret": secret, "epoch": acct["epoch"]}
+            uri = auth.otpauth_uri(secret, acct["user"])
+            return self.send(200, {"secret": secret, "uri": uri, "qr": auth.qr_svg(uri)})
+
+        if path == "/api/account/totp/off":
+            cookies = self.revoke_everything(ip, "authenticator app turned off", lambda x: x.update(totp={}, recovery=[]), acct["epoch"])
+            return self.send(200, {"ok": True}, cookies=cookies) if cookies else self.send(409, TOO_LATE)
+
+        if path == "/api/account/recovery":
+            codes, hashes, done = *auth.new_recovery_codes(), []
+            ACCOUNT.update(lambda x: (x.update(recovery=hashes), ACCOUNT.event(x, "new recovery codes", ip, ua), done.append(1))
+                           if x["epoch"] == acct["epoch"] and SESSIONS.on_disk(tok, acct["epoch"]) else None)
+            return self.send(200, {"ok": True, "recovery": codes}) if done else self.send(409, TOO_LATE)
+
     def do_GET(self):
         self.guarded(self.get)
 
     def do_POST(self):
         self.guarded(self.post)
 
-    def guarded(self, fn):
-        """No raw exception (whose text can include upstream URLs) ever reaches the browser or the log."""
+    def parse_request(self):
+        """The request line and headers, within 64 KB in all (http.server alone allows 100 lines of 64 KB each, so a few
+        stalled connections could fill the memory)."""
+        real = self.rfile
+        self.rfile = _Budget(real, 64 * 1024)
         try:
+            return super().parse_request()
+        finally:
+            self.rfile = real
+
+    def read_done(self):
+        """The request is read in full: from now on only the overall deadline applies (see Server)."""
+        if hasattr(self.server, "read_done"):
+            self.server.read_done(self.request)
+
+    def guarded(self, fn):
+        """No raw exception (whose text can include upstream URLs) ever reaches the browser or the log. The request
+        target must be a plain path ("/x", not "//x", "\\x" or "http://host/x"): the sign-in gate and the router read
+        it the same way (urlsplit), so no spelling of a path can reach a page the gate didn't check."""
+        try:
+            self._token = None   # this request's session: never one from an earlier request on the connection
+            if self.request_version == "HTTP/0.9":
+                return self.send_error(400, "HTTP/0.9 isn't supported")
+            if self.command == "GET":
+                self.read_done()
+            # through the proxy, the per-address connection cap applies to the browser's own address
+            # (only when the proxy says who it is: without X-Real-IP every visitor would share one small bucket)
+            if self.via_proxy() and self.real_ip() and hasattr(self.server, "proxied") and not self.server.proxied(self.request, self.real_ip()):
+                print(log_safe(f"refused a connection from {self.real_ip()} (via the proxy): too many at once"), flush=True)
+                return self.send(429, {"error": "The dashboard is busy for your address: try again in a few seconds.", "retry": 3,
+                                       "busy": True}, extra={"Retry-After": "3"})
+            path = urllib.parse.urlsplit(self.path or "").path if re.match(r"/(?![/\\])", self.path or "") else ""
+            # One plain spelling per path: no "//", "\\", "%", ".", ";" tricks, control characters or spaces, which other
+            # apps' auth checks and routers read differently. Real paths here never need them (queries can have %).
+            if not path or re.search(r"[\\%;\x00-\x20\x7f]|//|/\.", path):
+                return self.send(400, {"error": "bad request"})
             fn()
         except cfgstore.Invalid as e:
             self.send(400, {"error": str(e), **({"section": e.section} if e.section else {})})
+        except (BrokenPipeError, ConnectionResetError):
+            pass   # the browser left (or a stuck connection was cut): nothing to answer, nothing to log
         except Exception as e:
             print(log_safe(f"error on {self.command} {self.path[:80]}: {scrub(f'{type(e).__name__}: {e}')}"), flush=True)
             try:
@@ -1426,10 +2297,16 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
     def get(self):
-        url = urllib.parse.urlparse(self.path)
+        url = urllib.parse.urlsplit(self.path)
         p, query = url.path, urllib.parse.parse_qs(url.query)
-        if not self.allowed():
+        if not self.allowed() or not self.gate(p, q=url.query):
             return
+        if p == "/login":
+            return self.login_page(query)
+        if p == "/api/auth/state":
+            return self.send(200, self.auth_state())
+        if p == "/api/account" and AUTH == "login":
+            return self.send(200, self.account_view())
         if p in PAGES:
             # default theme baked into <html> so the page paints in the right colours before any script runs
             page = open(os.path.join(HERE, PAGES[p]), "rb").read().replace(
@@ -1446,7 +2323,7 @@ class Handler(BaseHTTPRequestHandler):
             fn = getattr(demo, fn.__name__, fn) if DEMO else fn
             self.safe(lambda: cached(p, ttl, fn) if ttl else fn())
         elif p == "/api/settings":
-            self.send(200, settings_view(self.headers.get("Host")))
+            self.send(200, self.view())
         elif p == "/api/plexart" and TAUTULLI["on"] and not DEMO:
             try:
                 art = plex_art(query.get("img", [""])[0])
@@ -1473,7 +2350,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(404, {"error": "not found"})
             ctype = {"png": "image/png", "svg": "image/svg+xml", "webp": "image/webp", "ico": "image/x-icon",
                      "jpg": "image/jpeg", "gif": "image/gif", "woff2": "font/woff2"}[m[3]]
-            self.send(200, open(f, "rb").read(), ctype, "public, max-age=604800",
+            cache = "private, max-age=604800" if m[1] == "uploads" and AUTH == "login" else "public, max-age=604800"
+            self.send(200, open(f, "rb").read(), ctype, cache,
                       {"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'"})
         elif p == "/healthz":
             self.send(200, {"ok": True})
@@ -1483,10 +2361,16 @@ class Handler(BaseHTTPRequestHandler):
     def post(self):
         if not self.allowed():
             return
-        if not self.same_origin():
-            return self.send(403, {"error": "bad origin: open the dashboard by its own address (or set ORIGIN)"})
+        why = self.origin_problem()
+        if why:
+            return self.send(403, {"error": f"Refused: {why}. Open the dashboard by its usual address; if that's what you "
+                                            "did, set ORIGIN in docker-compose.yml to it."})
+        path = urllib.parse.urlsplit(self.path).path
+        if not self.gate(path, post=True):
+            return
+        if AUTH == "login" and (path in PUBLIC_POST or path.startswith("/api/account/")):
+            return self.auth_post(path)
         who = self.client()
-        path = urllib.parse.urlparse(self.path).path
         if path == "/api/settings":
             d = self.json_body(256 * 1024)
             with _cfg_lock:
@@ -1497,7 +2381,7 @@ class Handler(BaseHTTPRequestHandler):
                 # the root collector's settings: checked now, handed over as a request only once the rest is saved
                 wish = cfgstore._in("collector", check_collector_changes, d.get("collector")) if "collector" in d else None
                 if DEMO:                  # public demo: check everything, store nothing (visitors can't change it for others)
-                    return self.send(200, {**settings_view(self.headers.get("Host")), "settings": new, "demo_not_saved": True})
+                    return self.send(200, {**self.view(), "settings": new, "demo_not_saved": True})
                 cfgstore._in("setup", cfgstore.save, new, store)
                 apply_settings()
                 warning = ""
@@ -1509,7 +2393,7 @@ class Handler(BaseHTTPRequestHandler):
             print(f"settings changed by {who}", flush=True)
             if wish is not None:
                 wait_for_collector(wish)
-            return self.send(200, {**settings_view(self.headers.get("Host")), **({"collector_warning": warning} if warning else {})})
+            return self.send(200, {**self.view(), **({"collector_warning": warning} if warning else {})})
         if path == "/api/settings/test":
             name = self.json_body(1024).get("name", "")
             return self.send(200, test_integration(name))
@@ -1565,22 +2449,128 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, {"ok": True})
 
 
+class _Budget:
+    """A file wrapper that lets readline() read at most n bytes in all: http.client.LineTooLong once they're used up."""
+    def __init__(self, f, n):
+        self.f, self.n = f, n
+
+    def readline(self, limit=-1):
+        line = self.f.readline(self.n + 1 if limit < 0 else min(limit, self.n + 1))
+        self.n -= len(line)
+        if self.n < 0:
+            raise http.client.LineTooLong("request headers")
+        return line
+
+    def __getattr__(self, name):
+        return getattr(self.f, name)
+
+
 class Server(ThreadingHTTPServer):
     """Refuses a client that isn't the proxy before a thread is started for it: otherwise any container on the
-    proxy's network could hold the dash's threads (pids_limit) with idle connections. Logged once a minute per IP."""
+    proxy's network could hold the dash's threads (pids_limit) with idle connections. Logged once a minute per IP.
+    Also caps connections (in all, and per address other than the proxy's) and gives each one a deadline, so
+    connections trickling a byte at a time can't use up the threads either."""
     daemon_threads = True
+    request_queue_size = 64   # the default 5 drops connections when a page opens many at once
+    MAX_CONN, MAX_PER_IP, READ_DEADLINE, DEADLINE = 80, 32, 20, 120   # (the compose file allows 128 threads in all)
     _logged = {}
+    # one table for the whole process (every LISTEN address): request -> [opened, address, still reading, read by, done by]
+    _conn_lock, _conns, _reaping = threading.Lock(), {}, []
+
+    def _note(self, ip, why):
+        if len(self._logged) > 10000:   # (one entry per refused address: bounded)
+            self._logged.clear()
+        if time.monotonic() - self._logged.get(ip, float("-inf")) > 60:
+            self._logged[ip] = time.monotonic()
+            print(log_safe(f"blocked direct connection from {ip}" + why), flush=True)
 
     def verify_request(self, request, client_address):
         ip = client_address[0]
-        if allowed_ip(ip, request.getsockname()[0]):
-            return True
-        if time.monotonic() - self._logged.get(ip, float("-inf")) > 60:
-            self._logged[ip] = time.monotonic()
-            print(log_safe(f"blocked direct connection from {ip}" + (f" (TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve, so "
-                  "every connection is refused: set it to your proxy's container name (docker ps), on a network the "
-                  "dashboard shares)" if TRUSTED_PROXY and not proxy_ips() else "")), flush=True)
-        return False
+        if not allowed_ip(ip, request.getsockname()[0]):
+            self._note(ip, f" (TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve, so every connection is refused: set it to "
+                           "your proxy's container name (docker ps), on a network the dashboard shares)"
+                           if TRUSTED_PROXY and not proxy_ips() else "")
+            return False
+        if not Server._reaping:
+            Server._reaping.append(True)
+            threading.Thread(target=Server._reaper, daemon=True).start()
+        key, now = auth.Throttle._key(ip), time.monotonic()   # (IPv6 per /64)
+        with self._conn_lock:
+            mine = sum(1 for v in self._conns.values() if v[1] == key)
+            if mine >= self.MAX_PER_IP and ip not in proxy_ips():
+                self._note(ip, f": too many connections ({mine} from it)")
+                return False
+            if len(self._conns) >= self.MAX_CONN:
+                # full: cut the oldest connection still sending its request, so slow senders (through a proxy that
+                # passes bodies on as they come, from many addresses) can't hold every place
+                slow = [(v[0], r) for r, v in self._conns.items() if v[2] is True]
+                if not slow:
+                    self._note(ip, f": too many connections ({len(self._conns)} open)")
+                    return False
+                oldest = min(slow, key=lambda x: x[0])[1]
+                self._conns[oldest][2] = "cut"
+                try:
+                    oldest.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            self._conns[request] = [now, key, True, now + self.READ_DEADLINE, now + self.DEADLINE]
+        return True
+
+    def read_done(self, request):
+        with self._conn_lock:
+            if request in self._conns and self._conns[request][2] is True:
+                self._conns[request][2] = False
+
+    def proxied(self, request, ip):
+        """A connection from the proxy is for this browser address: count it there (False = that address has too many)."""
+        key = "via " + auth.Throttle._key(ip)
+        with self._conn_lock:
+            if request not in self._conns:
+                return True
+            if sum(1 for r, v in self._conns.items() if v[1] == key and r is not request) >= self.MAX_PER_IP:
+                return False
+            self._conns[request][1] = key
+        return True
+
+    def handle_error(self, request, client_address):
+        e = sys.exc_info()[1]
+        if isinstance(e, (ConnectionError, TimeoutError)):
+            return   # a browser that left (or a connection cut for taking too long): nothing worth a traceback
+        if isinstance(e, RuntimeError) and "thread" in str(e):   # out of threads (the process limit): one line, not a traceback
+            return self._note(client_address[0], ": no thread left to answer it")
+        super().handle_error(request, client_address)
+
+    def process_request(self, request, client_address):
+        try:
+            super().process_request(request, client_address)
+        except Exception:   # no thread could be started: the connection is closed, so it no longer counts
+            self._done(request)
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._done(request)
+
+    def _done(self, request):
+        with self._conn_lock:
+            self._conns.pop(request, None)
+
+    @staticmethod
+    def _reaper():
+        """Every second: cut connections still sending their request after READ_DEADLINE, and any after DEADLINE
+        (a read timeout alone restarts with every byte)."""
+        while True:
+            time.sleep(1)
+            now = time.monotonic()
+            with Server._conn_lock:
+                old = [r for r, v in Server._conns.items() if now > v[4] or (v[2] is True and now > v[3])]
+            for r in old:
+                try:
+                    r.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
 
 
 class Server6(Server):
@@ -1604,6 +2594,25 @@ if __name__ == "__main__":
         print(f"WARNING: TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve yet, so connections are refused (it's looked up "
               "again every minute; normal for a moment after a reboot if the proxy starts later). If it stays: set it to your "
               "reverse proxy's container name (docker ps) and put both containers on the same Docker network.", flush=True)
+    if AUTH == "login":
+        try:
+            if ACCOUNT.get() is None:
+                code = auth.new_setup_code()
+                print("=" * 72 + "\nSign-in: there's no account yet. Open the dashboard and create it with this one-time code:\n"
+                      f"SETUP CODE: {code}\n(a new one at every start until the account exists: use the newest. To show "
+                      "it: docker logs <container> 2>&1 | grep '^SETUP CODE' | tail -n 1. "
+                      + ("AUTH: proxy is set but needs TRUSTED_PROXY too, see the WARNING above)" if _auth_env == "proxy" else
+                         "AUTH: proxy turns this sign-in off if your reverse proxy's sign-in protects the dashboard)")
+                      + "\n" + "=" * 72, flush=True)
+            else:
+                auth.clear_setup_code()
+        except auth.Broken as e:
+            print(f"WARNING: sign-in is off: {e}. Reset it: docker exec -it <container> python /app/auth.py reset", flush=True)
+    else:
+        if os.path.exists(auth.SESSIONS_FILE):   # switching back to login later must not revive old sign-ins
+            os.remove(auth.SESSIONS_FILE)
+        print(f"Sign-in: AUTH={AUTH} (Fishbowl's own login is off"
+              + ("; your reverse proxy's sign-in must protect the dashboard)" if AUTH == "proxy" else ")"), flush=True)
     for s in servers[1:]:
         threading.Thread(target=s.serve_forever, daemon=True).start()
     servers[0].serve_forever()

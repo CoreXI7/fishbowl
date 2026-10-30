@@ -111,7 +111,7 @@ class Setup(unittest.TestCase):
     def test_fresh_install(self):
         app = load_app()
         st = self.states(app)
-        self.assertEqual(st["proxy"], "problem", "no TRUSTED_PROXY: anyone who reaches it can change settings")
+        self.assertEqual(st["proxy"], "warn", "no TRUSTED_PROXY: reachable without the proxy (its own sign-in still guards it)")
         self.assertEqual(st["origin"], "warn")
         self.assertEqual(st["saving"], "ok")
         self.assertEqual(st["services"], "warn", "NPM folder mounted but empty")

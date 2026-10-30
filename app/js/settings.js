@@ -6,9 +6,13 @@ let V = null, S = null, SEC = {}, dirty = false;
 
 async function api(url, opts = {}) {
   const r = await fetch(url, {credentials: "same-origin", ...opts});
+  if (r.status === 401) {   // signed out (expired, or ended elsewhere): keep this page and its unsaved changes
+    if (!V) { location.href = "/login?next=/settings"; throw new Error("signed out"); }
+    throw new Error("You're signed out. Open the dashboard in another tab and sign in there, then try again here: your changes are kept.");
+  }
   if (r.redirected || (r.headers.get("content-type") || "").indexOf("json") < 0) { location.reload(); throw new Error("session expired"); }
   const j = await r.json();
-  if (!r.ok) throw Object.assign(new Error(j.error || r.status), {section: j.section});
+  if (!r.ok) throw Object.assign(new Error(j.error || r.status), {section: j.section, field: j.field, restart: j.restart});
   return j;
 }
 const post = (url, body) => api(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -21,7 +25,7 @@ setHH(); new ResizeObserver(setHH).observe(document.querySelector("header"));
 
 // ---------- unsaved changes: the Save bar, and a dot on each section in the menu that has some ----------
 const SECTION_NAMES = {setup: "Setup", look: "Look & feel", themes: "Themes", services: "Services", integrations: "Integrations",
-                       drives: "Drives & hardware", security: "Security", backups: "Backups", about: "About"};
+                       drives: "Drives & hardware", security: "Security", backups: "Backups", account: "Account", about: "About"};
 const secName = k => Object.hasOwn(SECTION_NAMES, k) ? SECTION_NAMES[k] : "";
 const narrow = matchMedia("(max-width:600px)");
 const PERSONALITY = ["tagline", "tagline_down", "click_emoji", "greeting", "quotes", "mascot", "mascot_credit", "favicon"];
@@ -888,8 +892,9 @@ function markCurrent() {
   if (performance.now() < spyPausedUntil) return;
   const nav = document.querySelector(".set-nav"), barOnTop = getComputedStyle(nav).position === "sticky" && nav.offsetWidth > innerWidth * .8;
   const line = document.querySelector("header").offsetHeight + (barOnTop ? nav.offsetHeight : 0) + 40;
-  let cur = sections.filter(s => !s.classList.contains("q-out")).filter(s => s.getBoundingClientRect().top <= line).pop() || sections[0];
-  if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4) cur = sections.filter(s => !s.classList.contains("q-out")).pop() || cur;
+  const shown = sections.filter(s => !s.classList.contains("q-out") && !s.hidden);   // (Account is hidden without the own sign-in)
+  let cur = shown.filter(s => s.getBoundingClientRect().top <= line).pop() || shown[0] || sections[0];
+  if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4) cur = shown.pop() || cur;
   if (pinned) {   // the section a menu click went to stays current while it's on screen (a short one can't reach the top)
     const r = $(pinned).getBoundingClientRect();
     if (r.bottom > line && r.top < innerHeight - 60) cur = $(pinned); else pinned = "";
@@ -933,7 +938,8 @@ function applySearch() {
   const reveal = el => { for (let d = el.closest("details"); d; d = d.parentElement.closest("details")) d.open = true; };
   let any = false, n = 0;
   document.querySelectorAll(".set-main > section").forEach(sec => {
-    let hit = [sec.querySelector("h2"), ...sec.querySelectorAll("#theme-tabs button")].some(el => hasAll(el.textContent.toLowerCase()));
+    if (sec.hidden) return;
+    let hit = [sec.querySelector("h2"), ...sec.querySelectorAll("#theme-tabs button")].some(el => hasAll((el.textContent + " " + (el.dataset.kw || "")).toLowerCase()));
     if (!hit) {
       const hits = [];
       sec.querySelectorAll(UNITS).forEach(u => {
@@ -965,6 +971,209 @@ $("set-q").addEventListener("input", applySearch);
 $("set-q").addEventListener("keydown", e => { if (e.key === "Escape") { $("set-q").value = ""; applySearch(); } });
 
 // ---------- load / save ----------
+// ---------- Account (Fishbowl's own sign-in, AUTH=login) ----------
+// Its buttons act right away; nothing here goes through the Save bar. Every change sends the "Confirm it's you" box
+// (the current password, and a code when two-step is on); the server checks them, this only shows forms and results.
+let acctShown = false, A = null;
+const ago = t => { const s = Math.max(0, Date.now() / 1000 - t);
+  return s < 90 ? "just now" : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 129600 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`; };
+const browserName = ua => {   // most specific first: Edge and Opera say "Chrome" too, Chrome on iPhone says "Safari"
+  ua = ua || "";
+  const b = /Edg(?:A|iOS)?\//.test(ua) ? "Edge" : /OPR\/|OPT\//.test(ua) ? "Opera" : /Firefox\/|FxiOS\//.test(ua) ? "Firefox"
+    : /Chrome\/|CriOS\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "A browser";
+  const o = /Android/.test(ua) ? "Android" : /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Windows/.test(ua) ? "Windows"
+    : /CrOS/.test(ua) ? "ChromeOS" : /Mac OS X/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "";
+  return b + (o ? " on " + o : "");
+};
+const when = t => new Date(t * 1000).toLocaleString();
+function acctMsg(id, text, bad) { const el = $(id); if (!el) return; el.textContent = text || ""; el.className = "acct-msg " + (bad ? "crit-t" : "ok-t"); }
+// A change. confirm: send the "Confirm it's you" box along (cleared after a success: a code works once anyway). Its
+// button is off while the request runs (a double click can't send it twice). On failure: {error} with the message
+// shown and the field the server named marked and focused.
+async function acctPost(url, body, msgId, btn = null, confirm = true) {
+  document.querySelectorAll("#account [aria-invalid]").forEach(el => el.removeAttribute("aria-invalid"));
+  if (confirm) body = {...body, password: $("acct-cur").value, code: A && A.totp ? $("acct-code").value.trim() : ""};
+  acctMsg("acct-confirm-msg", "");
+  if (btn) btn.disabled = true;
+  try {
+    const r = await post(url, body);
+    acctMsg(msgId, "");
+    if (confirm) $("acct-cur").value = $("acct-code").value = "";
+    return r;
+  } catch (e) {
+    acctMsg(msgId, e.message, true);
+    if (confirm && ["password", "code"].includes(e.field)) acctMsg("acct-confirm-msg", e.message, true);   // (said at the box too)
+    const id = {password: "acct-cur", code: confirm ? "acct-code" : "acct-tc-code", new: "acct-pw-new"}[e.field];
+    if (id && $(id)) { $(id).setAttribute("aria-invalid", "true"); $(id).focus(); }
+    return {error: e};
+  } finally { if (btn) btn.disabled = false; }
+}
+// before a yes/no question: is the box filled in? (else say so at the box, and don't ask the question twice)
+function confirmFilled() {
+  const empty = !$("acct-cur").value ? "acct-cur" : A && A.totp && !$("acct-code").value.trim() ? "acct-code" : "";
+  if (!empty) return true;
+  acctMsg("acct-confirm-msg", empty === "acct-cur" ? "Type your current password here first." : "Type a code from your app here first.", true);
+  $(empty).setAttribute("aria-invalid", "true");
+  $(empty).focus();
+  return false;
+}
+async function refreshSetup() {   // the Setup checklist after an account change (two-step on or off, password changed)
+  try { V.setup = (await api("/api/settings")).setup; renderSetup(); } catch (e) { /* it updates on the next load */ }
+}
+
+// part "lists" redraws only the browsers and the sign-in history, so one-time codes or a QR code on screen stay
+async function renderAccount(focusId, part = "all") {
+  const on = V.auth === "login" && !V.demo;
+  $("account").hidden = $("nav-account").hidden = !on;
+  if (!on) return;
+  try { A = await api("/api/account"); }
+  catch (e) { $("acct-who").textContent = "Couldn't load the account: " + e.message; return; }
+  renderLists();
+  $("acct-code-f").hidden = !A.totp;
+  const busy = $("acct-codes")?.innerHTML.trim() || $("acct-setup")?.innerHTML.trim();
+  if (part === "lists" || busy) { if (focusId && $(focusId)) $(focusId).focus(); return; }
+  $("acct-who").innerHTML = `Signed in as <b>${esc(A.user)}</b>.`;
+  document.querySelectorAll(".acct-user").forEach(el => el.value = A.user);   // (so a password manager knows whose it is)
+  document.querySelectorAll(".pw-min").forEach(el => el.textContent = A.min_length);
+  const n = A.notice || {};
+  $("acct-alerts").innerHTML = (A.locked ? `<div class="chk chk-problem"><span class="chk-ic" aria-hidden="true">!</span><div class="chk-b">
+      <p><b>Sign-ins from new browsers are locked</b> after ${esc(A.failures)} wrong tries in a row. Browsers that signed in here
+        before (like this one) still can. Unlock it on the host when you're ready:</p>
+      <div class="code"><pre><code>docker exec -it &lt;container&gt; python /app/auth.py unlock</code></pre></div></div></div>` : "")
+    + (n.code ? `<div class="chk chk-problem"><span class="chk-ic" aria-hidden="true">!</span><div class="chk-b">
+      <p><b>Someone may know your password.</b> Someone typed it correctly but the code wrong (${esc(n.code)}
+        time${n.code > 1 ? "s" : ""}, last at ${esc(when(n.t))}). If that wasn't you, change the password below. If it was,
+        confirm it's you below, then press "That was me".</p>
+      <div class="acct-btns"><button type="button" class="ibtn" id="acct-notice-ok">That was me</button></div></div></div>` : "");
+  $("acct-totp").innerHTML = A.totp
+    ? `<p class="ok-t">On. <span class="mute">${A.recovery_left} recovery code${A.recovery_left === 1 ? "" : "s"} left.</span></p>
+       <div class="acct-btns"><button type="button" class="ibtn" data-totp="recovery">New recovery codes</button>
+         <button type="button" class="ibtn danger" data-totp="off">Turn it off</button></div><div id="acct-codes"></div>`
+    : `<p class="warn-t">Off. With it on, signing in also needs a code from an app on your phone (Aegis, Google Authenticator,
+         1Password, …), so a stolen or guessed password isn't enough.</p>
+       <div class="acct-btns"><button type="button" class="ibtn" id="acct-totp-start">Set up an authenticator app</button></div>
+       <div id="acct-setup"></div><div id="acct-codes"></div>`;
+  if (focusId && $(focusId)) $(focusId).focus();
+}
+
+function renderLists() {
+  $("acct-sessions").innerHTML = `<ul class="acct-list">${A.sessions.map(s => `<li><span><b>${esc(browserName(s.ua))}</b>${s.current ? ' <span class="hostchip">this browser</span>' : ""}<br>
+        <small class="mute">${esc(s.ip)} · last seen ${esc(ago(s.seen))} · signed in ${esc(new Date(s.created * 1000).toLocaleDateString())}${s.keep ? " · kept signed in" : ""}</small></span>
+      ${s.current ? "" : `<button type="button" class="ibtn" data-end="${esc(s.id)}" aria-label="Sign out ${esc(browserName(s.ua))} (${esc(s.ip)})">Sign out</button>`}</li>`).join("")}</ul>
+    ${A.sessions.length > 1 ? '<button type="button" class="ibtn" id="acct-end-all">Sign out every other browser</button>' : ""}`;
+  const rows = list => `<ul class="acct-list acct-events">${list.map(e => `<li><span>${esc(e.kind)}<br><small class="mute">${esc(when(e.t))} · ${esc(e.ip)}</small></span></li>`).join("")}</ul>`;
+  $("acct-events").innerHTML = A.events.length ? rows(A.events) : '<p class="mute">None yet.</p>';
+  $("acct-fails").innerHTML = A.fails.length ? rows(A.fails) : '<p class="mute">None.</p>';
+}
+
+function showCodes(codes) {
+  const txt = "Fishbowl recovery codes. Each one works once, instead of an authenticator code.\n\n" + codes.join("\n") + "\n";
+  $("acct-codes").innerHTML = `<div class="chk chk-warn"><span class="chk-ic" aria-hidden="true">!</span><div class="chk-b">
+    <p id="acct-rc-title" tabindex="-1"><b>Your recovery codes.</b> Each one signs you in once if you lose your phone. Save
+      them somewhere safe now (your password manager, or printed): they aren't shown again.</p>
+    <pre class="acct-rc" id="acct-rc">${codes.map(esc).join("\n")}</pre>
+    <div class="acct-btns"><button type="button" class="ibtn" id="acct-rc-copy">Copy</button>
+      <a class="ibtn" id="acct-rc-dl" download="fishbowl-recovery-codes.txt">Download</a>
+      <button type="button" class="ibtn" id="acct-rc-done">I saved them</button></div>
+    <p class="acct-msg" id="acct-rc-msg" role="status" aria-live="polite"></p></div></div>`;
+  $("acct-rc-dl").href = URL.createObjectURL(new Blob([txt], {type: "text/plain"}));
+  $("acct-rc-copy").onclick = async () => {
+    try { await navigator.clipboard.writeText(txt); acctMsg("acct-rc-msg", "✓ Copied."); }
+    catch (e) { getSelection().selectAllChildren($("acct-rc")); acctMsg("acct-rc-msg", "Selected: press Ctrl+C (⌘C) to copy."); }   // no clipboard over plain HTTP
+  };
+  $("acct-rc-done").onclick = () => { URL.revokeObjectURL($("acct-rc-dl").href); $("acct-codes").innerHTML = ""; renderAccount("h-acct-totp"); };
+  $("acct-rc-title").focus();
+}
+
+document.addEventListener("submit", async e => {
+  if (e.target.id === "acct-confirm") e.preventDefault();   // (Enter in the box: nothing to send on its own)
+  if (e.target.id === "acct-pw") {
+    e.preventDefault();
+    acctMsg("acct-pw-msg", "");
+    if ($("acct-pw-new").value !== $("acct-pw-new2").value) {
+      acctMsg("acct-pw-msg", "The two new passwords aren't the same.", true);
+      $("acct-pw-new2").setAttribute("aria-invalid", "true");
+      return $("acct-pw-new2").focus();
+    }
+    const r = await acctPost("/api/account/password", {new: $("acct-pw-new").value}, "acct-pw-msg", e.submitter);
+    if (r.error) return;
+    $("acct-pw-new").value = $("acct-pw-new2").value = "";
+    acctMsg("acct-pw-msg", "✓ Changed. Every other browser is signed out.");
+    await renderAccount("h-acct-pw");
+    refreshSetup();
+  } else if (e.target.id === "acct-totp-confirm") {
+    e.preventDefault();
+    acctMsg("acct-totp-msg", "");
+    const r = await acctPost("/api/account/totp/confirm", {code: $("acct-tc-code").value.trim()}, "acct-tc-msg", e.submitter, false);
+    if (r.error) {
+      if (r.error.restart) {   // the setup expired (or the server restarted): start over from the button
+        $("acct-setup").innerHTML = "";
+        await renderAccount("h-acct-totp");
+        acctMsg("acct-totp-msg", r.error.message + " Remove the Fishbowl entry you just added in your app, then set it up again.", true);
+      }
+      return;
+    }
+    $("acct-totp").innerHTML = '<p class="ok-t">✓ On. Every other browser was signed out. From now on, changes here also ask '
+      + 'for a code from the app.</p><div id="acct-codes"></div>';
+    $("acct-code-f").hidden = false;
+    if (A) A.totp = true;
+    showCodes(r.recovery);
+    renderAccount(null, "lists");
+    refreshSetup();
+  }
+});
+document.addEventListener("click", async e => {
+  const t = e.target;
+  if (t.id === "acct-totp-start") {
+    acctMsg("acct-totp-msg", "");
+    const r = await acctPost("/api/account/totp/start", {}, "acct-totp-msg", t);
+    if (r.error) return;
+    t.closest(".acct-btns").hidden = true;
+    $("acct-setup").innerHTML = `<ol class="acct-steps">
+      <li>In your authenticator app, add an account and scan this code:<div class="acct-qr" id="acct-qr"></div>
+        Can't scan? Type this key instead: <code class="acct-key">${esc(r.secret.match(/.{1,4}/g).join(" "))}</code>
+        (or <a href="${esc(r.uri)}">open it in an authenticator app on this device</a>).</li>
+      <li><form class="form acct-form" id="acct-totp-confirm" novalidate>
+        <div class="field"><label for="acct-tc-code">The 6-digit code the app shows now</label>
+          <input type="text" id="acct-tc-code" autocomplete="one-time-code" inputmode="numeric" maxlength="7" spellcheck="false"></div>
+        <button type="submit" class="ibtn">Turn it on</button>
+        <p class="acct-msg" id="acct-tc-msg" role="status" aria-live="polite"></p></form></li></ol>`;
+    const svg = new DOMParser().parseFromString(r.qr, "image/svg+xml").documentElement;   // drawn by the server, no script in it
+    if (svg && svg.nodeName === "svg") $("acct-qr").appendChild(document.importNode(svg, true));
+    $("acct-tc-code").focus();
+  } else if (t.dataset.totp) {
+    acctMsg("acct-totp-msg", "");
+    if (t.dataset.totp === "off" && (!confirmFilled() || !confirm("Turn the authenticator app off? Signing in will need only the password."))) return;
+    const r = await acctPost(t.dataset.totp === "off" ? "/api/account/totp/off" : "/api/account/recovery", {}, "acct-totp-msg", t);
+    if (r.error) return;
+    if (r.recovery) showCodes(r.recovery);
+    else {   // (recovery codes still on screen are dead now: they go too)
+      $("acct-codes").innerHTML = "";
+      acctMsg("acct-totp-msg", "✓ Turned off. Every other browser was signed out.");
+      await renderAccount("h-acct-totp");
+      refreshSetup();
+    }
+  } else if (t.dataset.end) {
+    if ((await acctPost("/api/account/sessions/end", {id: t.dataset.end}, "acct-s-msg", t)).error) return;
+    acctMsg("acct-s-msg", "✓ Signed out.");
+    await renderAccount("h-acct-sessions", "lists");
+  } else if (t.id === "acct-end-all") {
+    if (!confirmFilled() || !confirm("Sign out every other browser (including wall screens)? If someone else may know the password, change it instead: that also forgets every other browser.")) return;
+    if ((await acctPost("/api/account/sessions/end", {all: true}, "acct-s-msg", t)).error) return;
+    acctMsg("acct-s-msg", "✓ Every other browser is signed out.");
+    await renderAccount("h-acct-sessions", "lists");
+  } else if (t.id === "acct-notice-ok") {
+    if ((await acctPost("/api/account/notice/dismiss", {seen: (A.notice || {}).code || 0}, "acct-alert-msg", t)).error) return;
+    $("acct-alerts").innerHTML = "";
+    acctMsg("acct-alert-msg", "✓ Warning dismissed. It comes back if it happens again.");
+    $("h-acct-pw").focus();
+    refreshSetup();
+  } else if (t.id === "acct-signout") {
+    try { await post("/api/logout", {}); } catch (err) { /* signed out either way */ }
+    location.replace("/login");
+  }
+});
+
 function render() {
   S = structuredClone(V.settings); SEC = {};
   if (V.settings.site.favicon) document.querySelector("link[rel=icon]").href = V.settings.site.favicon;
@@ -972,6 +1181,10 @@ function render() {
   document.querySelectorAll("[aria-invalid]").forEach(clearErr);
   collectorStart();
   renderInteg(); bindFields(); renderPanels(); renderThemes(); renderServices(); renderExtras(); renderCollector(); renderInfra(); renderSetup();
+  if (!acctShown) {   // once: Save / Discard must not wipe codes or a QR code on screen
+    acctShown = true;
+    renderAccount().then(() => { if (location.hash === "#account") $("account").scrollIntoView(); });   // (it was hidden at load)
+  }
   document.querySelectorAll(".ferr").forEach(m => m.remove());
   hideErr(); setDirty(false); applySearch(); markCurrent(); bubbles();
 }

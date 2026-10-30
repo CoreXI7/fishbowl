@@ -26,10 +26,10 @@ def load_app(**env):
             "HW_FILE": os.path.join(tmp, "hw", "hw.json"), "REQ_DIR": os.path.join(tmp, "req"), "DEMO": "",
             "ORIGIN": "", "SETTINGS_UI": "1"}
     for k in ("QBIT_URL", "QBIT_USER", "QBIT_PASS", "SEERR_URL", "SEERR_KEY", "TAUTULLI_URL", "TAUTULLI_KEY",
-              "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER", "LISTEN"):
+              "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER", "LISTEN", "AUTH"):
         os.environ.pop(k, None)
     os.environ.update({**base, **env})
-    for m in ("settings", "demo"):
+    for m in ("settings", "demo", "auth"):
         sys.modules.pop(m, None)
     if APP_DIR not in sys.path:
         sys.path.insert(0, APP_DIR)
@@ -38,6 +38,8 @@ def load_app(**env):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     mod.TEST_TMP = tmp
+    if "AUTH" not in env and not mod.DEMO:
+        mod.AUTH = "proxy"   # tests of other things skip the sign-in (it has its own: test_auth.py, with AUTH set)
     return mod
 
 
