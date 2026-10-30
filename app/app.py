@@ -507,7 +507,7 @@ def cached(key, ttl, fn):
         hit = _cache.get(key)
         if hit and isinstance(hit[1], _Failed):
             if time.monotonic() - hit[0] < min(ttl, FAIL_FOR):
-                raise hit[1].error
+                raise hit[1].error.with_traceback(None)   # (else each raise adds its request's frames: memory grows)
             return None
         return hit if hit and time.monotonic() - hit[0] < ttl else None
 

@@ -153,6 +153,22 @@ class CachedFailure(unittest.TestCase):
         self.assertEqual(len(calls), 1, "the failing fetch ran once")
         self.assertLess(time.monotonic() - t0, 3)
 
+    def test_a_shared_failure_doesnt_grow(self):
+        # (the same exception object was raised again for every request: each raise added that request's frames to its
+        # traceback, so 1,863 requests for a failing integration used up the memory; audit round 3)
+        app = load_app()
+
+        def failing():
+            raise TimeoutError("upstream too slow")
+        errors = []
+        for _ in range(50):
+            try:
+                app.cached("/api/test-shared", 25, failing)
+            except TimeoutError as e:
+                errors.append(e)
+        depth = lambda e: sum(1 for _ in __import__("traceback").walk_tb(e.__traceback__))
+        self.assertLess(depth(errors[-1]), 10, "the traceback doesn't grow with every request")
+
 
 if __name__ == "__main__":
     unittest.main()
