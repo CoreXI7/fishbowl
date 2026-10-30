@@ -85,10 +85,54 @@ Written for the reference setup (a home server behind a reverse proxy with SSO),
 ## What runs as root
 
 The collector, as `python3 -I`, with `ProtectSystem=full`, `ProtectHome=read-only`, `PrivateTmp`, `NoNewPrivileges`,
-a memory and task cap. Commands: `journalctl`, `docker ps/logs`, `ps`, `top`, `fail2ban-client`, `ufw`, `lsattr`,
+a memory and task cap. On top of that, `install.sh` runs `collector/sandbox.sh`, which adds the strictest of three
+sandbox levels the collector still works under on that machine (it runs `--selftest` twice under the plain unit and
+once under each level, and keeps the first that answers like the plain runs; the self-test reports facts only, uses
+`collector.toml` and approved settings but never the page's automatic ones, and the collector is restarted and checked
+afterwards, the level removed again if it stops updating): no IP traffic at all (`IPAddressDeny=any`), the whole filesystem read-only
+except the output folder (`ProtectSystem=strict`), kernel tunables/modules/logs/cgroups/clock protected, no new
+namespaces, SUID or realtime, and, at the strictest level, only the capabilities it uses (`CAP_DAC_READ_SEARCH`,
+`CAP_CHOWN`, `CAP_FOWNER`, `CAP_SYS_RAWIO`, `CAP_NET_ADMIN`, `CAP_NET_RAW`), `MemoryDenyWriteExecute` and the
+`@system-service` syscall set (an unexpected call fails with EPERM instead of killing the collector). Commands: `journalctl`, `docker ps/logs`, `ps`, `top`, `fail2ban-client`, `ufw`, `lsattr`,
 `smartctl`, `nvidia-smi`, `findmnt`, `systemctl list-timers`, `du` (idle priority). Files: `/proc`, `/sys`, crontabs,
 `authorized_keys` (no symlink at the name), Authelia's database (as above), configured log files (tails, regular files only).
-It writes only to its state folder.
+It writes only to its state folder (and, with `--apply`, `collector.page.toml`).
+
+## Collector settings from the settings page (the second channel from the dash to root)
+
+The page writes only what was changed, each setting with a fingerprint of the value the page showed (a hash of what
+the collector reported) and the new value, into
+`req/collector-settings.json` (a root-owned folder the dash's group can write to). The collector treats that file as
+written by an attacker who controls the dash container:
+
+- It's read when it changes (and once a minute) without following a symlink, without waiting on a FIFO, only as a
+  regular file, ≤ 256 KB; JSON that's too deep, not UTF-8 or another version is refused as a whole, and what the page
+  set before stays as it is. Each request is handled once (by its hash), at most one every 10 s.
+- Only keys the collector knows are read; `out_dir` and `dash_uid` never come from it; unknown keys are reported back,
+  escaped and at most 20 of them.
+- A change is taken only while the setting still has the value the page showed; otherwise someone changed it on the
+  host meanwhile, and the change is refused. Both kinds of page values remember the `collector.toml` value they
+  replaced: editing that setting in `collector.toml` later wins over the page.
+- **Applied by itself** (a hijacked dash already controls what's shown, so these give it nothing new): on/off switches,
+  the update interval (2–60 s), mount points (each a real mount point the collector found itself, or one it already
+  shows), labels, the network interface (must exist), the fail2ban jail, ssh unit and Authelia container (each must be
+  one the collector detected itself), process names (`[A-Za-z0-9._-]{1,32}`), backups' overdue hours. They're kept
+  root-only (`page-state.json`, 0600; rewritten only when something in it changed).
+- **Wait for a person** (they'd make root read a file or run a pattern the dash picked): every path, every regex, the
+  watch-script and backup tables, and turning any of them off. Nothing happens until someone runs
+  `sudo homelab-dash-collector --apply` on the host, which needs a terminal and shows only what changes, marked
+  (`+` added, `-` removed, `~` old -> new), whole (never cut), table entries by their name (two entries can't share
+  one), unchanged ones counted. Every string is shown as printable ASCII only (anything else as `\uXXXX`), so a value
+  can't repaint the terminal, hide itself or pass for other letters. It warns when a path's folder belongs to the
+  dash's user or anyone can write to it, or when a path is a link. It asks y (apply), N (not now) or d (drop them from
+  the waiting list), and applies only if the page didn't change the list meanwhile. Approved values go to
+  `/etc/homelab-dash/collector.page.toml` (root; ignored unless only root can write it; a damaged one is ignored, not a
+  crash); `collector.toml` is never rewritten. `--apply --undo` drops every page setting and the page's request.
+- Paths must be absolute and normalized (no `..`, no `//`), wildcards only after the first folder, and never in `/proc`,
+  `/sys`, `/dev` or the collector's own folder (checked part by part, so a wildcard can't reach them either); patterns
+  must compile and are capped at 300 characters, paths at 512. A path the page set is never read through a link,
+  anywhere on the way (opened folder by folder with `O_NOFOLLOW`), and FIFOs never block. Approving a path still means
+  root reads that file: read what it shows.
 
 ## Controls that hold today
 
@@ -123,6 +167,9 @@ deeply nested JSON could exhaust memory under the byte caps; several ways a misb
 bloat the collector.
 
 ## Still open
+
+- A person can approve a bad path or pattern with `--apply` without reading the diff: approval is only as good as the
+  reading. (The dash alone can't apply them.)
 
 - Without `LISTEN`, a container on the proxy's network that can forge the proxy's address (ARP spoofing needs only the
   default `NET_RAW` capability) can still reach the dash as the proxy, and read what the proxy sends it.

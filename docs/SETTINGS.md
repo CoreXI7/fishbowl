@@ -111,5 +111,19 @@ recreate).
 
 Every option is in `collector/collector.example.toml` with a comment: drives and mount labels, the network interface,
 the GPU, the security checks (fail2ban jail, SSH unit, Authelia container and database, process watch names, cron
-watch, immutable files, firewall), the backup jobs, and how often it writes. The dash reads its output; nothing on the
-settings page changes what root does.
+watch, immutable files, firewall), the backup jobs, and how often it writes.
+
+Most of them can also be changed on the settings page (Drives & hardware, Security, Backups), so you rarely need to
+open that file:
+
+- **Switches and choices** (what's shown, the interval, drives, the jail, the network interface, ...) apply within a
+  minute. The collector checks each one itself, against what it found on the machine.
+- **Files and patterns** (log files, the Authelia database, locked files, backup jobs, regexes, your watch script) make
+  root read a file or run a search, so they wait until you approve them on the host:
+  `sudo homelab-dash-collector --apply` shows each change, marked and whole, and asks (y applies, d drops them
+  from the waiting list). Approved values are kept in
+  `/etc/homelab-dash/collector.page.toml`.
+- **The last change wins**: a change on the page applies only if the setting still has the value the page showed, and
+  editing a setting in `collector.toml` later (then restarting the collector) wins over what the page set for it.
+- `sudo homelab-dash-collector --apply --undo` drops everything the page set: back to `collector.toml` alone.
+- `out_dir` and `dash_uid` can only be set in `collector.toml`.

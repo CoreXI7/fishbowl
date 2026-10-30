@@ -8,7 +8,12 @@ torrents (with a VPN-leak alarm), temperatures, drives, security and backups, al
 - Small: one stdlib-Python app. No pip, no Node, no database. About 25–40 MB of RAM.
 - Easy: set it up from a settings page in your browser. Its **Setup checklist** tells you what's missing and how to
   fix it. Services from Nginx Proxy Manager show up on their own.
-- Safe: your API keys stay on the server, and the part that runs as root never talks to the network.
+- Safe: your API keys stay on the server, and the part that runs as root never talks to the network (the installer also
+  locks it into the strictest sandbox it works under).
+
+> **⚠ It has no login of its own.** Anyone who can open it can change its settings. Put it behind your reverse proxy's
+> sign-in (Authelia, Authentik, or an NPM access list with a password); the settings page's Setup checklist warns when it
+> can't find one. How it's built to be safe, and how to report a problem: [SECURITY.md](SECURITY.md).
 
 **▶ [Try the live demo](https://demo.vicy.us)** (fake data, nothing you do there is saved)
 
