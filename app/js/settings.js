@@ -698,19 +698,34 @@ const TABLES = {
     ["label", "Name", ""],
     ["glob", "Its files (* and ? work as wildcards)", "Like <code>/srv/backups/db/*.sql.gz</code>."]]},
 };
+// a counted check needs its line and a file pattern its pattern: an empty one would mark every backup as failed
+function incompleteTables() {
+  let first = null;
+  for (const [k, need] of [["backup.checks", "regex"], ["backup.artifacts", "glob"]]) {
+    clist(k).forEach((x, i) => {
+      const el = $(`${cid(k)}-${i}-${need}`);
+      if (!el || !x || typeof x !== "object") return;
+      if (!x[need]) { fieldErr(el, need === "regex" ? "Which line to count?" : "Which files?"); first = first || el; } else clearErr(el);
+    });
+  }
+  return first;
+}
 function tableCards(k) {
   const t = TABLES[k], p = cid(k), items = clist(k).filter(x => x && typeof x === "object" && !Array.isArray(x));
-  return items.map((x, i) => `<div class="jobcard" role="group" aria-labelledby="${p}-${i}-h"><div class="gh"><h4 id="${p}-${i}-h">${esc(x.label || t.fresh)}</h4>
-      <button type="button" class="ibtn danger" data-tdel="${esc(k)}" data-ti="${i}" aria-label="Remove the ${t.one} ${esc(x.label || "")}"${dis()}>Remove</button></div>
+  const bad = refused(k) ? ' aria-invalid="true"' : "";
+  return items.map((x, i) => { const name = x.label || `${t.one[0].toUpperCase()}${t.one.slice(1)} ${i + 1} (no name)`;
+    return `<div class="jobcard" role="group" aria-labelledby="${p}-${i}-h"><div class="gh"><h4 id="${p}-${i}-h">${esc(name)}</h4>
+      <button type="button" class="ibtn danger" data-tdel="${esc(k)}" data-ti="${i}" aria-label="Remove the ${t.one} ${esc(name)}"${dis()}>Remove</button></div>
     ${t.fields.map(([f, label, help, type = "text"]) => `<div class="field"><label for="${p}-${i}-${f}">${esc(label)}</label>
-      <input type="${type}" id="${p}-${i}-${f}" data-tk="${esc(k)}" data-ti="${i}" data-f="${f}" value="${esc(x[f] ?? "")}" spellcheck="false"${type === "number" ? ' min="1" max="1000" step="1"' : ""} aria-describedby="${help ? `${p}-${i}-${f}-d ` : ""}${p}-st"${dis()}>${help ? `<small id="${p}-${i}-${f}-d">${help}</small>` : ""}</div>`).join("")}
-  </div>`).join("") + `<button type="button" class="ibtn" data-tadd="${esc(k)}"${dis()}>+ Add a ${t.one}</button>`;
+      <input type="${type}" id="${p}-${i}-${f}" data-tk="${esc(k)}" data-ti="${i}" data-f="${f}" value="${esc(x[f] ?? "")}" spellcheck="false"${type === "number" ? ' min="1" max="1000" step="1"' : ""} aria-describedby="${help ? `${p}-${i}-${f}-d ` : ""}${p}-st"${bad}${dis()}>${help ? `<small id="${p}-${i}-${f}-d">${help}</small>` : ""}</div>`).join("")}
+  </div>`; }).join("") + `<button type="button" class="ibtn" data-tadd="${esc(k)}"${dis()}>+ Add a ${t.one}</button>`;
 }
 function jobCard(j, i) {
   const f = (k, label, help = "", type = "text") => `<div class="field"><label for="c-j${i}-${k}">${esc(label)}</label>
-    <input type="${type}" id="c-j${i}-${k}" data-cj="${i}" data-f="${k}" value="${esc(j[k] ?? "")}" spellcheck="false"${type === "number" ? ' min="1" max="8760" step="1"' : ""} aria-describedby="${help ? `c-j${i}-${k}-d ` : ""}c-backup-jobs-st"${dis()}>${help ? `<small id="c-j${i}-${k}-d">${help}</small>` : ""}</div>`;
-  return `<div class="jobcard" data-job="${i}" role="group" aria-labelledby="c-j${i}-h"><div class="gh"><h4 id="c-j${i}-h">${esc(j.label || "New backup job")}</h4>
-      <button type="button" class="ibtn danger" data-jdel="${i}" aria-label="Remove the backup job ${esc(j.label || "")}"${dis()}>Remove</button></div>
+    <input type="${type}" id="c-j${i}-${k}" data-cj="${i}" data-f="${k}" value="${esc(j[k] ?? "")}" spellcheck="false"${type === "number" ? ' min="1" max="8760" step="1"' : ""} aria-describedby="${help ? `c-j${i}-${k}-d ` : ""}c-backup-jobs-st"${refused("backup.jobs") ? ' aria-invalid="true"' : ""}${dis()}>${help ? `<small id="c-j${i}-${k}-d">${help}</small>` : ""}</div>`;
+  const name = j.label || `Backup job ${i + 1} (no name)`;
+  return `<div class="jobcard" data-job="${i}" role="group" aria-labelledby="c-j${i}-h"><div class="gh"><h4 id="c-j${i}-h">${esc(name)}</h4>
+      <button type="button" class="ibtn danger" data-jdel="${i}" aria-label="Remove the backup job ${esc(name)}"${dis()}>Remove</button></div>
     ${f("label", "Name")}
     ${f("regex", "The log line that marks it done", "Text the line contains, like <code>snapshot done</code>.")}
     <details class="adv" data-did="job${i}"><summary>Show the job's name, size or time from that line</summary>
@@ -791,7 +806,7 @@ document.addEventListener("input", e => {
     else j[f] = t.value.trim();
     Object.keys(j).forEach(k => (j[k] === "" || j[k] === false || (Array.isArray(j[k]) && !j[k].length)) && delete j[k]);
     cset("backup.jobs", jobs);
-    if (f === "label") t.closest(".jobcard").querySelector(".gh h4").textContent = j.label || "New backup job";
+    if (f === "label") t.closest(".jobcard").querySelector(".gh h4").textContent = j.label || `Backup job ${+t.dataset.cj + 1} (no name)`;
   } else if (t.dataset.tk) {
     const k = t.dataset.tk, list = structuredClone(clist(k)), x = list[+t.dataset.ti], f = t.dataset.f;
     if (!TABLES[k] || !x || typeof x !== "object") return;
@@ -802,7 +817,7 @@ document.addEventListener("input", e => {
     } else x[f] = t.value.trim();
     Object.keys(x).forEach(kk => x[kk] === "" && delete x[kk]);
     cset(k, list);
-    if (f === "label") t.closest(".jobcard").querySelector(".gh h4").textContent = x.label || TABLES[k].fresh;
+    if (f === "label") t.closest(".jobcard").querySelector(".gh h4").textContent = x.label || `${TABLES[k].one[0].toUpperCase()}${TABLES[k].one.slice(1)} ${+t.dataset.ti + 1} (no name)`;
   } else if (t.dataset.mlabel) {
     const l0 = cget("mount_labels", {}), l = {...(l0 && typeof l0 === "object" && !Array.isArray(l0) ? l0 : {})};
     if (t.value.trim()) l[t.dataset.mlabel] = t.value.trim(); else delete l[t.dataset.mlabel];
@@ -968,13 +983,20 @@ $("save").onclick = async () => {
   const cch = collectorChanged() ? CKEYS.filter(cchanged) : [], keepC = JSON.stringify(C), keepFP = {...FP};
   $("msg").textContent = cch.length ? "Saving… (and handing the collector its settings)" : "Saving…";
   const form = document.querySelector(".set-main");   // nothing can be edited until the answer is in (it may take seconds)
+  const unlock = () => { form.inert = false; form.removeAttribute("aria-busy"); };
   form.inert = true; form.setAttribute("aria-busy", "true");
   try {
+    const incomplete = incompleteTables();
+    if (incomplete) { unlock(); setDirty(true); incomplete.focus(); return setMsg('<span class="crit-t">✗ Not saved: a card is missing its line or pattern (marked).</span>'); }
+    if (cch.length) {   // a save of ours the collector took after the last check: the fingerprints it shows now
+      try { V.collector = (await api("/api/settings")).collector; collectorRefresh(false); } catch (e) { /* send what we have */ }
+    }
     // empty "not in NPM" rows aren't sent; S keeps them, so the rows on the page still match S if the save is refused
     V = await post("/api/settings", {settings: {...S, services: S.services.filter(x => x.name || x.url)}, secrets: SEC,
                                      ...(cch.length ? {collector: collectorChanges()} : {})});
     render();
     if (V.collector_warning) {   // the dashboard's part is saved; the collector's isn't: keep those edits on the page
+      unlock();
       C = JSON.parse(keepC); FP = keepFP; renderCollector(); setDirty(true);
       showErr(V.collector_warning, csection(cch[0]), "Saved, except the collector's settings");
       return setMsg('<span class="warn-t">● Saved, except the collector\'s settings: see the message at the top.</span>');
@@ -983,13 +1005,14 @@ $("save").onclick = async () => {
     setMsg(V.demo_not_saved ? '<span class="ok-t">✓ Looks valid! (Demo: nothing is really saved, so the next visitor sees the original.)</span>'
       : `<span class="ok-t">✓ Saved.</span> ${cch.length ? "Dashboard settings apply right away." + note : "The dashboard uses the new settings right away."}`);
   } catch (e) {
+    unlock();
     setDirty(true);
     // a collector setting's message names it: open its section
     const key = e.section === "collector" && CKEYS.find(k => e.message.includes(clabel(k)));
     showErr(e.message, e.section === "collector" ? (key ? csection(key) : "drives") : e.section);
     setMsg('<span class="crit-t">✗ Not saved: see the message at the top.</span>');
   } finally {
-    form.inert = false; form.removeAttribute("aria-busy");
+    unlock();
   }
 };
 function bubbles() {   // the dashboard's rule: this browser's 🫧 choice, else the saved default ("auto" = the device's)
