@@ -145,11 +145,31 @@ def parse_npm_conf(path):
         "upstream": f"{scheme.group(1) if scheme else 'http'}://{server.group(1)}:{port.group(1)}",
         # behind an SSO proxy: its auth_request block, or the include snippet Authelia's NPM guide uses
         "auth": bool(re.search(r"auth_request\s+/(authelia|authentik|outpost)|include\s+\S*(authelia|authentik)\S*\s*;", txt)),
-        "login": bool(re.search(r'auth_request\s|include\s+\S*(authelia|authentik)\S*\s*;|auth_basic\s+"', txt)),   # any sign-in
+        "login": has_login(txt),   # any sign-in in front of / (for the Setup check)
     }
 
 
-_npm = {"sig": None, "hosts": [], "conf": []}   # last host list (+ every parsed .conf, hidden ones too) + the folder state
+def has_login(txt):
+    """Does this proxy host put a sign-in in front of / ? Comments don't count, "off" doesn't count, and a directive
+    counts only at server level or inside `location /` (not in location /admin). An include counts only if it's an
+    auth-request snippet (Authelia's NPM guide: authelia-authrequest.conf; its authelia-location.conf only defines the
+    endpoint). An NPM access list counts when it asks for a user and password (auth_basic)."""
+    txt = re.sub(r"#[^\n]*", "", txt)
+    stack = []
+    for m in re.finditer(r"([^{};]*)([{};])", txt):
+        head, sep = " ".join(m.group(1).split()), m.group(2)
+        if sep == "{":
+            stack.append(head)
+        elif sep == "}":
+            stack = stack[:-1]
+        elif not any(b.startswith("location") and not re.fullmatch(r"location (=\s*|\^~\s*)?/", b) for b in stack):
+            if (re.fullmatch(r"auth_request (?!off$)\S+", head) or re.fullmatch(r"auth_basic (?!off$).+", head)
+                    or re.fullmatch(r"include \S*auth[-_]?request\S*", head)):
+                return True
+    return False
+
+
+_npm = {"sig": None, "hosts": [], "conf": [], "n_npm": 0}   # last host list (+ every parsed .conf, hidden ones too) + the folder state
 
 
 def read_npm_hosts():
@@ -162,11 +182,12 @@ def read_npm_hosts():
     if sig != _npm["sig"]:
         conf = [h for h in (parse_npm_conf(os.path.join(NPM_DIR, n)) for n, _ in sig) if h]
         hosts = [h for h in conf if h["name"] not in SKIP_HOSTS]
+        n_npm = len(hosts)
         for s in EXTRA_SERVICES:
             if s.get("name") and s.get("url") and s["name"] not in SKIP_HOSTS:
                 hosts.append({"name": s["name"], "upstream": s["url"].rstrip("/"), "auth": bool(s.get("auth"))})
         hosts.sort(key=lambda h: (h["name"].split(".", 1)[-1], h["name"]))   # group by domain, then name
-        _npm.update(sig=sig, hosts=hosts, conf=conf)
+        _npm.update(sig=sig, hosts=hosts, conf=conf, n_npm=n_npm)
     return _npm["hosts"]
 
 
@@ -227,6 +248,9 @@ _lock = threading.Lock()    # guards _cache and _key_locks
 _key_locks = {}             # key -> lock held while that key is being recomputed
 
 
+_answered = {}   # integration API path -> (did the last fetch work, when): the Setup check says if one stopped answering
+
+
 def cached(key, ttl, fn):
     """fn(), reused for ttl seconds. When several requests miss at the same moment (the wall display plus a
     phone, say), only the first one runs fn; the others wait for it and share its result instead of each
@@ -245,7 +269,14 @@ def cached(key, ttl, fn):
             hit = fresh()           # someone else refreshed it while we waited
         if hit:
             return hit[1]
-        val = fn()
+        try:
+            val = fn()
+        except Exception:
+            if key in FEATURE:
+                _answered[key] = (False, time.time())
+            raise
+        if key in FEATURE:
+            _answered[key] = (True, time.time())
         with _lock:
             _cache[key] = (time.monotonic(), val)
         return val
@@ -740,14 +771,15 @@ DOCS = "https://github.com/CoreXI7/homelab-dash/blob/main/docs/SETTINGS.md"
 
 
 def setup_checks(host=None):
-    """The settings page's Setup checklist: [{id, state, title, detail, steps: [{text, code}], link, doc, optional}].
+    """The settings page's Setup checklist: [{id, state, title, detail, why, steps: [{text, code}], link, doc, optional,
+    compose}]. compose = its fix edits docker-compose.yml (the page then says once: run docker compose up -d).
     state: ok | problem (needs fixing) | warn (works, but worth fixing) | todo (optional, not set up).
     Facts and fixes only: no secrets, no file contents. "%ORIGIN%" in a code line = the page's own address.
     host = the Host the page was opened with (to find the dashboard's own proxy host and its sign-in)."""
     out = []
 
-    def add(id, state, title, detail, steps=(), link="", doc="", optional=False):
-        out.append({"id": id, "state": state, "title": title, "detail": detail,
+    def add(id, state, title, detail, steps=(), link="", doc="", optional=False, why="", compose=False):
+        out.append({"id": id, "state": state, "title": title, "detail": detail, "why": why, "compose": compose,
                     "steps": [{"text": t, "code": c} for t, c in steps], "link": link, "doc": doc, "optional": optional})
 
     if DEMO:
@@ -761,20 +793,23 @@ def setup_checks(host=None):
         return out
 
     shown = read_npm_hosts()             # also fills _npm["conf"] (every proxy host, hidden ones too)
-    up = ("Then, in the same folder:", "docker compose up -d")
-    find_proxy = ("Find your reverse proxy's container name (for Nginx Proxy Manager, the one running its image):",
+    find_proxy = ("Find your reverse proxy's container name (for Nginx Proxy Manager, the one running jc21/nginx-proxy-manager):",
                   "docker ps --format '{{.Names}}  {{.Image}}'")
     if not TRUSTED_PROXY:
         add("proxy", "problem", "Anyone who can reach the dashboard can change it",
             "TRUSTED_PROXY is empty, so anything that can reach port 8000 can open this page and change settings without "
             "going through your sign-in. That's only fine if you run it on your LAN only, on purpose.",
-            [find_proxy, ("In docker-compose.yml, change the TRUSTED_PROXY line to that name:", "TRUSTED_PROXY: <your proxy's container name>"), up])
+            [find_proxy, ("In docker-compose.yml, change the TRUSTED_PROXY line to that name:", "TRUSTED_PROXY: <your proxy's container name>")],
+            compose=True)
     elif not proxy_ips():
         add("proxy", "problem", "The trusted proxy can't be found",
-            f"TRUSTED_PROXY is {TRUSTED_PROXY!r}, but that name doesn't resolve, so every connection except from this "
-            "machine is refused. Is the name right, and do both containers share a Docker network?",
-            [find_proxy, ("Put both on the same network if they aren't (the network the dashboard is on, in docker-compose.yml):",
-                          "docker network connect <network> <your proxy's container name>"), up])
+            f"TRUSTED_PROXY is {TRUSTED_PROXY!r}, but that name doesn't resolve, so every connection is refused (except the "
+            "container's own health check). Either the name is wrong, or the two containers don't share a Docker network.",
+            [find_proxy, ("If the name is different, change the TRUSTED_PROXY line in docker-compose.yml to it.", ""),
+             ("If they don't share a network, connect the proxy to the dashboard's network (its name is under networks in "
+              "docker-compose.yml). The dashboard looks the name up again within a minute; add that network to the "
+              "proxy's own compose file too, or it's lost when the proxy is recreated.",
+              "docker network connect <network> <your proxy's container name>")], compose=True)
     else:
         add("proxy", "ok", "Only your reverse proxy can connect", f"Connections are accepted only from {TRUSTED_PROXY}.")
 
@@ -788,17 +823,22 @@ def setup_checks(host=None):
             "The dashboard has no login of its own, so anyone who can reach that address sees it and can change these settings. "
             "(Using another kind of sign-in? Then this check can't see it.)",
             [("In Nginx Proxy Manager, open that proxy host and add your sign-in: your SSO's snippet under Advanced "
-              "(Authelia and Authentik both have an NPM guide), or an Access List.", "")])
+              "(Authelia and Authentik both have an NPM guide), or an Access List with a username and password.", "")])
+    elif TRUSTED_PROXY and name:
+        add("sso", "todo", "Couldn't check the sign-in",
+            f"{name[:100]} isn't one of Nginx Proxy Manager's proxy hosts here, so this page can't see what's in front of it. "
+            "The dashboard has no login of its own: make sure your sign-in (SSO) is in front of it.", optional=True)
 
     if ALLOWED_ORIGINS:
         add("origin", "ok", "Changes only come from your dashboard's address", ", ".join(sorted(ALLOWED_ORIGINS)))
     else:
         add("origin", "warn", "Set the dashboard's address",
-            "Without ORIGIN, a change (a save, an approval, adding a known IP) is accepted from any page on the same address "
-            "as the request. That already stops ordinary cross-site tricks; your exact address also stops DNS-rebinding "
-            "tricks and http/https mix-ups.",
+            "Tell the dashboard its own address, so it only accepts changes made there.",
             [("In docker-compose.yml, change the ORIGIN line to the address you normally open the dashboard at "
-              "(several: separate them with spaces). This page is open at:", "ORIGIN: %ORIGIN%"), up])
+              "(several: separate them with spaces). This page is open at:", "ORIGIN: %ORIGIN%")],
+            why="Without ORIGIN, a change (a save, an approval, adding a known IP) is accepted from any page on the same "
+                "address as the request. That already stops ordinary cross-site tricks; your exact address also stops "
+                "DNS-rebinding tricks and http/https mix-ups.", compose=True)
 
     if not cfgstore.UI_ENABLED:
         add("saving", "ok", "The settings page is read-only",
@@ -813,48 +853,52 @@ def setup_checks(host=None):
             [("On the host, in the folder with docker-compose.yml, then click Check again (no restart needed):", "sudo chown -R 1000:1000 ./data")])
 
     npm_ok = os.path.isdir(NPM_DIR) and os.access(NPM_DIR, os.R_OK | os.X_OK)
-    extra = sum(1 for h in shown if h["name"] in {x["name"] for x in EXTRA_SERVICES})
-    from_npm, in_npm = len(shown) - extra, len(_npm["conf"]) if npm_ok else 0
+    from_npm = _npm["n_npm"] if npm_ok else 0            # counted as read_npm_hosts() builds the list (not by name)
+    extra, in_npm = len(shown) - from_npm, len(_npm["conf"]) if npm_ok else 0
+    hidden = in_npm - from_npm
     by_hand = [] if not cfgstore.UI_ENABLED else [("No NPM? Add your services by hand in Services → Services not in NPM.", "")]
-    if from_npm or extra:
+    if from_npm or extra or hidden:
         add("services", "ok", "Services found",
-            (f"{from_npm} from Nginx Proxy Manager" if npm_ok else "Nginx Proxy Manager isn't connected")
+            (f"{from_npm} from Nginx Proxy Manager" + (f" ({hidden} hidden)" if hidden else "")
+             if npm_ok else "Nginx Proxy Manager isn't connected")
             + (f", {extra} added by hand." if extra else "."), link="#services")
-    elif in_npm:
-        add("services", "ok", "Services found", f"{in_npm} from Nginx Proxy Manager, all hidden (Services shows them again).", link="#services")
     elif npm_ok:
         add("services", "warn", "No services yet",
             f"The Nginx Proxy Manager folder is mounted ({NPM_DIR}), but it holds no proxy hosts. If NPM does have proxy hosts, the path "
             "on the left of the /npm line in docker-compose.yml is wrong (Docker quietly creates an empty folder there).",
-            [("On the host, check that folder holds NPM's 1.conf, 2.conf…:", "ls <the path left of :/npm>/*.conf"),
-             ("Fix the path in docker-compose.yml.", ""), up] + by_hand, link="#services")
+            [("On the host, check that NPM's folder holds its 1.conf, 2.conf… (your path, as on the left of the /npm line):",
+              "ls /path/to/npm/data/nginx/proxy_host/"),
+             ("Fix the path in docker-compose.yml.", "")]
+            + ([("No NPM? Delete the /npm line (Docker made that empty folder), and add your services by hand in "
+                 "Services → Services not in NPM.", "")] if by_hand else []), link="#services", compose=True)
     else:
         add("services", "problem", "No services yet",
             f"Services are read from Nginx Proxy Manager's proxy_host folder, which isn't mounted at {NPM_DIR}.",
             [("Using Nginx Proxy Manager? In docker-compose.yml, set the left side of the /npm line to the proxy_host folder "
-              "inside NPM's data folder (the one that holds 1.conf, 2.conf…):", f"- /path/to/npm/data/nginx/proxy_host:{NPM_DIR}:ro"), up]
+              "inside NPM's data folder (the one that holds 1.conf, 2.conf…):", f"- /path/to/npm/data/nginx/proxy_host:{NPM_DIR}:ro")]
             + ([("No NPM? Delete that line, and add your services by hand in Services → Services not in NPM.", "")] if by_hand else []),
-            link="#services")
+            link="#services", compose=True)
 
     hw = read_hw()
     install = [("On the host, in the folder you cloned (the one with docker-compose.yml). It needs Python 3.11+ and systemd, "
                 "and it runs as root, so this one step needs sudo:", "sudo bash collector/install.sh"),
                ("Keep these two lines under volumes in docker-compose.yml (the example has them; if you add them, run "
                 "docker compose up -d):", "- /var/lib/homelab-dash:/hw:ro\n- /var/lib/homelab-dash/req:/req"),
-               ("Then choose what it checks (drives, fail2ban, Authelia, backups) in its config file, and restart it:",
-                "sudo nano /etc/homelab-dash/collector.toml\nsudo systemctl restart homelab-dash-collector")]
+               ("Then choose what it checks (drives, fail2ban, Authelia, backups) in its config file:",
+                "sudo nano /etc/homelab-dash/collector.toml"),
+               ("And restart it:", "sudo systemctl restart homelab-dash-collector")]
     if hw is None and not os.path.exists(HW_FILE):
         add("collector", "todo", "Drives, GPU and security need the collector",
             "Drives and disk health, the GPU, the CPU and memory breakdown, package power and the Security & backups panels "
             "come from a small helper on the host (CPU and board temperatures work without it). It isn't installed, or its "
-            "folder isn't mounted.", install, optional=True)
+            "folder isn't mounted.", install, optional=True, compose=True)
     elif hw is None:
         add("collector", "problem", "The collector's file can't be read",
             f"{HW_FILE} is there, but the dashboard can't read it" + ("." if os.access(HW_FILE, os.R_OK) else
             f" (it runs as uid {os.getuid()}). The collector makes the file readable by dash_uid from its config, which "
             "must match the user: line in docker-compose.yml (1000 by default)."),
-            [("Check dash_uid, then restart the collector:",
-              "sudo grep dash_uid /etc/homelab-dash/collector.toml\nsudo systemctl restart homelab-dash-collector")])
+            [("Check dash_uid:", "sudo grep dash_uid /etc/homelab-dash/collector.toml"),
+             ("Then restart the collector:", "sudo systemctl restart homelab-dash-collector")])
     else:
         age = time.time() - num(hw.get("updated"), 0)
         sd_age = time.time() - (_mtime(SEC_DETAIL_FILE) or 0) / 1e9
@@ -866,14 +910,22 @@ def setup_checks(host=None):
         elif sd_age >= 600:
             add("collector", "warn", "Security details aren't being updated",
                 f"The collector is running (updated {_ago(age)} ago), but the Security & backups detail views get no new data.",
-                [("Update the collector (the install command also updates it), or check that details isn't set to false in "
-                  "/etc/homelab-dash/collector.toml:", "sudo bash collector/install.sh")])
+                [("Update the collector: on the host, in the folder you cloned (the one with docker-compose.yml), run the "
+                  "install command again (it also updates). Or check that details isn't set to false in "
+                  "/etc/homelab-dash/collector.toml.", "sudo bash collector/install.sh")])
         else:
             add("collector", "ok", "Hardware & security collector",
                 f"Connected: updated {_ago(age)} ago; security details {_ago(sd_age)} ago.")
 
     on = {"Torrents": QBIT["on"], "Requests": SEERR["on"], "Now playing": TAUTULLI["on"]}
-    if any(on.values()):
+    paths = {"Torrents": "/api/qbit", "Requests": "/api/requests", "Now playing": "/api/plex"}
+    failing = [k for k, v in on.items() if v and not _answered.get(paths[k], (True, 0))[0]
+               and time.time() - _answered[paths[k]][1] < 900]
+    if failing:
+        add("integrations", "warn", "An integration isn't answering",
+            f"Not answering: {', '.join(failing)} (on its last try). Test in Integrations says why: usually an address the "
+            "dashboard's container can't reach, or a wrong key.", link="#integrations")
+    elif any(on.values()):
         add("integrations", "ok", "Integrations",
             "Set up: " + ", ".join(k for k, v in on.items() if v)
             + (". Not set up: " + ", ".join(k for k, v in on.items() if not v) if not all(on.values()) else "")
@@ -903,6 +955,13 @@ def test_integration(name):
     i = {"qbittorrent": QBIT, "seerr": SEERR, "tautulli": TAUTULLI}.get(name)
     if not i:
         raise cfgstore.Invalid("unknown integration")
+    r = _test_integration(name, i)
+    if i["on"]:
+        _answered[{"qbittorrent": "/api/qbit", "seerr": "/api/requests", "tautulli": "/api/plex"}[name]] = (r["ok"], time.time())
+    return r
+
+
+def _test_integration(name, i):
     if not i["on"]:
         return {"ok": False, "detail": "not configured: needs a URL and its key(s)"}
     try:
@@ -1305,8 +1364,9 @@ if __name__ == "__main__":
     print(f"homelab-dash listening on {', '.join(f'{s.server_address[0]}:{port}' for s in servers)}"
           + (" (DEMO mode, fake data)" if DEMO else "") + f" · data folder {cfgstore.DATA_DIR}", flush=True)
     if TRUSTED_PROXY and not proxy_ips():
-        print(f"WARNING: TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve: every connection will be refused. Set it to your reverse "
-              "proxy's container name (docker ps) and put both containers on the same Docker network.", flush=True)
+        print(f"WARNING: TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve yet, so connections are refused (it's looked up "
+              "again every minute; normal for a moment after a reboot if the proxy starts later). If it stays: set it to your "
+              "reverse proxy's container name (docker ps) and put both containers on the same Docker network.", flush=True)
     for s in servers[1:]:
         threading.Thread(target=s.serve_forever, daemon=True).start()
     servers[0].serve_forever()

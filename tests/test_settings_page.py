@@ -164,13 +164,25 @@ class Setup(unittest.TestCase):
                                                  "services": [{"name": "nas.lan", "url": "http://10.0.0.5:5000"}]}, {}), app.STORE)
         app.apply_settings()
         item = {i["id"]: i for i in app.setup_checks()}["services"]
-        self.assertEqual(item["detail"], "2 from Nginx Proxy Manager, 1 added by hand.")
+        self.assertEqual(item["detail"], "2 from Nginx Proxy Manager (1 hidden), 1 added by hand.")
         app.cfgstore.save(app.cfgstore.validate({**app.ED, "skip_hosts": ["a.example.com", "b.example.com", "c.example.com"],
                                                  "services": []}, {}), app.STORE)
         app.apply_settings()
         item = {i["id"]: i for i in app.setup_checks()}["services"]
         self.assertEqual(item["state"], "ok")
-        self.assertIn("all hidden", item["detail"])
+        self.assertEqual(item["detail"], "0 from Nginx Proxy Manager (3 hidden).")
+        # a hand-added service with the same name as an NPM host is still counted as hand-added, once
+        app.cfgstore.save(app.cfgstore.validate({**app.ED, "skip_hosts": ["c.example.com"],
+                                                 "services": [{"name": "a.example.com", "url": "http://10.0.0.5"}]}, {}), app.STORE)
+        app.apply_settings()
+        item = {i["id"]: i for i in app.setup_checks()}["services"]
+        self.assertEqual(item["detail"], "2 from Nginx Proxy Manager (1 hidden), 1 added by hand.", "counted once, as hand-added")
+
+    def test_npm_names_with_underscores_and_wildcards_can_be_grouped(self):
+        app = load_app()
+        v = app.cfgstore.validate({"groups": [{"name": "g", "hosts": ["my_app.example.com", "*.example.com"]}],
+                                   "skip_hosts": ["*.example.com"]}, {})
+        self.assertEqual(v["groups"][0]["hosts"], ["my_app.example.com", "*.example.com"])
 
     def test_sign_in(self):
         """The dashboard has no login of its own: its proxy host must have one."""
@@ -178,13 +190,40 @@ class Setup(unittest.TestCase):
         npm_conf(app.NPM_DIR, "dash.example.com")
         sso = lambda host: {i["id"]: i for i in app.setup_checks(host)}.get("sso", {}).get("state")
         self.assertEqual(sso("dash.example.com"), "warn")
-        self.assertIsNone(sso("203.0.113.5:8000"), "opened directly: no proxy host to check")
+        self.assertEqual(sso("203.0.113.5:8000"), "todo", "opened directly: it says it couldn't check")
         npm_conf(app.NPM_DIR, "dash.example.com", "  location / {\n    include /snippets/authelia-authrequest.conf;\n  }\n")
         self.assertEqual(sso("dash.example.com:443"), "ok", "Authelia's NPM include snippet counts")
         npm_conf(app.NPM_DIR, "dash.example.com", '  auth_basic "Authorization required";\n')
         self.assertEqual(sso("DASH.example.com"), "ok", "an NPM access list counts too")
         npm_conf(app.NPM_DIR, "dash.example.com", "  auth_request /authelia;\n")
         self.assertEqual(sso("dash.example.com"), "ok")
+        self.assertEqual(sso("other.example.com"), "todo", "not one of NPM's hosts: say it couldn't check")
+
+    def test_sign_in_detection_isnt_fooled(self):
+        """A commented-out or switched-off sign-in, one only on another path, or Authelia's endpoint snippet alone
+        (it defines /internal/authelia but asks nothing) is no sign-in in front of the dashboard."""
+        app = load_app()
+        L = app.has_login
+        self.assertTrue(L("server {\n  auth_request /authelia;\n  location = /authelia { internal; }\n  location / { proxy_pass x; }\n}"))
+        self.assertTrue(L("server { location / { include /snippets/authelia-authrequest.conf; } }"))
+        self.assertTrue(L('server { location / { auth_basic "Authorization required"; auth_basic_user_file /data/access/1; } }'))
+        self.assertTrue(L("server { location ^~ / { auth_request /outpost.goauthentik.io/auth/nginx; } }"))
+        self.assertFalse(L("server {\n  # auth_request /authelia;\n  location / { }\n}"))
+        self.assertFalse(L("server { auth_request off; }"))
+        self.assertFalse(L('server { auth_basic off; }'))
+        self.assertFalse(L("server { location /admin { auth_request /authelia; } location / { } }"))
+        self.assertFalse(L("server { include /snippets/authelia-location.conf; location / { } }"))
+
+    def test_integration_that_stopped_answering(self):
+        app = load_app(QBIT_URL="http://127.0.0.1:9", QBIT_USER="u", QBIT_PASS="p")
+        st = {i["id"]: i for i in app.setup_checks()}
+        self.assertEqual(st["integrations"]["state"], "ok", "set up, never tried yet")
+        app._answered["/api/qbit"] = (False, time.time())
+        st = {i["id"]: i for i in app.setup_checks()}
+        self.assertEqual(st["integrations"]["state"], "warn")
+        self.assertIn("Torrents", st["integrations"]["detail"])
+        app._answered["/api/qbit"] = (False, time.time() - 3600)
+        self.assertEqual({i["id"]: i for i in app.setup_checks()}["integrations"]["state"], "ok", "an old failure is forgotten")
 
     def test_test_button_explains(self):
         """Test says what a failed connection usually means instead of a Python error."""
