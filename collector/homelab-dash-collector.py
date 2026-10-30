@@ -7,11 +7,17 @@ container can't (or shouldn't) see itself: host network rate, GPU, drive usage, 
 container counts, and optional security/backup checks. It never listens on the network.
 SMART uses `-n standby` so sleeping drives are never woken.
 
-Config: /etc/homelab-dash/collector.toml (see collector.example.toml). Every key is optional.
+Config: /etc/homelab-dash/collector.toml (see collector.example.toml). Every key is optional. The dash's settings page
+can change some of them too (see "settings from the dash's settings page" below): what can only change what's shown is
+applied by itself; paths, patterns and container names wait for `sudo homelab-dash-collector --apply`.
 """
 import base64
 import collections
+import contextlib
+import copy
 import datetime
+import fcntl
+import fnmatch
 import glob
 import hashlib
 import ipaddress
@@ -24,21 +30,36 @@ import signal
 import sqlite3
 import stat
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 import tomllib
 
 CONFIG_FILE = os.environ.get("HOMELAB_DASH_COLLECTOR_CONFIG", "/etc/homelab-dash/collector.toml")
-try:
-    with open(CONFIG_FILE, "rb") as f:
-        CFG = tomllib.load(f)
-except FileNotFoundError:
-    CFG = {}
+PAGE_TOML = os.path.join(os.path.dirname(CONFIG_FILE), "collector.page.toml")   # approved on the host with --apply
 
-OUT_DIR = CFG.get("out_dir", "/var/lib/homelab-dash")
+
+def read_toml(path, root_only=False):
+    """A TOML config file ({} if missing). root_only: when running as root, only trusted if root owns it and nobody
+    else can write it (it's written by --apply; a stray copy someone else can edit must not steer root)."""
+    try:
+        with open(path, "rb") as f:
+            st = os.fstat(f.fileno())
+            if root_only and os.geteuid() == 0 and (st.st_uid != 0 or st.st_mode & 0o022 or not stat.S_ISREG(st.st_mode)):
+                raise PermissionError(1, "not a regular file owned by root and writable only by root")
+            return tomllib.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+FILE_CFG = read_toml(CONFIG_FILE)   # what you wrote; CFG = the settings in effect (see apply_config())
+CFG = FILE_CFG
+
+OUT_DIR = FILE_CFG.get("out_dir", "/var/lib/homelab-dash")
 OUT = os.path.join(OUT_DIR, "hw.json")
 DETAIL = os.path.join(OUT_DIR, "sec-detail.json")   # the Security & backups detail views (bigger, read on demand)
-DASH_UID = int(CFG.get("dash_uid", 1000))         # the dash container's user/group: owns the request folder, can read hw.json
+DASH_UID = int(FILE_CFG.get("dash_uid", 1000))    # the dash container's user/group: owns the request folder, can read hw.json
 SEC = CFG.get("security", {})
 BAK = CFG.get("backup", {})
 REQ_DIR = os.path.join(OUT_DIR, "req")                          # dash drops approval requests here
@@ -61,7 +82,9 @@ def have(cmd):
 def default_iface():
     """The interface that carries the default route (e.g. eth0, enp3s0, br0)."""
     try:
-        for line in open("/proc/net/route").read().splitlines()[1:]:
+        with open("/proc/net/route") as f:
+            routes = f.read().splitlines()[1:]
+        for line in routes:
             f = line.split()
             if f[1] == "00000000":
                 return f[0]
@@ -80,7 +103,8 @@ def mounts():
     pats = CFG.get("mounts") or ["/", "/mnt/*", "/media/*/*", "/srv/*"]
     out = []
     for p in pats:
-        hits = sorted(glob.glob(p), key=lambda s: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)])
+        hits = [p] if os.path.lexists(p) else glob.glob(p)   # an existing path counts as it is ([ ] * ? in a name too)
+        hits = sorted(hits, key=lambda s: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)])
         out += [h for h in hits if h not in out]
     return out
 
@@ -402,8 +426,8 @@ def cron_state():
 def handle_cron_approval():
     """Approve only if the requested hash equals the current state (the dash can't approve anything else)."""
     os.makedirs(REQ_DIR, exist_ok=True)
-    os.chown(REQ_DIR, DASH_UID, DASH_UID)
-    os.chmod(REQ_DIR, 0o700)
+    os.chown(REQ_DIR, 0 if os.geteuid() == 0 else -1, DASH_UID)   # root's (so root can remove requests without
+    os.chmod(REQ_DIR, 0o770)                                     # overriding permissions), the dash's group writes
     if not os.path.lexists(REQ_FILE):
         return False
     try:   # the dash can write here: never follow a link it planted or wait on a FIFO (that would stop the main loop)
@@ -576,7 +600,7 @@ def security():
     if locked:
         locks = []
         for f in locked:
-            attrs = run(["lsattr", f]).split()
+            attrs = run(["lsattr", "-d", f]).split()
             locks.append({"file": os.path.basename(f), "locked": bool(attrs) and "i" in attrs[0], "exists": os.path.exists(f)})
         s["locks"] = locks
     if SEC.get("firewall", True):
@@ -596,10 +620,7 @@ def backups():
     if not log and not arts:
         return None
     b = {"log": [], "last_run": None, "ok": None, "artifacts": []}
-    try:
-        lines = open(log).read().splitlines() if log else []
-    except OSError:
-        lines = []
+    lines = tail_lines(log, 4_000_000, "backup.log") if log else []   # never a FIFO, never a whole huge file
     if lines:
         last_day = lines[-1][:10]
         run_lines = [l for l in lines if l.startswith(last_day)] if re.fullmatch(r"\d{4}-\d\d-\d\d", last_day) else lines[-30:]
@@ -616,7 +637,7 @@ def backups():
             b["ok"] = False
     max_age = float(BAK.get("max_age_hours", 26)) * 3600
     for a in arts:
-        files = [f for f in glob.glob(a.get("glob", "")) if os.path.isfile(f)]
+        files = [f for f in glob.glob(a.get("glob", "")) if os.path.isfile(f) and page_path("backup.artifacts", f)]
         if not files:
             b["artifacts"].append({"label": a.get("label", "files"), "count": 0, "fresh": False})
             continue
@@ -680,12 +701,12 @@ def no_symlink(path):
     return bool(path) and os.path.realpath(path) == os.path.abspath(path)
 
 
-def read_regular(path, limit):
-    """A file's bytes, read without following a symlink at its name or blocking on a FIFO, and only if it's a regular
-    file of at most limit bytes (for files in folders a container can write to)."""
+def read_regular(path, limit, no_links=False):
+    """A file's bytes, read without following a symlink at its name (no_links: anywhere on the way) or blocking on a
+    FIFO, and only if it's a regular file of at most limit bytes (for files in folders a container can write to)."""
     name = os.path.basename(path)
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = open_no_links(path) if no_links else os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as e:
         raise CheckFailed(f"can't open {name}: {e.strerror}")
     try:
@@ -706,10 +727,37 @@ def read_regular(path, limit):
         os.close(fd)
 
 
-def tail_lines(path, max_bytes=2_000_000):
-    """The last max_bytes of a log file as lines (some logs can be grown at will by anyone who can reach the box)."""
+def open_no_links(path, flags=os.O_RDONLY | os.O_NONBLOCK):
+    """Open path without following a link at any part of it: folder by folder, each opened with O_NOFOLLOW, so a
+    folder someone else can write to can't swap a link in halfway."""
+    parts = [x for x in path.split("/") if x]
+    if not path.startswith("/") or not parts:
+        raise OSError(22, "not an absolute file path")
+    fd = os.open("/", os.O_PATH | os.O_DIRECTORY)
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        for part in parts[:-1]:
+            nfd = os.open(part, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+        return os.open(parts[-1], flags | os.O_NOFOLLOW, dir_fd=fd)
+    finally:
+        os.close(fd)
+
+
+APPROVED_NOW = frozenset()   # the approval keys whose value came from the settings page (--apply), not collector.toml
+
+
+def page_path(key, path):
+    """False for a path the settings page set that goes through a link: the dash can write in some folders on the
+    host (its data folder), and a link planted there must never lead root elsewhere. Paths from collector.toml: True."""
+    return key not in APPROVED_NOW or no_symlink(path)
+
+
+def tail_lines(path, max_bytes=2_000_000, key=None):
+    """The last max_bytes of a log file as lines (some logs can be grown at will by anyone who can reach the box).
+    key = the setting it came from: when the settings page set it, no part of the path may be a link."""
+    try:
+        fd = open_no_links(path) if key in APPROVED_NOW else os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError:
         return []
     with os.fdopen(fd, "rb") as f:
@@ -783,7 +831,7 @@ def fail2ban_detail():
     events, found = [], {}
     log = SEC.get("fail2ban_log", "/var/log/fail2ban.log")
     since = time.time() - 7 * 86400
-    for line in tail_lines(log + ".1") + tail_lines(log):    # last week's file first, so events stay in time order
+    for line in (tail_lines(log + ".1", key="security.fail2ban_log") + tail_lines(log, key="security.fail2ban_log")) if log else []:   # last week's first
         e = F2B_EVENT.match(line)
         t = when(e[1]) if e else None
         ip = valid_ip(e[4]) if e else None
@@ -923,7 +971,7 @@ def authelia_detail():
     now = int(time.time())
     if not no_symlink(db):
         raise CheckFailed("authelia_db goes through a symlink")
-    data = bytearray(read_regular(db, 16 << 20))
+    data = bytearray(read_regular(db, 16 << 20, no_links="security.authelia_db" in APPROVED_NOW))
     if data[18:20] == b"\x02\x02":                        # a WAL-mode header can't be used in memory: read it as rollback mode
         data[18:20] = b"\x01\x01"                          # (sign-ins still in the -wal file show up after its next checkpoint)
     con = sqlite3.connect(":memory:")
@@ -1002,13 +1050,13 @@ def procs_detail():
     d = {"names": names, "found": found, "top": list(LAST_TOP) if fresh else [], "top_at": int(TOP_AT[0]) or None,
          "checked": int(time.time()), "watcher": None}
     w = SEC.get("watcher")
-    if isinstance(w, dict):
+    if isinstance(w, dict) and w:   # {} = off, like not set
         beat, alerts = w.get("heartbeat", ""), w.get("alerts", "")
         every = float(w.get("every_minutes", 5))
-        last = int(os.path.getmtime(beat)) if beat and os.path.exists(beat) else None
+        last = int(os.path.getmtime(beat)) if beat and os.path.exists(beat) and page_path("security.watcher", beat) else None
         hits, kinds = [], w.get("kinds", {}) if isinstance(w.get("kinds"), dict) else {}   # alert-line prefix -> label
         if alerts and os.path.isfile(alerts):
-            for line in tail_lines(alerts, 200_000)[-200:]:
+            for line in tail_lines(alerts, 200_000, "security.watcher")[-200:]:
                 kind = line.split(":", 1)[0]
                 hits.append({"kind": clip(kinds.get(kind, kind), 60), "detail": redact(clip(line.split(":", 1)[-1], 160))})
         d["watcher"] = {"label": clip(w.get("label", "watch script"), 60), "last_run": last, "every_minutes": every,
@@ -1135,7 +1183,7 @@ def backup_detail():
     jobs_cfg, log = BAK.get("jobs", []), BAK.get("log", "")
     if not jobs_cfg:
         return None
-    lines = (tail_lines(log + ".1", 4_000_000) + tail_lines(log, 4_000_000)) if log else []   # + last rotation's file
+    lines = (tail_lines(log + ".1", 4_000_000, "backup.log") + tail_lines(log, 4_000_000, "backup.log")) if log else []   # + last rotation's
     try:
         log_mtime = os.path.getmtime(log) if log else None
     except OSError:
@@ -1193,7 +1241,7 @@ def backup_detail():
             job["last_ok"] = None
         files, missing = [], []
         for g in j.get("files", []):
-            found = glob.glob(g)
+            found = [f for f in glob.glob(g) if page_path("backup.jobs", f)]
             if not found and not re.search(r"[*?\[]", g):  # a file named exactly (not a pattern) that isn't there
                 missing.append(clip(g, 200))
             for f in found:
@@ -1217,7 +1265,7 @@ def backup_detail():
             problems.append(f"{len(missing)} missing")
         job["missing"] = missing[:30]
         dest = j.get("dest", "")
-        if dest and os.path.isdir(dest):
+        if dest and os.path.isdir(dest) and page_path("backup.jobs", dest):
             st = os.statvfs(dest)
             job["dest"] = {"path": dest, "free": st.f_bavail * st.f_frsize, "total": st.f_blocks * st.f_frsize}
             if j.get("size"):
@@ -1274,6 +1322,1109 @@ def write_output(data, path=OUT):
     os.replace(tmp, path)
 
 
+# ---------- settings from the dash's settings page ----------
+# The dash writes what its settings page changed to req/collector-settings.json:
+#   {"v": 3, "id": "<random>", "changes": {"interval": {"from": "<fingerprint>", "to": 9}, ...}}
+# (from = the fingerprint of the value the page showed as in effect, "" if it wasn't set; see digest())
+# The dash runs in a container and must never steer root, so the COLLECTOR decides, key by key, and checks every value:
+#   SAFE      applied by itself: switches, bounded numbers, labels, and choices from what the collector detected itself
+#             (a real mount point, an existing network interface, a jail fail2ban lists, ...). These only change what is
+#             measured or shown, which a hijacked dash controls anyway.
+#   APPROVAL  paths, patterns and the watcher/backup tables: they make root read files or run regexes, so they wait for a
+#             person at the host: `sudo homelab-dash-collector --apply` shows the change and asks.
+# A request is handled once (by its hash), and a change only while the setting still has the value the page showed
+# (otherwise it was changed on the host meanwhile, and the page has to be reloaded first). Never from the page: out_dir,
+# dash_uid. Settings in effect = collector.toml, then what --apply wrote (collector.page.toml, root only), then the page's
+# safe values (page-state.json, root only). Both remember collector.toml's value they replaced: when that setting is
+# edited in collector.toml later, the edit wins (the last change wins, wherever it was made).
+PAGE_REQ = os.path.join(REQ_DIR, "collector-settings.json")
+PAGE_STATE_FILE = os.path.join(OUT_DIR, "page-state.json")
+PAGE_LAST_FILE = os.path.join(OUT_DIR, "page-last")      # the hash of the last request handled (tiny, written on its own)
+PAGE_LOCK = os.path.join(OUT_DIR, ".page.lock")
+PAGE_MAX = 256 * 1024
+STATE_MAX = 1024 * 1024
+MISSING = object()
+NO_READ = ("/proc", "/sys", "/dev", os.path.normpath(OUT_DIR))   # never a page path: kernel files, and req/ (the dash writes there)
+
+
+class PageInvalid(Exception):
+    pass
+
+
+def shown(v):
+    """Text for root's terminal: printable ASCII as it is, everything else escaped (\\u....), so nothing from the page
+    can move the cursor, repaint the screen, set the clipboard, hide itself or pass for other letters."""
+    return "".join(c if " " <= c <= "~" and c != "\\" else "\\\\" if c == "\\"
+                   else f"\\u{ord(c):04x}" if ord(c) <= 0xFFFF else f"\\U{ord(c):08x}" for c in str(v))
+
+
+def same(a, b):
+    """Equal values, kind for kind: True isn't 1, 26 is 26.0, not set is None."""
+    a, b = (None if x is MISSING else x for x in (a, b))
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a == b
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+    return type(a) is type(b) and a == b
+
+
+def _text(v, n, what):
+    if not isinstance(v, str) or len(v) > n or not v.isprintable():
+        raise PageInvalid(f"{what}: text too long or with control characters")
+    return v.strip()
+
+
+def _bool(what):
+    def check(v, det):
+        if not isinstance(v, bool):
+            raise PageInvalid(f"{what}: must be on or off")
+        return v
+    return check
+
+
+def _int(lo, hi, what):
+    def check(v, det):
+        if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+            raise PageInvalid(f"{what}: a whole number from {lo} to {hi}")
+        return v
+    return check
+
+
+def _num(lo, hi, what):
+    def check(v, det):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+            raise PageInvalid(f"{what}: a number from {lo} to {hi}")
+        return v
+    return check
+
+
+def _pick(kind, what, blank=True):
+    """One of the values the collector found itself (det[kind]), or "" (off)."""
+    def check(v, det):
+        if not isinstance(v, str) or not ((blank and v == "") or v in det.get(kind, [])):
+            raise PageInvalid(f"{what}: {str(v)[:60]!r} isn't one found on this machine")
+        return v
+    return check
+
+
+def _reaches(pattern, folder):
+    """Could this path or pattern name something in folder (or folder itself)? Compared part by part, so a wildcard
+    like /p*/self or /var/lib/*/req counts too."""
+    p, d = pattern.strip("/").split("/"), folder.strip("/").split("/")
+    return len(p) >= len(d) and all(fnmatch.fnmatchcase(dp, pp) for dp, pp in zip(d, p))
+
+
+def _path(v, what, glob_ok=False, blank=False):
+    """An absolute, normalized path (no '..', no '//', nothing unprintable), or "" (off) where blank allows it. Any
+    other path, since a person approves it, except kernel files and the collector's own folder (the dash writes in
+    its req/ folder: a link or a FIFO there must never become something root reads)."""
+    v = _text(v, 512, what)
+    if blank and v == "":
+        return v
+    if not v.startswith("/") or os.path.normpath(v) != v:
+        raise PageInvalid(f"{what}: {v[:80]!r} isn't a plain absolute path")
+    if not glob_ok and re.search(r"[*?\[]", v):
+        raise PageInvalid(f"{what}: {v[:80]!r}: no wildcards here")
+    if re.search(r"[*?\[]", v.split("/")[1]):
+        raise PageInvalid(f"{what}: {v[:80]!r}: wildcards only after the first folder")
+    if any(_reaches(v, d) for d in NO_READ):
+        raise PageInvalid(f"{what}: {v[:80]!r}: not in /proc, /sys, /dev or the collector's own folder")
+    return v
+
+
+def _regex(v, what):
+    v = _text(v, 300, what)
+    try:
+        re.compile(v)
+    except re.error as e:
+        raise PageInvalid(f"{what}: not a valid pattern ({e})")
+    return v
+
+
+def _list(v, n, what, item):
+    if not isinstance(v, list) or len(v) > n:
+        raise PageInvalid(f"{what}: a list of at most {n}")
+    return [item(x) for x in v]
+
+
+def _table(v, what, fields):
+    """{key: check(value)} for the keys given; unknown keys are refused (a typo shouldn't vanish quietly)."""
+    if not isinstance(v, dict):
+        raise PageInvalid(f"{what}: must be a table")
+    bad = sorted(set(v) - set(fields))
+    if bad:
+        raise PageInvalid(f"{what}: unknown {', '.join(map(repr, bad))[:80]}")
+    return {k: fields[k](x) for k, x in v.items()}
+
+
+def _unique(items, what):
+    """Each entry needs its own name: it's what the page and --apply show (two with one name couldn't be told apart)."""
+    names = [i.get("label", "") for i in items]
+    dup = next((n for n in names if names.count(n) > 1), None)
+    if dup is not None:
+        raise PageInvalid(f"{what}: two are called {dup[:60]!r}: give each its own name")
+    return items
+
+
+def _mount(m, det):
+    if not isinstance(m, str) or m not in det.get("mounts", []):
+        raise PageInvalid(f"mounts: {str(m)[:80]!r} isn't a mount point on this machine")
+    return m
+
+
+def _labels(v, det):
+    if not isinstance(v, dict) or len(v) > 64:
+        raise PageInvalid("mount labels: at most 64")
+    return {(k if k in det.get("named", []) else _mount(k, det)): _text(x, 40, f"label for {str(k)[:60]}") for k, x in v.items()}
+
+
+def _name(x):
+    if not isinstance(x, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", x):
+        raise PageInvalid(f"process names: {str(x)[:40]!r} isn't a process name")
+    return x
+
+
+def _kinds(x):
+    if not isinstance(x, dict) or len(x) > 30:
+        raise PageInvalid("alert kinds: a table of at most 30")
+    for k in x:
+        if not isinstance(k, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", k):
+            raise PageInvalid("alert kind: letters, digits, _ and - only")
+    return {k: _text(d, 80, f"label for alert kind {k}") for k, d in x.items()}
+
+
+def _watcher(v, det):
+    return _table(v, "watch script", {
+        "label": lambda x: _text(x, 80, "watch script name"),
+        "heartbeat": lambda x: _path(x, "watch script heartbeat file"),
+        "alerts": lambda x: _path(x, "watch script alerts file"),
+        "every_minutes": lambda x: _int(1, 1440, "watch script runs every (minutes)")(x, det),
+        "checks": lambda x: _list(x, 30, "watch script checks", lambda c: _text(c, 200, "watch script check")),
+        "kinds": _kinds,
+    })
+
+
+def _job(j, det):
+    return _table(j, "backup job", {
+        "label": lambda x: _text(x, 80, "backup job name"),
+        "regex": lambda x: _regex(x, "backup job 'done' line"),
+        "fail_regex": lambda x: _regex(x, "backup job 'failed' line"),
+        "min_count": lambda x: _int(1, 1000, "backup job lines needed")(x, det),
+        "files": lambda x: _list(x, 30, "backup job files", lambda f: _path(f, "backup job file", glob_ok=True)),
+        "dest": lambda x: _path(x, "backup job destination"),
+        "size": lambda x: _bool("measure the destination's size")(x, det),
+        "every": lambda x: _text(x, 160, "backup job schedule"),
+        "max_age_hours": lambda x: _num(1, 8760, "backup job overdue after (hours)")(x, det),
+        "remote": lambda x: _text(x, 200, "backup job note"),
+    })
+
+
+SAFE_KEYS = {
+    ("interval",): _int(2, 60, "update interval (s)"),
+    ("gpu",): _bool("GPU"),
+    ("usage",): _bool("CPU and memory breakdown"),
+    ("net_if",): _pick("ifaces", "network interface"),   # "" = the one with the default route
+    ("mounts",): lambda v, det: _list(v, 64, "mounts", lambda m: _mount(m, det)),   # [] = every drive it finds
+    ("mount_labels",): _labels,
+    ("security", "process_watch"): _bool("process watch"),
+    ("security", "cron_watch"): _bool("cron watch"),
+    ("security", "firewall"): _bool("firewall"),
+    ("security", "details"): _bool("detail views"),
+    ("security", "fail2ban_jail"): _pick("jails", "fail2ban jail"),
+    ("security", "ssh_unit"): _pick("ssh_units", "SSH service"),
+    ("security", "authelia_container"): _pick("authelia", "Authelia container"),
+    ("security", "bad_process_names"): lambda v, det: _list(v, 50, "process names", _name),
+    ("backup", "max_age_hours"): _num(1, 8760, "backups overdue after (hours)"),
+}
+APPROVAL_KEYS = {   # "" / [] / {} turn a setting off: that too waits for --apply (one rule, easy to explain)
+    ("security", "authelia_db"): lambda v, det: _path(v, "Authelia database", blank=True),
+    ("security", "fail2ban_log"): lambda v, det: _path(v, "fail2ban log", blank=True),
+    ("security", "immutable_files"): lambda v, det: _list(v, 100, "locked files", lambda f: _path(f, "locked file")),
+    ("security", "watcher"): _watcher,
+    ("backup", "log"): lambda v, det: _path(v, "backup log", blank=True),
+    ("backup", "success_regex"): lambda v, det: _regex(v, "backup 'ok' line"),
+    ("backup", "failure_regex"): lambda v, det: _regex(v, "backup 'failed' line"),
+    ("backup", "checks"): lambda v, det: _unique(_list(v, 30, "backup checks", lambda c: _table(c, "backup check", {
+        "label": lambda x: _text(x, 80, "backup check name"),
+        "regex": lambda x: _regex(x, "backup check pattern"),
+        "min_count": lambda x: _int(1, 1000, "backup check lines needed")(x, det)})), "backup checks"),
+    ("backup", "artifacts"): lambda v, det: _unique(_list(v, 30, "backup files", lambda a: _table(a, "backup file", {
+        "label": lambda x: _text(x, 80, "backup file name"),
+        "glob": lambda x: _path(x, "backup file pattern", glob_ok=True)})), "backup files"),
+    ("backup", "jobs"): lambda v, det: _unique(_list(v, 30, "backup jobs", lambda j: _job(j, det)), "backup jobs"),
+}
+PATHS = {".".join(p): p for p in (*SAFE_KEYS, *APPROVAL_KEYS)}   # "security.watcher" -> ("security", "watcher")
+LABELS = {   # what --apply calls them (the page uses the same words)
+    "security.authelia_db": "Authelia's database", "security.fail2ban_log": "fail2ban's log",
+    "security.immutable_files": "Files that must stay locked", "security.watcher": "Your own watch script",
+    "backup.log": "Your backup script's log", "backup.success_regex": "A line that means the run went fine",
+    "backup.failure_regex": "A line that means it failed", "backup.checks": "Backup checks",
+    "backup.artifacts": "Backup files", "backup.jobs": "Backup jobs",
+}
+
+
+def _get(d, path):
+    for k in path:
+        if not isinstance(d, dict) or k not in d:
+            return MISSING
+        d = d[k]
+    return d
+
+
+def _put(d, path, v):
+    for k in path[:-1]:
+        d = d.setdefault(k, {})
+    d[path[-1]] = v
+
+
+def layer(base, over, keys):
+    """A copy of base with over's values for these keys (and only these)."""
+    out = copy.deepcopy(base)
+    for path in keys:
+        v = _get(over, path)
+        if v is not MISSING:
+            _put(out, path, copy.deepcopy(v))
+    return out
+
+
+def _flat(d, keys):
+    return {".".join(p): _get(d, p) for p in keys if _get(d, p) is not MISSING}
+
+
+@contextlib.contextmanager
+def page_lock():
+    """The service and --apply both update page-state.json: one at a time."""
+    fd = os.open(PAGE_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def new_state():
+    return {"v": 2, "last": "", "safe": {}, "pending": {}, "superseded": {}, "rejected": [], "rejected_more": 0, "rejected_at": 0}
+
+
+def read_last():
+    try:
+        st = os.stat(PAGE_LAST_FILE)
+        if os.geteuid() == 0 and (st.st_uid != 0 or st.st_mode & 0o077):
+            return ""
+        h = read_regular(PAGE_LAST_FILE, 100).decode("ascii").strip()
+    except (CheckFailed, OSError, UnicodeDecodeError):
+        return ""
+    return h if re.fullmatch(r"[0-9a-f]{64}", h) else ""
+
+
+def read_state():
+    """What the page set so far (root-only files: ignored if anyone else could have written them). Every part is
+    checked for its shape, so a damaged file means "nothing from the page", never a crash."""
+    s = new_state()
+    s["last"] = read_last()
+    try:
+        raw = read_regular(PAGE_STATE_FILE, STATE_MAX)
+        st = os.stat(PAGE_STATE_FILE)
+        if os.geteuid() == 0 and (st.st_uid != 0 or st.st_mode & 0o077):
+            return s
+        d = json.loads(raw)
+    except (CheckFailed, OSError, ValueError, RecursionError):
+        return s
+    if not isinstance(d, dict) or d.get("v") != 2:
+        return s
+    safe, pend = d.get("safe"), d.get("pending")
+    s["safe"] = {k: o for k, o in (safe.items() if isinstance(safe, dict) else ())
+                 if k in PATHS and PATHS[k] in SAFE_KEYS and isinstance(o, dict) and "v" in o and set(o) <= {"v", "file"}}
+    s["pending"] = {k: o for k, o in (pend.items() if isinstance(pend, dict) else ())
+                    if k in PATHS and PATHS[k] in APPROVAL_KEYS and isinstance(o, dict) and set(o) == {"from", "to"}}
+    sup = d.get("superseded")
+    s["superseded"] = {k: v for k, v in (sup.items() if isinstance(sup, dict) else ())
+                       if k in PATHS and isinstance(v, str) and re.fullmatch(r"[0-9a-f]{16}", v)}
+    rej = d.get("rejected")
+    s["rejected"] = [[str(r[0])[:80], str(r[1])[:300]] for r in (rej if isinstance(rej, list) else [])
+                     if isinstance(r, list) and len(r) == 2][:20]
+    s["rejected_more"] = d["rejected_more"] if isinstance(d.get("rejected_more"), int) else 0
+    s["rejected_at"] = d["rejected_at"] if isinstance(d.get("rejected_at"), int) else 0
+    return s
+
+
+def write_root_only(path, text, mode=0o600):
+    """Atomically replace a root-owned file: a fresh temp file in the same folder, flushed to disk, then renamed."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix="." + os.path.basename(path) + ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def state_text(s):
+    return json.dumps({k: v for k, v in s.items() if k != "last"}, ensure_ascii=False, default=str)   # (a TOML date: text)
+
+
+def write_state(s, before=None):
+    """Save what changed: the state file only when its content did (a request that changes nothing costs one tiny
+    write), the last request's hash on its own. before = (state_text, last) as read."""
+    text = state_text(s)
+    if len(text.encode()) > STATE_MAX:
+        raise CheckFailed("the page's settings got too big to keep: nothing changed")
+    if before is None or text != before[0]:
+        write_root_only(PAGE_STATE_FILE, text)
+    if before is None or s["last"] != before[1]:
+        write_root_only(PAGE_LAST_FILE, s["last"])
+
+
+def read_page_toml():
+    """(values, against) from collector.page.toml (written by --apply, root only): every approval key in it, and
+    collector.toml's values they replaced. A file that can't be read is ignored and reported, never a crash (and
+    --apply --undo still works)."""
+    PAGE_TOML_ERR[0] = ""
+    try:
+        d = read_toml(PAGE_TOML, root_only=True)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError) as e:
+        why = e.strerror if isinstance(e, OSError) and e.strerror else type(e).__name__
+        PAGE_TOML_ERR[0] = f"{PAGE_TOML} can't be used ({why}): ignored. sudo homelab-dash-collector --apply --undo starts it over"
+        return {}, {}
+    against = d.get("_against") if isinstance(d.get("_against"), dict) else {}
+    return layer({}, d, APPROVAL_KEYS), {k: v for k, v in against.items() if k in PATHS}
+
+
+PAGE_TOML_ERR = [""]
+
+
+def digest(v):
+    """A short fingerprint of a setting's value: the page sends back the one it was shown (any value, any shape)."""
+    return hashlib.sha256(json.dumps(v, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()[:16]
+
+
+def approved_values(vals, against, state):
+    """The approved values that count: collector.toml must still have the value each replaced (a later edit there
+    wins), and one that lost that way stays out until --apply writes the file again (restoring an old collector.toml
+    mustn't bring it back unseen)."""
+    out = {}
+    for path in APPROVAL_KEYS:
+        k, v = ".".join(path), _get(vals, path)
+        if v is not MISSING and same(_get(FILE_CFG, path), against.get(k, MISSING)) and state["superseded"].get(k) != digest(v):
+            _put(out, path, v)
+    return out
+
+
+def read_approved(state=None):
+    vals, against = read_page_toml()
+    return approved_values(vals, against, read_state() if state is None else state)
+
+
+def effective(approved=None, state=None):
+    approved = read_approved() if approved is None else approved
+    state = read_state() if state is None else state
+    safe = {}
+    for k, o in state["safe"].items():
+        _put(safe, PATHS[k], o["v"])
+    return layer(layer(FILE_CFG, approved, APPROVAL_KEYS), safe, SAFE_KEYS)
+
+
+def apply_config(cfg, approved=None):
+    """Make cfg the settings in effect (every check looks these names up when it runs). approved = the values in it
+    that came from the settings page through --apply (their paths are read without following links)."""
+    global CFG, SEC, BAK, NET_IF, APPROVED_NOW
+    # the detail thread reads these while this runs: each is one assignment, and while the settings change hands, the
+    # paths from both the old and the new settings are read link-proof
+    new = frozenset(_flat(approved or {}, APPROVAL_KEYS))
+    APPROVED_NOW = APPROVED_NOW | new
+    CFG, SEC, BAK = cfg, cfg.get("security", {}), cfg.get("backup", {})
+    NET_IF = CFG.get("net_if") or default_iface()
+    APPROVED_NOW = new
+
+
+REAL_FS = {"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "jfs", "ntfs", "ntfs3", "fuseblk", "vfat", "exfat",
+           "nfs", "nfs4", "cifs", "smb3", "fuse.mergerfs", "fuse.sshfs", "bcachefs"}
+NOT_DATA = ("/proc", "/sys", "/dev", "/run", "/snap", "/boot", "/var/lib/docker", "/var/snap")
+
+
+SYSTEM_DIRS = ("/etc", "/usr", "/root", "/tmp", "/var/tmp", "/efi")   # never data drives (systemd's sandbox binds these)
+
+
+def real_mounts(mountinfo=None):
+    """Mount points of real file systems, the same inside the collector's sandbox as outside. It reads the host's own
+    table (PID 1's), where systemd's sandbox mounts don't exist; if that can't be read, its own, and then leaves out a
+    folder bound onto its own path over the same file system (mountinfo: root field = the mount point, same device as
+    the mount it sits on), which is how the sandbox shows its folders. System folders are never drives."""
+    if mountinfo is None:
+        try:
+            with open("/proc/1/mountinfo"):
+                pass
+            return real_mounts_from("/proc/1/mountinfo", binds=False)
+        except OSError:
+            mountinfo = "/proc/self/mountinfo"
+    return real_mounts_from(mountinfo, binds=True)
+
+
+def real_mounts_from(mountinfo, binds):
+    rows, skip = [], tuple(d + "/" for d in (*NOT_DATA, *SYSTEM_DIRS, os.path.normpath(OUT_DIR)))
+    unesc = lambda s: re.sub(r"\\([0-7]{3})", lambda x: chr(int(x.group(1), 8)), s)   # \040 = space
+    try:
+        with open(mountinfo) as f:
+            for line in f:
+                pre, _, post = line.partition(" - ")
+                p, q = pre.split(), post.split()
+                if len(p) >= 5 and q:
+                    rows.append((unesc(p[4]), unesc(p[3]), p[2], q[0]))   # mount point, root, major:minor, type
+    except OSError:
+        pass
+
+    def under(m):   # the device of the mount m sits on (the longest mount point above it)
+        above = [r for r in rows if r[0] != m and (m.startswith(r[0].rstrip("/") + "/"))]
+        return max(above, key=lambda r: len(r[0]))[2] if above else None
+
+    found = []
+    for m, root, dev, fstype in rows:
+        if fstype not in REAL_FS:
+            continue
+        if m == "/" or (not (m + "/").startswith(skip) and not (binds and root == m and under(m) == dev)):
+            found.append(m)
+    return sorted(dict.fromkeys(found))
+
+
+def detect():
+    """What this machine has: the page offers these as choices, and the page's safe choices are checked against them."""
+    det = {"mounts": real_mounts(), "ifaces": [], "jails": [], "ssh_units": [], "authelia": [], "authelia_db": {},
+           "gpu": have("nvidia-smi"), "firewall": "ufw" if have("ufw") else "firewalld" if have("firewall-cmd") else "",
+           "default_iface": default_iface()}
+    try:
+        det["ifaces"] = sorted(n for n in os.listdir("/sys/class/net")
+                               if n != "lo" and not n.startswith("veth") and not re.fullmatch(r"br-[0-9a-f]{12}", n))
+    except OSError:
+        pass
+    if have("fail2ban-client"):
+        m = re.search(r"Jail list:\s*(.*)", run(["fail2ban-client", "status"], timeout=10))
+        det["jails"] = sorted(j for j in (x.strip() for x in (m.group(1).split(",") if m else [])) if re.fullmatch(r"[\w.-]{1,64}", j))
+    units = run(["systemctl", "list-unit-files", "--no-legend", "ssh.service", "sshd.service"], timeout=10)
+    det["ssh_units"] = sorted(set(re.findall(r"^(sshd?)\.service", units, re.M)))
+    if have("docker"):
+        for line in run(["docker", "ps", "--format", "{{.Names}}\t{{.Image}}"], timeout=15).splitlines():
+            name, _, image = line.partition("\t")
+            repo = image.split("@")[0].rsplit(":", 1)[0] if ":" in image.split("/")[-1] else image.split("@")[0]
+            if repo.split("/")[-1] == "authelia" and re.fullmatch(r"[\w.-]{1,128}", name):
+                det["authelia"].append(name)
+                src = run(["docker", "inspect", "-f", '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}',
+                           name], timeout=15).strip()
+                db = os.path.join(src, "db.sqlite3")
+                if src.startswith("/") and os.path.isfile(db):
+                    det["authelia_db"][name] = db   # offered on the page; it still needs --apply (it's a path)
+    det["authelia"].sort()
+    return det
+
+
+_req_seen = {"sig": None, "err": ""}
+
+
+def take_request(state, det, cfg, force=False):
+    """Handle the page's request once (by its hash): each change only while the setting still has the value the page
+    showed; safe values apply now, the rest wait for --apply. Returns True if state changed."""
+    try:
+        st = os.lstat(PAGE_REQ)
+    except FileNotFoundError:
+        _req_seen.update(sig=None, err="")
+        return False
+    sig = (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    if sig == _req_seen["sig"] and not force:
+        return False
+    _req_seen.update(sig=sig, err="")
+    try:
+        raw = read_regular(PAGE_REQ, PAGE_MAX)
+    except CheckFailed as e:
+        _req_seen["err"] = f"the page's request: {e}"
+        return False
+    h = hashlib.sha256(raw).hexdigest()
+    if h == state["last"]:
+        return False
+    state["last"] = h
+    try:
+        req = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        req = None
+    changes = req.get("changes") if isinstance(req, dict) and req.get("v") == 3 else None
+    if not isinstance(changes, dict):
+        state["rejected"], state["rejected_more"] = [["request", "not a settings request this collector understands"]], 0
+        state["rejected_at"] = int(time.time())
+        return True   # what the page set before stays as it is
+    # drives it already shows stay allowed while unplugged (that's when their NOT MOUNTED alarm matters)
+    known = [m for m in (cfg.get("mounts") or []) if isinstance(m, str) and m.startswith("/")]
+    named = [m for m in (cfg.get("mount_labels") or {}) if isinstance(m, str)]   # a name can stay (or go) while unplugged
+    det = {**det, "mounts": list(dict.fromkeys(det.get("mounts", []) + known)), "named": named}
+    rejected = []
+    for k, ch in changes.items():
+        path = PATHS.get(k) if isinstance(k, str) else None
+        if path is None:
+            rejected.append([str(k)[:60], "not something the page can set"])
+            continue
+        if not isinstance(ch, dict) or ch.get("to") is None or not isinstance(ch.get("from"), str):
+            rejected.append([k, "no new value"])
+            continue
+        cur = _get(cfg, path)
+        shown_now = "" if cur is MISSING else digest(cur)
+        if same(ch["to"], cur):           # already in effect (taken before, or another tab made the same change)
+            if ch["from"] == shown_now:
+                state["pending"].pop(k, None)   # set back to what's in effect: a waiting change is cancelled
+            continue
+        if ch["from"] != shown_now:
+            rejected.append([k, "changed on the host after the page was opened: reload the page and change it again"])
+            continue
+        try:
+            v = (SAFE_KEYS.get(path) or APPROVAL_KEYS[path])(ch["to"], det)
+        except PageInvalid as e:
+            rejected.append([k, str(e)[:300]])
+            continue
+        except Exception as e:   # a check must never stop the collector
+            rejected.append([k, f"refused ({type(e).__name__})"])
+            continue
+        if path in SAFE_KEYS:
+            fv = _get(FILE_CFG, path)
+            if same(v, fv):
+                state["safe"].pop(k, None)   # collector.toml has it: no page value needed
+            else:
+                state["safe"][k] = {"v": v} if fv is MISSING else {"v": v, "file": fv}
+        else:
+            state["pending"][k] = {"from": None if cur is MISSING else cur, "to": v}
+    state["rejected"], state["rejected_more"] = rejected[:20], max(0, len(rejected) - 20)
+    state["rejected_at"] = int(time.time())
+    return True
+
+
+def tidy(state, approved, page_toml=None):
+    """Drop what no longer applies: a page value whose setting was edited in collector.toml since (the edit wins), and
+    a waiting change that's done or whose setting was changed on the host meanwhile. Approved values that lost to an
+    edit of collector.toml are remembered as such. Returns True if state changed."""
+    changed = False
+    vals, against = page_toml if page_toml is not None else read_page_toml()
+    for path in APPROVAL_KEYS:
+        k, v = ".".join(path), _get(vals, path)
+        if v is not MISSING and not same(_get(FILE_CFG, path), against.get(k, MISSING)) and state["superseded"].get(k) != digest(v):
+            state["superseded"][k] = digest(v)
+            changed = True
+    for k, o in list(state["safe"].items()):
+        if not same(_get(FILE_CFG, PATHS[k]), o.get("file", MISSING)):
+            del state["safe"][k]
+            changed = True
+    if state["rejected"] and time.time() - state["rejected_at"] > 86400:   # refusals are news for a day
+        state["rejected"], state["rejected_more"] = [], 0
+        changed = True
+    if approved is None:
+        return changed
+    now = layer(FILE_CFG, approved, APPROVAL_KEYS)
+    for k, p in list(state["pending"].items()):
+        cur = _get(now, PATHS[k])
+        if same(cur, p["to"]) or not same(cur, p["from"]):
+            if not same(cur, p["to"]) and len(state["rejected"]) < 20:
+                state["rejected"].append([k, "changed on the host before it was approved: change it again on the page"])
+                state["rejected_at"] = int(time.time())
+            del state["pending"][k]
+            changed = True
+    return changed
+
+
+PAGE_STATE = {"state": None}   # what hw.json reports to the page (see page_round)
+
+
+def page_round(det):
+    """Take the page's request (when it changed), drop what no longer applies, put the settings in effect, and report
+    them to the page. det = the latest detection (None until the first one is in: the request waits)."""
+    st = {"v": 3, "detected": det or {}, "error": ""}
+    with page_lock():   # (collector.page.toml too: --apply may be writing it)
+        page_toml = read_page_toml()
+        state = read_state()
+        before = (state_text(state), state["last"])
+        try:
+            changed = tidy(state, None, page_toml)
+            approved = approved_values(*page_toml, state)
+            changed = (take_request(state, det, effective(approved, state)) if det is not None else False) or changed
+            changed = tidy(state, approved, page_toml) or changed
+            if changed:
+                write_state(state, before)
+        except CheckFailed as e:
+            st["error"] = str(e)
+    approved = approved_values(*page_toml, state)
+    cfg = effective(approved, state)
+    apply_config(cfg, approved)
+    st["error"] = st["error"] or _req_seen["err"] or PAGE_TOML_ERR[0]
+    st["settings"] = {**_flat(cfg, SAFE_KEYS), **_flat(cfg, APPROVAL_KEYS)}   # what's in effect, for the page
+    st["fp"] = {k: digest(v) for k, v in st["settings"].items()}           # the page sends back the one it showed
+    st["from_page"] = sorted(state["safe"]) + sorted(_flat(approved, APPROVAL_KEYS))
+    st["pending"] = sorted(state["pending"])
+    sizes = {k: len(json.dumps(p["to"], ensure_ascii=False)) for k, p in state["pending"].items()}
+    st["pending_values"] = {k: p["to"] for k, p in state["pending"].items() if sizes[k] <= 16_384}   # a big one: the page
+                                                                                                      # just says it waits
+    st["rejected"], st["rejected_more"], st["last"] = state["rejected"], state["rejected_more"], state["last"]
+    st["sandbox"] = sandbox_level()
+    PAGE_STATE["state"] = st
+    return st
+
+
+SANDBOX_DROPIN = "/etc/systemd/system/homelab-dash-collector.service.d/10-sandbox.conf"
+
+
+def sandbox_level():
+    """Which sandbox level collector/sandbox.sh chose (from its drop-in), "none" if it found none, "" if never run."""
+    try:
+        with open(SANDBOX_DROPIN) as f:
+            m = re.search(r"this machine \(([\w-]{1,40})\)", f.readline())
+        return m.group(1) if m else "unknown"
+    except FileNotFoundError:
+        return "none" if os.path.exists(os.path.dirname(SANDBOX_DROPIN) + "/.sandbox-checked") else ""
+    except OSError:
+        return "unknown"
+
+
+# --- `homelab-dash-collector --apply`: a person at the host approves the page's paths and patterns ---
+
+def toml_str(v):
+    """A TOML basic string. Everything unprintable (control characters, escape sequences, bidi marks) is escaped."""
+    out = []
+    for c in v:
+        if c in '"\\':
+            out.append("\\" + c)
+        elif c.isprintable():
+            out.append(c)
+        else:
+            out.append(f"\\u{ord(c):04x}" if ord(c) <= 0xFFFF else f"\\U{ord(c):08x}")
+    return '"' + "".join(out) + '"'
+
+
+def toml_value(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        return repr(v) if v == v and abs(v) != float("inf") else ("nan" if v != v else "inf" if v > 0 else "-inf")
+    if isinstance(v, str):
+        return toml_str(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(toml_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"{toml_str(k)} = {toml_value(x)}" for k, x in v.items()) + " }"
+    raise TypeError(type(v).__name__)
+
+
+def tkey(k):
+    return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else toml_str(k)
+
+
+def toml_dumps(d, against=None):
+    """The approved settings as TOML (only the shapes the APPROVAL_KEYS allow), plus the collector.toml values they
+    were approved against."""
+    lines = []
+    for sec in ("security", "backup"):
+        t = d.get(sec) or {}
+        plain = {k: v for k, v in t.items() if not isinstance(v, dict) and not (isinstance(v, list) and v and isinstance(v[0], dict))}
+        if plain:
+            lines.append(f"[{sec}]")
+            lines += [f"{tkey(k)} = {toml_value(v)}" for k, v in plain.items()]
+            lines.append("")
+        for k, v in t.items():
+            if isinstance(v, dict):
+                lines.append(f"[{sec}.{tkey(k)}]")
+                lines += [f"{tkey(kk)} = {toml_value(vv)}" for kk, vv in v.items()]
+                lines.append("")
+            elif isinstance(v, list) and v and isinstance(v[0], dict):
+                for item in v:
+                    lines.append(f"[[{sec}.{tkey(k)}]]")
+                    lines += [f"{tkey(kk)} = {toml_value(vv)}" for kk, vv in item.items()]
+                    lines.append("")
+    if against:
+        lines.append("# collector.toml's values these replaced: when one of them is edited there, collector.toml wins again")
+        lines.append("[_against]")
+        lines += [f"{toml_str(k)} = {toml_value(v)}" for k, v in against.items()]
+    return "\n".join(lines) + "\n"
+
+
+def fmt(v):
+    return '"' + shown(v) + '"' if isinstance(v, str) else shown(toml_value(v)) if v is not None and v is not MISSING else "(not set)"
+
+
+def _items_key(old, new):
+    """How to pair up table entries: by name when every name is unique on both sides, else by position."""
+    labels = lambda xs: [x.get("label") if isinstance(x, dict) else None for x in xs]
+    lo, ln = labels(old), labels(new)
+    if None not in lo + ln and len(set(lo)) == len(lo) and len(set(ln)) == len(ln):
+        return lambda i, x: ("label", x["label"])
+    return lambda i, x: ("index", i)
+
+
+def diff_lines(old, new, indent="    "):
+    """Only what changes, marked: + added, - removed, ~ changed (old -> new), with unchanged entries counted, not
+    shown. Whole values, never cut; every string through shown()."""
+    old = None if old is MISSING else old
+    if isinstance(new, list) and (old is None or isinstance(old, list)):
+        old = old or []
+        if any(isinstance(x, dict) for x in old + new):
+            key = _items_key(old, new)
+            before = {key(i, x): x for i, x in enumerate(old)}
+            after = {key(i, x): x for i, x in enumerate(new)}
+            out, same_n = [], 0
+            for k, x in after.items():
+                name = shown(x.get("label", "(no name)")) if isinstance(x, dict) else fmt(x)
+                if k not in before:
+                    out.append(f"{indent}+ new entry: {name}")
+                    out += diff_lines(None, x, indent + "    ")
+                elif not same(before[k], x):
+                    out.append(f"{indent}~ {name}:")
+                    out += diff_lines(before[k], x, indent + "    ")
+                else:
+                    same_n += 1
+            for k, x in before.items():
+                if k not in after:
+                    out.append(f"{indent}- removed entry: {shown(x.get('label', '(no name)')) if isinstance(x, dict) else fmt(x)}")
+            return out + ([f"{indent}({same_n} unchanged)"] if same_n else [])
+        added = [x for x in new if not any(same(x, y) for y in old)]
+        removed = [x for x in old if not any(same(x, y) for y in new)]
+        kept = len(new) - len(added)
+        out = [f"{indent}+ {fmt(x)}" for x in added] + [f"{indent}- {fmt(x)}" for x in removed]
+        if not out and not same(old, new):
+            out = [f"{indent}~ same entries, new order"]
+        return out + ([f"{indent}({kept} unchanged)"] if kept and out else []) or [f"{indent}(no change)"]
+    if isinstance(new, dict) and (old is None or isinstance(old, dict)):
+        old = old or {}
+        out = []
+        for k in list(new) + [k for k in old if k not in new]:
+            a, b = old.get(k, MISSING), new.get(k, MISSING)
+            if same(a, b):
+                continue
+            if b is MISSING:
+                out.append(f"{indent}- {shown(k)}: {fmt(a)}" if not isinstance(a, (list, dict)) else f"{indent}- {shown(k)}")
+            elif isinstance(b, (list, dict)):
+                out.append(f"{indent}{'+' if a is MISSING else '~'} {shown(k)}:")
+                out += diff_lines(a, b, indent + "    ")
+            elif a is MISSING:
+                out.append(f"{indent}+ {shown(k)}: {fmt(b)}")
+            else:
+                out.append(f"{indent}~ {shown(k)}: {fmt(a)} -> {fmt(b)}")
+        return out or [f"{indent}(no change)"]
+    return [f"{indent}~ {fmt(old)} -> {fmt(new)}"]
+
+
+def summary(old, new):
+    """A few words on the size of a change, for the first line --apply prints."""
+    old = None if old is MISSING else old
+    if isinstance(new, list):
+        old = old if isinstance(old, list) else []
+        if any(isinstance(x, dict) for x in old + new):
+            key = _items_key(old, new)
+            before, after = {key(i, x): x for i, x in enumerate(old)}, {key(i, x): x for i, x in enumerate(new)}
+            add, rem = sum(k not in before for k in after), sum(k not in after for k in before)
+            chg = sum(k in before and not same(before[k], x) for k, x in after.items())
+            parts = [f"{add} new" if add else "", f"{chg} changed" if chg else "", f"{rem} removed" if rem else ""]
+        else:
+            add = sum(1 for x in new if not any(same(x, y) for y in old))
+            rem = sum(1 for x in old if not any(same(x, y) for y in new))
+            parts = [f"{add} added" if add else "", f"{rem} removed" if rem else ""]
+        return ", ".join(x for x in parts if x) or "new order"
+    return "changed" if old is not None else "set"
+
+
+def paths_in(k, v):
+    """The paths and patterns in an approval value (for the folder warnings)."""
+    if k in ("security.authelia_db", "security.fail2ban_log", "backup.log"):
+        return [v] if v else []
+    if k == "security.immutable_files":
+        return list(v)
+    if k == "security.watcher":
+        return [v[f] for f in ("heartbeat", "alerts") if v.get(f)]
+    if k == "backup.artifacts":
+        return [a["glob"] for a in v if a.get("glob")]
+    if k == "backup.jobs":
+        return [f for j in v for f in j.get("files", [])] + [j["dest"] for j in v if j.get("dest")]
+    return []
+
+
+def folder_warnings(p):
+    """Why a person might not want root reading p: a folder on the way the dash's user owns or anyone can write to
+    (they could swap what's there), or a link (it leads somewhere else; a path the page set is never read through one).
+    For a pattern: the folders up to the one it lists."""
+    out, parts = [], p.split("/")
+    magic = next((i for i, x in enumerate(parts) if re.search(r"[*?\[]", x)), None)
+    last = magic if magic is not None else len(parts) - 1      # folders up to (and including) the one holding it
+    user = ""
+    try:
+        user = f" ({pwd.getpwuid(DASH_UID).pw_name})"
+    except KeyError:
+        pass
+    for i in range(1, last + 1):
+        d = "/".join(parts[:i]) or "/"
+        try:
+            st = os.lstat(d)
+        except OSError:
+            break
+        if stat.S_ISLNK(st.st_mode):
+            out.append(f"{shown(d)} is a link to {shown(os.path.realpath(d))}: the settings page's paths are never read through one")
+            break
+        if st.st_uid == DASH_UID and st.st_uid != 0:
+            out.append(f"{shown(d)} belongs to uid {DASH_UID}{shown(user)}, the user the dashboard container runs as: "
+                       "anything that runs as that user can change what's in there")
+        elif st.st_mode & 0o002 and not st.st_mode & stat.S_ISVTX:
+            out.append(f"anyone can write in {shown(d)}")
+    if magic is None and os.path.islink(p):
+        out.append(f"{shown(p)} is a link to {shown(os.path.realpath(p))}: the settings page's paths are never read through one")
+    return out
+
+
+def _confirm(question):
+    return input(question).strip().lower() == "y"
+
+
+def cli_apply(undo=False):
+    """--apply: show what the settings page wants changed in paths and patterns, ask, then write collector.page.toml
+    and restart. --apply --undo: drop everything the page set (back to collector.toml only)."""
+    if os.geteuid() != 0:
+        sys.exit("Run it with sudo: sudo homelab-dash-collector --apply")
+    if not sys.stdin.isatty():
+        sys.exit("--apply asks before it changes anything, so it needs a terminal.")
+    if not os.path.isdir(OUT_DIR):
+        sys.exit(f"The collector hasn't run yet ({OUT_DIR} doesn't exist): start it first.")
+    if undo:
+        return cli_undo()
+    det = detect()
+    with page_lock():
+        page_toml = read_page_toml()
+        state = read_state()
+        before = (state_text(state), state["last"])
+        tidy(state, None, page_toml)
+        approved = approved_values(*page_toml, state)
+        take_request(state, det, effective(approved, state), force=True)
+        tidy(state, approved, page_toml)
+        write_state(state, before)
+    if _req_seen["err"]:
+        sys.exit(shown(_req_seen["err"]))
+    if PAGE_TOML_ERR[0]:
+        print(shown(PAGE_TOML_ERR[0]))
+    for k, why in state["rejected"][:10]:
+        print(f"refused (not applied): {shown(k)}: {shown(why)}")
+    more = len(state["rejected"]) - 10 + state["rejected_more"]
+    if more > 0:
+        print(f"... and {more} more refused")
+    now = layer(FILE_CFG, approved, APPROVAL_KEYS)
+    plan, refused = [], []
+    for k, p in sorted(state["pending"].items()):
+        try:
+            plan.append((k, APPROVAL_KEYS[PATHS[k]](p["to"], det)))   # checked again here, with today's rules
+        except PageInvalid as e:
+            print(f"refused (not applied): {shown(k)}: {shown(e)}")
+            refused.append([k, str(e)[:300]])
+    if refused:   # off the waiting list, and the page says why
+        with page_lock():
+            st = read_state()
+            for k, why in refused:
+                st["pending"].pop(k, None)
+            st["rejected"], st["rejected_at"] = (st["rejected"] + refused)[:20], int(time.time())
+            write_state(st)
+            state["pending"] = st["pending"]
+    if not plan:
+        print("Nothing from the settings page waits for your OK.")
+        return
+    print("\nThe settings page wants to change: " + ", ".join(f"{LABELS.get(k, k)} ({summary(_get(now, PATHS[k]), v)})" for k, v in plan))
+    print("Root will read these files and run these patterns. + added, - removed, ~ changed:\n")
+    for k, v in plan:
+        print(f"  {LABELS.get(k, k)} ({k})")
+        print("\n".join(diff_lines(_get(now, PATHS[k]), v)))
+        for w in dict.fromkeys(w for p in paths_in(k, v) for w in folder_warnings(p)):
+            print(f"    ! {w}")
+        print()
+    answer = input("Apply these? y = yes, N = not now, d = drop them from the waiting list [y/N/d] ").strip().lower()
+    if answer == "d":
+        with page_lock():
+            st = read_state()
+            for k, _ in plan:
+                st["pending"].pop(k, None)
+            write_state(st)
+        print("Dropped: they no longer wait (nothing else changed).")
+        return
+    if answer != "y":
+        print("Nothing changed.")
+        return
+    try:
+        approve(plan, state["pending"])
+    except CheckFailed as e:
+        sys.exit(f"{e} Nothing was applied.")
+    print(f"Saved {PAGE_TOML}.")
+    restart_service()
+
+
+def approve(plan, seen):
+    """Write the approved values into collector.page.toml (with collector.toml's values they replace) and take them
+    off the waiting list. seen = the waiting list the person was shown: if the page changed it meanwhile, nothing."""
+    with page_lock():
+        if read_state()["pending"] != seen:
+            raise CheckFailed("The settings page changed these while you were reading: run it again.")
+        vals, against = read_page_toml()
+        state = read_state()
+        keep = approved_values(vals, against, state)   # values that lost to an edit of collector.toml go for good
+        vals, against = keep, {k: v for k, v in against.items() if _get(keep, PATHS[k]) is not MISSING}
+        for k, v in plan:
+            path = PATHS[k]
+            fv = _get(FILE_CFG, path)
+            sub = vals
+            for part in path[:-1]:
+                sub = sub.setdefault(part, {})
+            if same(v, fv):
+                sub.pop(path[-1], None)   # collector.toml has it: no page value needed
+                against.pop(k, None)
+            else:
+                sub[path[-1]] = v
+                if fv is MISSING:
+                    against.pop(k, None)
+                else:
+                    against[k] = fv
+        try:
+            text = ("# Written by `homelab-dash-collector --apply` (settings approved from the dash's settings page).\n"
+                    "# It overrides collector.toml for these keys. Undo: sudo homelab-dash-collector --apply --undo\n\n"
+                    + toml_dumps(vals, against))
+            back = tomllib.loads(text)
+        except (TypeError, ValueError) as e:
+            raise CheckFailed(f"The approved settings can't be written as TOML ({type(e).__name__}).")
+        if not same(layer({}, back, APPROVAL_KEYS), layer({}, vals, APPROVAL_KEYS)) or not same(back.get("_against", {}), against):
+            raise CheckFailed("The approved settings don't survive a round trip through TOML.")
+        if os.path.exists(PAGE_TOML):
+            shutil.copy2(PAGE_TOML, f"{PAGE_TOML}.bak.{time.strftime('%Y-%m-%d-%H%M%S')}")
+        write_root_only(PAGE_TOML, text, 0o644)
+        for k, _ in plan:
+            state["pending"].pop(k, None)
+        state["superseded"] = {}
+        write_state(state)
+
+
+def cli_undo():
+    have_any = [p for p in (PAGE_TOML, PAGE_STATE_FILE, PAGE_LAST_FILE, PAGE_REQ) if os.path.lexists(p)]
+    if not have_any:
+        print("Nothing from the settings page is in use: the collector runs on collector.toml alone.")
+        return
+    print("This drops every collector setting made on the settings page (approved and automatic), so the collector")
+    print(f"runs on {CONFIG_FILE} alone again. The next time someone saves the collector's settings on the page, those")
+    print("changes apply again (switches by themselves, paths and patterns after --apply).")
+    if not _confirm("Go ahead? [y/N] "):
+        print("Nothing changed.")
+        return
+    try:
+        with page_lock():
+            problems, aside = undo_page_settings()
+        if aside:   # the old request folder: out of the dash's reach already, removed now (the lock isn't held)
+            try:
+                remove_tree(aside)
+            except Exception as e:
+                problems.append(f"{aside} (left there, root's folder: {e})")
+        for p in problems:
+            print(f"Couldn't remove {shown(p)}")
+    finally:
+        restart_service()
+
+
+def undo_page_settings():
+    """Drop everything the page set: collector.page.toml (a copy is kept), the page's state and its request. Each
+    file on its own, so one that can't be removed doesn't stop the rest. Returns (what couldn't be removed, a folder
+    the request was moved into, to remove afterwards)."""
+    problems = []
+    for f in (PAGE_STATE_FILE, PAGE_LAST_FILE):
+        try:
+            if os.path.lexists(f):
+                os.remove(f)
+        except Exception as e:
+            problems.append(f"{f}: {e}")
+    if os.path.lexists(PAGE_TOML):
+        stamp = time.strftime("%Y-%m-%d-%H%M%S")
+        try:
+            os.replace(PAGE_TOML, f"{PAGE_TOML}.bak.{stamp}")
+            print(f"Kept a copy: {PAGE_TOML}.bak.{stamp}")
+        except Exception as e:
+            problems.append(f"{PAGE_TOML}: {e}")
+    aside = None
+    try:
+        if os.path.lexists(PAGE_REQ):
+            if os.path.isdir(PAGE_REQ) and not os.path.islink(PAGE_REQ):
+                # out of the dash's reach (OUT_DIR is root's, and read-only for the dash); the caller removes it
+                aside = tempfile.mkdtemp(dir=OUT_DIR, prefix=".undo-")
+                os.replace(PAGE_REQ, os.path.join(aside, "request"))
+            else:
+                os.remove(PAGE_REQ)
+    except Exception as e:
+        problems.append(f"{PAGE_REQ}: {e}")
+    return problems, aside
+
+
+def remove_tree(top):
+    """Remove a folder tree without following links, recursion or long paths: each folder's subfolders are first moved
+    up next to it (so nothing is ever deep), then it's emptied and removed. A folder thousands of levels deep is fine."""
+    top_fd = os.open(top, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    n = 0
+    try:
+        for _ in range(2_000_000):   # something still filling it (an open folder handle) can't keep this going forever
+            with os.scandir(top_fd) as it:
+                entries = [(e.name, e.is_dir(follow_symlinks=False)) for e in it]
+            if not entries:
+                break
+            for name, is_dir in entries:
+                if not is_dir:
+                    os.unlink(name, dir_fd=top_fd)
+                    continue
+                fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=top_fd)
+                try:
+                    with os.scandir(fd) as it:
+                        kids = [(e.name, e.is_dir(follow_symlinks=False)) for e in it]
+                    for kid, kid_dir in kids:
+                        if kid_dir:
+                            n += 1
+                            os.rename(kid, f".moved-{n}", src_dir_fd=fd, dst_dir_fd=top_fd)
+                        else:
+                            os.unlink(kid, dir_fd=fd)
+                finally:
+                    os.close(fd)
+                os.rmdir(name, dir_fd=top_fd)
+        else:
+            raise OSError(16, "still being filled")
+    finally:
+        os.close(top_fd)
+    os.rmdir(top)
+
+
+def restart_service():
+    r = subprocess.run(["systemctl", "restart", "homelab-dash-collector"], capture_output=True, text=True)
+    print("Collector restarted." if r.returncode == 0 else f"Restart failed: {shown(r.stderr.strip()[:300])}")
+
+
+_approved = read_approved()
+apply_config(effective(_approved), _approved)   # what --apply and the page set, from the start
+
+
+_det = {"det": None, "busy": False}
+
+
+def detect_round():
+    try:
+        _det["det"] = detect()
+    except Exception as e:
+        print(f"detect: {type(e).__name__}: {e}", flush=True)
+    finally:
+        _det["busy"] = False
+
+
+def req_signature():
+    try:
+        st = os.lstat(PAGE_REQ)
+        return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    except OSError:
+        return None
+
+
 def main():
     """Every round (default 5 s): refresh whatever is due, then write hw.json.
     Slow or expensive checks run less often: GPU 10 s, containers 30 s, drives + security + backups 60 s, SMART 5 min."""
@@ -1291,12 +2442,28 @@ def main():
         return False
 
     try:
-        prev_net = (time.monotonic(), *net_bytes())
+        prev_net = (time.monotonic(), *net_bytes(), NET_IF)
     except OSError:
         prev_net = None
     prev_energy = (time.monotonic(), rapl_energy())
     power_limit = rapl_limit_w()
+    page_sig = None
     while True:
+        # what the machine has (for the settings page): every 5 min, in its own thread (fail2ban or docker can hang)
+        if not _det["busy"] and due("detect", 300):
+            _det["busy"] = True
+            try:
+                threading.Thread(target=detect_round, daemon=True).start()
+            except RuntimeError:
+                _det["busy"] = False
+        # the settings page's settings: once a minute, and right away when the page saved something
+        sig = req_signature()
+        if due("page", 60) or (sig != page_sig and due("page-request", 10)):   # a new request: at most every 10 s
+            page_sig = sig
+            try:
+                data["collector"] = page_round(_det["det"])
+            except Exception as e:
+                data["collector"] = {"v": 3, "error": f"page settings: {type(e).__name__}: {e}"[:300]}
         if due("disks", 60):
             data["disks"] = disks()
         if have("smartctl") and due("smart", 300):
@@ -1313,7 +2480,12 @@ def main():
                 data["backups"] = backups()
             except Exception as e:
                 data["backups"] = {"ok": None, "log": [f"collector error: {e}"], "artifacts": []}
-            if SEC.get("details", True) and not _detail["busy"]:   # in its own thread: hw.json never waits for it
+            if not SEC.get("details", True):          # switched off: say so, so the page doesn't show old details
+                try:
+                    write_output({"updated": int(time.time()), "off": True}, DETAIL)
+                except OSError:
+                    pass
+            elif not _detail["busy"]:                     # in its own thread: hw.json never waits for it
                 _detail["busy"] = True
                 try:
                     threading.Thread(target=detail_round, daemon=True).start()
@@ -1326,6 +2498,8 @@ def main():
                 data["usage"] = USAGE.sample() or data.get("usage")   # first round has no delta yet: keep the old one
             except Exception as e:
                 data["usage"] = {"error": str(e)}
+        else:
+            data.pop("usage", None)
 
         # a "Looks good" click on the dash: apply it now, so the cron box clears within one round
         try:
@@ -1335,14 +2509,14 @@ def main():
             pass
 
         # network rate = bytes since the previous round / seconds since then
-        try:
+        try:   # (after a change of interface, the first round has nothing to compare with)
             t, rx, tx = time.monotonic(), *net_bytes()
-            if prev_net:
+            if prev_net and prev_net[3] == NET_IF:
                 dt = t - prev_net[0]
                 data["net"] = {"if": NET_IF, "rx_bps": (rx - prev_net[1]) / dt, "tx_bps": (tx - prev_net[2]) / dt}
-            prev_net = (t, rx, tx)
-        except OSError:
-            pass
+            prev_net = (t, rx, tx, NET_IF)
+        except OSError:   # the interface is gone: no rate rather than an old one
+            data["net"], prev_net = None, None
 
         # CPU package power = energy since the previous round / seconds since then (the counter wraps now and then: skip)
         t, e = time.monotonic(), rapl_energy()
@@ -1355,5 +2529,106 @@ def main():
         time.sleep(int(CFG.get("interval", 5)))
 
 
+def write_probe():
+    """What main() writes, tried in a throwaway folder in out_dir (removed again): a folder root owns and the dash's
+    group can write to (like req/), a file made and removed in it, and output files written like hw.json and the
+    page's settings are."""
+    d = tempfile.mkdtemp(dir=OUT_DIR, prefix=".selftest-")
+    try:
+        write_output({"probe": True}, os.path.join(d, "probe.json"))   # while only root can get in
+        write_root_only(os.path.join(d, "state.json"), "{}")
+        if os.geteuid() == 0:
+            os.chown(d, 0, DASH_UID)
+        os.chmod(d, 0o770)
+        f = os.path.join(d, "request")
+        with open(f, "w") as fh:
+            fh.write("x")
+        os.remove(f)
+        return "ok"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def selftest():
+    """--selftest: every check once, then one line of JSON with what worked: facts only (read / error / off and
+    counts), never messages or health, so two runs on the same machine give the same line. The installer runs it under
+    the plain unit and under stricter sandboxes and keeps the strictest that gives the same line (a sandbox that blocks
+    something shows up here, not as a quietly empty tile later). Settings: collector.toml and what --apply approved
+    (never the page's automatic ones, which a hijacked dash could flip between runs). It writes nothing except a
+    throwaway folder in out_dir (removed again)."""
+    global save_approved, load_approved
+    approved = read_approved()
+    apply_config(layer(FILE_CFG, approved, APPROVAL_KEYS), approved)
+    _sizes["busy"] = True                                  # no du in the background
+    mem, real_load = {}, load_approved                     # the cron check's first-run baseline stays in memory
+    save_approved = lambda snap: mem.update(appr={"snap": snap, "approved_at": None})
+    load_approved = lambda: mem.get("appr") or real_load()
+    res = {}
+
+    def t(name, fn, summary=lambda v: "read"):
+        try:
+            res[name] = summary(fn())
+        except Exception:
+            res[name] = "error"
+
+    ds = []
+    t("disks", lambda: ds.extend(disks()) or ds, lambda v: f"{sum(1 for d in v if d.get('total'))} with sizes")
+    devs = sorted({d["dev"] for d in ds if d.get("dev")})
+    if have("smartctl"):
+        t("smart", lambda: [smart(x) for x in devs],
+          lambda v: f"{sum(1 for x in v if x.get('temp') is not None or x.get('standby'))}/{len(v)} read")
+    t("gpu", gpu, lambda v: "found" if v else "none")
+    if have("docker"):
+        t("containers", lambda: out(["docker", "ps", "-a", "-q"], timeout=15))
+    t("power", rapl_energy, lambda v: "read" if v is not None else "none")
+    t("net", net_bytes)
+    t("usage", lambda: (USAGE.sample(), time.sleep(1.2), USAGE.sample())[2], lambda v: "read" if v else "none")
+    sec = {}
+    t("security", lambda: sec.update(security()))
+    if "firewall" in sec:
+        res["security.firewall"] = sec["firewall"].get("status", "unknown")
+    if "f2b" in sec:
+        res["security.fail2ban"] = "read" if sec["f2b"].get("ok") else "error"
+    if "procs" in sec:
+        res["security.procs"] = "read" if sec["procs"].get("top") else "error"
+    if "locks" in sec:
+        res["security.locks"] = ",".join(str(x.get("locked")) for x in sec["locks"])
+    if SEC.get("authelia_container") and have("docker"):
+        t("security.authelia", lambda: out(["docker", "logs", "--since", "1m", SEC["authelia_container"]], timeout=30))
+    if SEC.get("cron_watch", True):
+        def crontabs():
+            names = ["/etc/crontab"] + sorted(glob.glob("/etc/cron.d/*")) + sorted(glob.glob("/var/spool/cron/crontabs/*"))
+            got = 0
+            for n in names:
+                try:
+                    with open(n, "rb") as f:
+                        f.read(1)
+                    got += 1
+                except OSError:
+                    pass
+            return f"{got}/{len(names)} read"
+        t("security.cron", crontabs, lambda v: v)
+    if BAK.get("log"):
+        t("backups.log", lambda: tail_lines(BAK["log"], 4096, "backup.log"), lambda v: "read" if v else "empty")
+    for a in BAK.get("artifacts", []):
+        t(f"backups.files.{clip(a.get('label', ''), 30)}", lambda a=a: [f for f in glob.glob(a.get("glob", "")) if page_path("backup.artifacts", f)],
+          lambda v: f"{len(v)} found")
+    for key, v in security_detail().items():
+        if key != "updated":
+            res[f"detail.{key}"] = "error" if isinstance(v, dict) and "error" in v else "off" if v is None else "read"
+    det = detect()
+    res["detect.mounts"] = " ".join(det["mounts"])
+    res["detect"] = " ".join(f"{k}={len(v)}" for k, v in det.items() if isinstance(v, (list, dict)) and k != "mounts")
+    t("write", write_probe, lambda v: v)
+    print(json.dumps(res, sort_keys=True))
+
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--selftest"]:
+        selftest()
+    elif sys.argv[1:] in (["--apply"], ["--apply", "--undo"]):
+        cli_apply(undo=len(sys.argv) > 2)
+    elif sys.argv[1:]:
+        sys.exit("usage: homelab-dash-collector [--apply [--undo] | --selftest]")
+    else:
+        main()
