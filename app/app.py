@@ -508,7 +508,7 @@ def cached(key, ttl, fn):
         hit = _cache.get(key)
         if hit and isinstance(hit[1], _Failed):
             if time.monotonic() - hit[0] < min(ttl, FAIL_FOR):
-                raise hit[1].error.with_traceback(None)   # (else each raise adds its request's frames: memory grows)
+                raise _Failed(*hit[1].args)       # a new one each time (a raise adds its request's frames to it)
             return None
         return hit if hit and time.monotonic() - hit[0] < ttl else None
 
@@ -528,7 +528,7 @@ def cached(key, ttl, fn):
             if key in FEATURE:
                 _answered[key] = (False, time.time())
             with _lock:
-                _cache[key] = (time.monotonic(), _Failed(e))
+                _cache[key] = (time.monotonic(), _Failed(error_text(e)))
             raise
         if key in FEATURE:
             _answered[key] = (True, time.time())
@@ -537,9 +537,15 @@ def cached(key, ttl, fn):
         return val
 
 
-class _Failed:
-    def __init__(self, error):
-        self.error = error
+class _Failed(Exception):
+    """A failure shared for FAIL_FOR seconds, kept as its 502 text only: the exception itself holds every frame it
+    went through, locals and all (a hostile upstream's parsed answer: ~50 MB each, enough to get the container
+    OOM-killed while a page polls)."""
+
+
+def error_text(e):
+    """What a 502 says about a failure."""
+    return str(e) if isinstance(e, _Failed) else scrub(f"{type(e).__name__}: {e}")
 
 
 FAIL_FOR = 10   # seconds a failure is shared with the requests that waited for it (and those right after)
@@ -1779,7 +1785,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.send(200, fn())
         except Exception as e:
-            self.send(502, {"error": scrub(f"{type(e).__name__}: {e}")})
+            self.send(502, {"error": error_text(e)})
 
     def allowed(self):
         ip = self.client_address[0]

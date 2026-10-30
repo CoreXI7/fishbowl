@@ -143,13 +143,13 @@ class CachedFailure(unittest.TestCase):
         def poll():
             try:
                 app.cached("/api/test-failing", 25, failing)
-            except TimeoutError as e:
-                out.append(str(e))
+            except Exception as e:
+                out.append(app.error_text(e))
         ts = [threading.Thread(target=poll) for _ in range(5)]
         t0 = time.monotonic()
         [t.start() for t in ts]
         [t.join(15) for t in ts]
-        self.assertEqual(len(out), 5, "every poll got the error")
+        self.assertEqual(out, ["TimeoutError: upstream too slow"] * 5, "every poll got the same error")
         self.assertEqual(len(calls), 1, "the failing fetch ran once")
         self.assertLess(time.monotonic() - t0, 3)
 
@@ -164,10 +164,36 @@ class CachedFailure(unittest.TestCase):
         for _ in range(50):
             try:
                 app.cached("/api/test-shared", 25, failing)
-            except TimeoutError as e:
+            except Exception as e:
                 errors.append(e)
         depth = lambda e: sum(1 for _ in __import__("traceback").walk_tb(e.__traceback__))
         self.assertLess(depth(errors[-1]), 10, "the traceback doesn't grow with every request")
+
+    def test_a_shared_failure_holds_nothing_of_the_failed_fetch(self):
+        # (the stored exception kept the failed fetch's frames and their locals: a hostile qBittorrent answer, parsed
+        # and refused, stayed in memory ~50 MB a time and the page's next poll parsed another; audit round 3)
+        import gc
+        import weakref
+        app = load_app()
+
+        class Answer:
+            pass
+        refs = []
+
+        def failing():
+            answer = Answer()
+            refs.append(weakref.ref(answer))
+            raise ValueError("unexpected answer")
+        try:
+            app.cached("/api/test-pinned", 25, failing)
+        except ValueError:
+            pass
+        gc.collect()
+        self.assertIsNone(refs[0](), "the parsed answer is freed")
+        with self.assertRaises(Exception) as again:
+            app.cached("/api/test-pinned", 25, failing)
+        self.assertEqual(app.error_text(again.exception), "ValueError: unexpected answer", "same 502 text as before")
+        self.assertEqual(len(refs), 1, "still shared")
 
 
 if __name__ == "__main__":
