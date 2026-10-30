@@ -31,7 +31,7 @@ proxy's SSO), but the reasoning applies to any install.
  /var/lib/homelab-dash/  hw.json, sec-detail.json (root:dash-group 0640)  ◄── homelab-dash-collector (root)
                                          req/ (owned by the dash uid)    ──► read by the collector each round
      collector reads: /proc, /sys, journald (sshd), `docker logs` (Authelia), Authelia's SQLite file (as bytes),
-                      fail2ban, ufw, crontabs, lsattr, smartctl, nvidia-smi, backup logs, `du` of backup folders
+                      fail2ban, ufw, crontabs, file attributes, smartctl, nvidia-smi, backup logs, `du` of backup folders
      collector never listens on the network and makes no outbound connections.
 
  public demo container: same code, DEMO=1, fake data, internal network shared only with the proxy, no secrets,
@@ -100,7 +100,8 @@ namespaces, SUID or realtime, and, at the strictest level, only the capabilities
 `CAP_CHOWN`, `CAP_FOWNER`, `CAP_SYS_RAWIO`, `CAP_NET_ADMIN`, `CAP_NET_RAW`), `MemoryDenyWriteExecute` and the
 `@system-service` syscall set (an unexpected call fails with EPERM instead of killing the collector). Commands: `journalctl`, `docker ps/logs`, `ps`, `top`, `fail2ban-client`, `ufw`, `lsattr`,
 `smartctl`, `nvidia-smi`, `findmnt`, `systemctl list-timers`, `du` (idle priority). Files: `/proc`, `/sys`, crontabs,
-`authorized_keys`, Authelia's database (as above), configured log files (tails). Every one of these is reached part
+`authorized_keys`, Authelia's database (as above), configured log files (tails), the attributes of the files you
+listed as immutable (an ioctl, not `lsattr`). Every one of these is reached part
 by part as a path only (`O_PATH`, which runs no driver code), checked to be a regular file, and only then opened (so
 a device node planted in a container's folder is never opened: `/dev/watchdog` would reset the host); a link is
 followed only where it sits in one of the system's own folders (`/`, `/usr`, `/var`, root's alone: `/var/run`, `/bin`),

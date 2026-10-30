@@ -32,6 +32,7 @@ import shutil
 import signal
 import sqlite3
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -705,8 +706,8 @@ def security():
     if locked:
         locks = []
         for f in locked:
-            attrs = run(["lsattr", "-d", f]).split()
-            locks.append({"file": os.path.basename(f), "locked": bool(attrs) and "i" in attrs[0], "exists": os.path.exists(f)})
+            attrs = file_flags(f) or ""
+            locks.append({"file": os.path.basename(f), "locked": "i" in attrs, "exists": os.path.exists(f)})
         s["locks"] = locks
     if SEC.get("firewall", True):
         if have("ufw"):
@@ -843,7 +844,7 @@ def _root_only(dir_fd):
     return st.st_uid == 0 and not st.st_mode & 0o022
 
 
-def _walk(path, strict=False):
+def _walk(path, strict=False, folder_ok=False):
     """An O_PATH descriptor of path if it's a regular file, reached without being steered: every part is opened as a
     path only (O_PATH runs no driver code: opening a device node a container planted would, e.g. /dev/watchdog resets
     the host) and checked first. A link is followed only where it sits in one of the system's own folders (LINK_FOLDERS,
@@ -873,7 +874,8 @@ def _walk(path, strict=False):
             fd, done = nfd, os.path.join(done, part)
             if parts and not stat.S_ISDIR(mode):
                 raise OSError(errno.ENOTDIR, "not a folder")
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        mode = os.fstat(fd).st_mode
+        if not (stat.S_ISREG(mode) or folder_ok and stat.S_ISDIR(mode)):
             raise NotRegular(errno.EINVAL, "not a regular file")
         out, fd = fd, None
         return out
@@ -894,6 +896,34 @@ def open_regular(path, strict=False):
         return os.open(f"/proc/self/fd/{pfd}", os.O_RDONLY | os.O_NONBLOCK)
     finally:
         os.close(pfd)
+
+
+FS_IOC_GETFLAGS = 0x80086601
+FLAG_LETTERS = (("s", 0x1), ("u", 0x2), ("S", 0x8), ("D", 0x10000), ("i", 0x10), ("a", 0x20), ("d", 0x40), ("A", 0x80),
+                ("c", 0x4), ("j", 0x4000), ("t", 0x8000), ("T", 0x20000), ("e", 0x80000), ("C", 0x800000))
+
+
+def file_flags(path):
+    """lsattr -d's letters for path ("----i--------e-", "i" = immutable), or None when it isn't a regular file or a
+    folder reached as _walk allows. Read with the ioctl on a checked descriptor: lsattr itself opened whatever was at
+    the path after its own type check, so a container could swap a device node in between (/dev/watchdog...)."""
+    try:
+        pfd = _walk(path, folder_ok=True)
+    except OSError:
+        return None
+    try:
+        fd = os.open(f"/proc/self/fd/{pfd}", os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    finally:
+        os.close(pfd)
+    try:
+        flags = struct.unpack("i", fcntl.ioctl(fd, FS_IOC_GETFLAGS, b"\0" * 8)[:4])[0]
+    except OSError:
+        return ""   # (a filesystem without attributes: nothing set)
+    finally:
+        os.close(fd)
+    return "".join(c if flags & bit else "-" for c, bit in FLAG_LETTERS)
 
 
 def regular_stat(path, strict=False):
@@ -1306,8 +1336,8 @@ def locks_detail():
     res = []
     for f in files:
         exists = os.path.lexists(f)
-        attrs = out(["lsattr", "-d", f]).split() if exists and not os.path.islink(f) else []   # -d: a folder's own flag
-        res.append({"path": f, "exists": exists, "locked": bool(attrs) and "i" in attrs[0], "attrs": attrs[0] if attrs else "",
+        attrs = (file_flags(f) or "") if exists and not os.path.islink(f) else ""   # (a folder's own flags, as lsattr -d)
+        res.append({"path": f, "exists": exists, "locked": "i" in attrs, "attrs": attrs,
                     "mtime": int(os.lstat(f).st_mtime) if exists else None, "symlink": os.path.islink(f)})
     return {"files": res, "checked": int(time.time())}
 

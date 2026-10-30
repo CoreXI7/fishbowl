@@ -258,6 +258,47 @@ class Robust(unittest.TestCase):
         os.chmod(open_dir, 0o777)
         self.assertTrue(self.col.unsafe_out_dir(open_dir))
 
+class Flags(unittest.TestCase):
+    """The immutable-file check ran lsattr, which opens whatever is at the path after its own type check: a root
+    container could swap a device node in between (/dev/watchdog resets the host; audit round 3). The flags are read
+    through the safe walk now, from a regular file or a folder only."""
+
+    def setUp(self):
+        self.col, self.tmp = load_collector()
+        self.opened, real = [], self.col.os.open
+
+        def spy(path, flags, *a, **k):
+            if not flags & getattr(os, "O_PATH", 0):
+                self.opened.append(path if isinstance(path, str) else repr(path))
+            return real(path, flags, *a, **k)
+        self.col.os.open = spy
+        self.addCleanup(lambda: setattr(self.col.os, "open", real))
+
+    def test_flags_of_a_file_and_a_folder(self):
+        f = os.path.join(self.tmp, "x.conf")
+        open(f, "w").close()
+        for path in (f, self.tmp):
+            self.assertIsInstance(self.col.file_flags(path), str)
+
+    def test_a_device_or_fifo_is_never_opened(self):
+        fifo = os.path.join(self.tmp, "fifo")
+        os.mkfifo(fifo)
+        for path in (fifo, "/dev/null"):
+            self.opened.clear()
+            self.assertIsNone(self.col.file_flags(path))
+            self.assertEqual([p for p in self.opened if path in p or p.startswith("/proc/self/fd/")], [])
+
+    def test_no_lsattr_is_run(self):
+        ran, real = [], self.col.subprocess.run
+        self.col.subprocess.run = lambda cmd, *a, **k: (ran.append(cmd), real(cmd, *a, **k))[1]
+        self.addCleanup(lambda: setattr(self.col.subprocess, "run", real))
+        f = os.path.join(self.tmp, "x.conf")
+        open(f, "w").close()
+        self.col.SEC["immutable_files"] = [f]
+        self.col.locks_detail()
+        self.col.security()
+        self.assertFalse([c for c in ran if c and c[0] == "lsattr"])
+
 
 if __name__ == "__main__":
     unittest.main()
