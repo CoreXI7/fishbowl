@@ -2341,10 +2341,8 @@ class Handler(BaseHTTPRequestHandler):
                     p["tries"] -= 1
                 return self.refuse_wait(wait)
             result = self.code_ok(s("code"), p["epoch"])
-            if result == "used":   # (refused, but no guess: no strike, nothing for the alarm)
-                with _pending_lock:
-                    p["tries"] -= 1
-                return self.send(401, {"error": CODE_USED, "field": "code"})
+            if result == "used":   # (refused, but no guess: nothing for the alarm; it still uses up a try of this step,
+                return self.send(401, {"error": CODE_USED, "field": "code"})   # or a seen code could be replayed endlessly)
             if result != "ok":
                 with _pending_lock:
                     p["wrong"] = p.get("wrong", 0) + (result == "wrong")   # (tries counts the right one too)

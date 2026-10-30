@@ -1729,6 +1729,24 @@ class Audit(Base):
         self.assertEqual(st, 200, d)
         self.assertEqual(d.get("notice", {}).get("code"), 1, "the abandoned step is shown")
 
+    def test_a_used_code_still_uses_up_a_try_of_its_step(self):
+        # (a code the owner had just used, replayed on one step, gave the step's try back: unlimited tries on that step,
+        # each still counted toward the lock with nothing recorded; audit round 3)
+        _, secret, _, _ = self.two_step()
+        used = self.auth.totp_code(secret, int(time.time() // 30))           # (used by two_step's confirm)
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        pre = cookie_of(self.login()[1], "fishbowl-pre")
+        out = [call(self.url + "/api/login/code", "POST", {"code": used}, cookie=pre)[2] for _ in range(7)]
+        self.assertTrue(any("sign in with your password again" in (d.get("error") or "") or d.get("restart") for d in out),
+                        "five tries, used codes included, then the step is over")
+
+    def test_a_deeply_nested_account_file_is_damaged_not_a_crash(self):
+        with open(self.auth.AUTH_FILE, "w") as f:
+            f.write("[" * 100_000 + "]" * 100_000)
+        self.app.ACCOUNT._sig = None
+        with self.assertRaises(self.auth.Broken):
+            self.app.ACCOUNT.get()
+
 
 if __name__ == "__main__":
     unittest.main()

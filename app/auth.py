@@ -386,7 +386,7 @@ class Account:
             return self._d
         try:
             d = json.loads(_read_private(self.path) or "")
-        except (OSError, ValueError, UnicodeDecodeError):
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
             raise Broken("auth.json can't be read")
         if not _valid(d):
             raise Broken("auth.json doesn't look right")
@@ -517,7 +517,7 @@ class Sessions:
         if fresh or sig != self._sig:
             try:
                 d = json.loads(_read_private(self.path, 1 << 22) or "{}")
-            except (OSError, ValueError, UnicodeDecodeError):
+            except (OSError, ValueError, UnicodeDecodeError, RecursionError):
                 d = {}   # a damaged file signs everyone out (never in)
             self._d = {k: v for k, v in (d.items() if isinstance(d, dict) else ())
                        if _HEX64.fullmatch(k) and isinstance(v, dict) and all(isinstance(v.get(f), int) for f in ("until", "idle", "seen", "epoch"))
@@ -593,7 +593,7 @@ class Sessions:
             return False
         try:
             d = json.loads(_read_private(self.path, 1 << 22) or "{}")
-        except (OSError, ValueError, UnicodeDecodeError):
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
             return False
         s = d.get(self._key(token)) if isinstance(d, dict) else None
         try:
