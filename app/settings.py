@@ -393,11 +393,13 @@ def apply_secret_changes(new, old_editable, changes, store):
 
 
 def save(editable, store):
-    """Write settings.json and secrets.json (both chmod 600, written atomically)."""
+    """Write secrets.json and settings.json (both chmod 600, written atomically). Secrets first: if the second write
+    fails (a full disk), an old URL with a newly typed key is harmless; a new URL with the old key is what
+    apply_secret_changes() exists to stop."""
     if not UI_ENABLED:
         raise Invalid("the settings page is read-only (SETTINGS_UI=0)")
     try:
-        _write_json(SETTINGS_FILE, editable)
         _write_json(SECRETS_FILE, store)
+        _write_json(SETTINGS_FILE, editable)
     except PermissionError:
         raise Invalid(f"can't write to {DATA_DIR}: make the data folder writable by the container's user (uid 1000)")

@@ -272,6 +272,31 @@ class Setup(unittest.TestCase):
         for secret in ("admin-user-x", "pass-word-x", "seerr-key-x", "taut-key-x"):
             self.assertNotIn(secret, dumped)
 
+    def test_a_half_written_save_never_sends_the_old_key_to_a_new_url(self):
+        # (settings.json was written before secrets.json: a disk error between the two left a new URL paired with the
+        # old key on the next start, the pairing apply_secret_changes refuses; audit round 3)
+        app = load_app()
+        store = app.cfgstore.apply_secret_changes(app.ED, app.ED, {"seerr_key": "old-key"}, app.STORE)
+        app.cfgstore.save(app.cfgstore.validate({**app.ED, "seerr": {"url": "http://seerr:5055"}}, {}), store)
+        app.apply_settings()
+        new = app.cfgstore.validate({**app.ED, "seerr": {"url": "http://elsewhere:5055"}}, {})
+        store = app.cfgstore.apply_secret_changes(new, app.ED, {"seerr_key": "typed-key"}, app.STORE)
+        write, calls = app.cfgstore._write_json, []
+
+        def full_disk(path, data):
+            calls.append(path)
+            if len(calls) == 2:
+                raise OSError(28, "No space left on device")
+            write(path, data)
+        app.cfgstore._write_json = full_disk
+        try:
+            with self.assertRaises(OSError):
+                app.cfgstore.save(new, store)
+        finally:
+            app.cfgstore._write_json = write
+        url, key = app.cfgstore.load()["seerr"]["url"], app.cfgstore.load_secrets().get("seerr_key")
+        self.assertFalse(url.startswith("http://elsewhere") and key == "old-key", (url, key))
+
     def test_demo(self):
         app = load_app(DEMO="1")
         st = self.states(app)
