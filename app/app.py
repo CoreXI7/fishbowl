@@ -674,6 +674,8 @@ class Qbit:
 
     def get(self, path):
         with self.lock:
+            if len(self.jar) > 50:      # a qBittorrent setting new cookies every time: start over (and log in again)
+                self.jar.clear()
             for attempt in (1, 2):
                 try:
                     with self.op.open(QBIT["url"] + path, timeout=10) as r:
@@ -695,7 +697,7 @@ class Qbit:
             if d.get("full_update") or not self.rid:
                 self.state = {}
             for h, fields in (d.get("torrents") or {}).items():
-                if isinstance(fields, dict):         # typed and clipped as they're stored: the map stays small
+                if isinstance(fields, dict) and len(h) <= 64:   # typed and clipped as stored (ids too): the map stays small
                     self.state.setdefault(h, {}).update((k, text(v) if k in SLIM_TEXT else num(v))
                                                         for k, v in fields.items() if k in SLIM_KEEP)
             for h in d.get("torrents_removed") or []:
@@ -755,12 +757,18 @@ PLEX_NUM = ("parent_media_index", "media_index", "progress_percent", "bandwidth"
 PLEX_FLAG = ("transcode_hw_encoding", "transcode_hw_decoding")
 
 
+def listed(v, n):
+    """The first n items of an upstream list (anything else: none). One small answer with a huge list would otherwise
+    become a huge answer to every page."""
+    return v[:n] if isinstance(v, list) else []
+
+
 def plex():
     """/api/plex: who's watching what, from Tautulli (so no Plex token is needed here)."""
     d = tautulli("get_activity")
     sessions = []
     d = d if isinstance(d, dict) else {}
-    for s in d.get("sessions") or []:
+    for s in listed(d.get("sessions"), 100):
         if not isinstance(s, dict):
             continue
         x = {**{k: text(s.get(k) if k != "year" else str(s.get(k) or "")) for k in PLEX_TEXT}, **{k: num(s.get(k)) for k in PLEX_NUM},
@@ -824,13 +832,13 @@ def requests_pending():
     """/api/requests: pending Seerr requests with title, year, poster and who asked."""
     d = seerr("/request?take=50&filter=pending&sort=added")
     out = []
-    for r in d.get("results") or []:
+    for r in listed(d.get("results"), 50):   # (it asks for 50)
         # the id goes into approve/decline URLs and the type into Seerr API paths: anything unexpected is skipped
         if not isinstance(r, dict) or type(r.get("id")) is not int or r.get("type") not in ("movie", "tv"):
             continue
         m = r.get("media") if isinstance(r.get("media"), dict) else {}
         info = media_info(r["type"], m.get("tmdbId"))
-        seasons = [s["seasonNumber"] for s in r.get("seasons") or [] if isinstance(s, dict) and type(s.get("seasonNumber")) is int]
+        seasons = [s["seasonNumber"] for s in listed(r.get("seasons"), 100) if isinstance(s, dict) and type(s.get("seasonNumber")) is int]
         u = r.get("requestedBy") if isinstance(r.get("requestedBy"), dict) else {}
         out.append({"id": r["id"], "type": r["type"], "is4k": r.get("is4k") is True, "created": text(r.get("createdAt"), 40),
                     "user": text(u.get("displayName"), 200) or text(u.get("plexUsername"), 200) or text(u.get("email"), 200),
