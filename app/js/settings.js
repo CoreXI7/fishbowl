@@ -21,7 +21,7 @@ setHH(); new ResizeObserver(setHH).observe(document.querySelector("header"));
 
 // ---------- unsaved changes: the Save bar, and a dot on each section in the menu that has some ----------
 const SECTION_NAMES = {setup: "Setup", look: "Look & feel", themes: "Themes", services: "Services", integrations: "Integrations",
-                       security: "Security", about: "About"};
+                       drives: "Drives & hardware", security: "Security", backups: "Backups", about: "About"};
 const secName = k => Object.hasOwn(SECTION_NAMES, k) ? SECTION_NAMES[k] : "";
 const narrow = matchMedia("(max-width:600px)");
 const PERSONALITY = ["tagline", "tagline_down", "click_emoji", "greeting", "quotes", "mascot", "mascot_credit", "favicon"];
@@ -36,6 +36,7 @@ function changedSections() {
   if (!dirty) return [];
   const a = slices(S), b = slices(V.settings);
   const out = Object.keys(a).filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
+  for (const k of CKEYS) if (cchanged(k) && !out.includes(csection(k))) out.push(csection(k));
   if (Object.values(SEC).some(Boolean) && !out.includes("integrations")) out.push("integrations");
   return out;
 }
@@ -62,8 +63,11 @@ addEventListener("keydown", e => {   // Ctrl+S / ⌘+S saves
 if (/Mac|iPhone|iPad/.test(navigator.platform)) $("save").title = "Save (⌘S)";
 
 // ---------- simple fields (data-k="site.title"; data-list = one entry per line) ----------
-const getPath = (o, k) => k.split(".").reduce((a, p) => a && a[p], o);
-const setPath = (o, k, v) => { const ps = k.split("."), last = ps.pop(); ps.reduce((a, p) => a[p] = a[p] || {}, o)[last] = v; };
+// a.b.c paths into plain objects; a built-in name (__proto__, constructor, prototype) never walks into Object.prototype
+const BUILTIN = new Set(["__proto__", "constructor", "prototype"]);
+const getPath = (o, k) => k.split(".").reduce((a, p) => a && !BUILTIN.has(p) && Object.hasOwn(a, p) ? a[p] : undefined, o);
+const setPath = (o, k, v) => { const ps = k.split("."), last = ps.pop(); if ([...ps, last].some(p => BUILTIN.has(p))) return;
+  ps.reduce((a, p) => Object.hasOwn(a, p) && a[p] && typeof a[p] === "object" ? a[p] : (a[p] = {}), o)[last] = v; };
 const lines = v => v.split("\n").map(x => x.trim()).filter(Boolean);
 function bindFields() {
   document.querySelectorAll("[data-k]").forEach(el => {
@@ -142,7 +146,7 @@ const STATE = {problem: ["✗", "needs fixing"], warn: ["!", "worth fixing"], to
 const ORDER = {problem: 0, warn: 1, todo: 2, ok: 3};
 function codeBlock(code) {
   code = code.replaceAll("%ORIGIN%", location.origin);
-  return `<div class="code"><pre><code>${esc(code)}</code></pre><button type="button" class="ibtn" data-copy="${esc(code)}"
+  return `<div class="code"><pre${code.includes("\n") ? ' class="multi"' : ""}><code>${esc(code)}</code></pre><button type="button" class="ibtn" data-copy="${esc(code)}"
     aria-label="Copy: ${esc(code.split("\n")[0])}">Copy</button></div>`;
 }
 function chk(i) {
@@ -476,6 +480,328 @@ $("integ").addEventListener("click", async e => {
   catch (err) { res.innerHTML = `<span class="crit-t">✗ ${esc(err.message)}</span>`; }
 });
 
+// ---------- the collector's settings (Drives & hardware, Security → what it watches, Backups) ----------
+// The page keeps C = every collector setting it wants (what's in effect, plus what it asked for last). Save hands C to
+// the root collector, which checks every value itself: switches and choices apply within a minute; files and patterns
+// wait for `sudo homelab-dash-collector --apply` on the host (it shows the change and asks first).
+let C = {}, C0 = "{}", FP = {}, pollTimer = 0;
+const APPROVE = new Set(["security.authelia_db", "security.fail2ban_log", "security.immutable_files", "security.watcher",
+                         "backup.log", "backup.success_regex", "backup.failure_regex", "backup.checks", "backup.artifacts", "backup.jobs"]);
+const CKEYS = ["interval", "gpu", "usage", "net_if", "mounts", "mount_labels", "security.process_watch", "security.cron_watch",
+               "security.firewall", "security.details", "security.fail2ban_jail", "security.ssh_unit", "security.authelia_container",
+               "security.bad_process_names", "backup.max_age_hours", ...APPROVE];
+const MINERS = ["xmrig", "minerd", "cryptonight", "kdevtmpfsi", "kinsing", "kworkerds", "xmr-stak"];   // the collector's default list
+// what the collector uses for a setting that isn't set anywhere (kept in step with homelab-dash-collector.py)
+const DEFAULTS = {interval: 5, gpu: true, usage: true, net_if: "", mounts: [], mount_labels: {}, "security.process_watch": true,
+  "security.cron_watch": true, "security.firewall": true, "security.details": true, "security.fail2ban_jail": "sshd",
+  "security.ssh_unit": "ssh", "security.authelia_container": "", "security.bad_process_names": MINERS, "security.authelia_db": "",
+  "security.fail2ban_log": "/var/log/fail2ban.log", "security.immutable_files": [], "security.watcher": {}, "backup.max_age_hours": 26,
+  "backup.log": "", "backup.success_regex": "", "backup.failure_regex": "(?i)\\berror|failed\\b", "backup.checks": [],
+  "backup.artifacts": [], "backup.jobs": []};
+const cv = () => V.collector || {};
+const clabel = k => (V.collector_labels || {})[k] || k;
+const csection = k => k.startsWith("backup.") ? "backups" : k.startsWith("security.") ? "security" : "drives";
+// Each change goes to the collector as an explicit value ("" / [] / {} = off or automatic), with the fingerprint of the
+// value the page was showing: the collector takes it only while that's still the value in effect (otherwise it was
+// changed on the host meanwhile)
+const cget = (k, def = DEFAULTS[k]) => { const v = getPath(C, k); return v === undefined || v === null ? def : v; };
+const clist = (k, def = DEFAULTS[k] || []) => { const v = cget(k, def); return Array.isArray(v) ? v : def; };   // never trust a shape
+const stable = v => JSON.stringify(v, (_, x) => x && typeof x === "object" && !Array.isArray(x)
+  ? Object.fromEntries(Object.keys(x).sort().map(k => [k, x[k]])) : x);
+const cnorm = (k, v) => stable(v === undefined || v === null ? DEFAULTS[k] : v);
+const cchanged = k => cnorm(k, getPath(C, k)) !== cnorm(k, getPath(JSON.parse(C0), k));
+const emptyOf = k => Array.isArray(DEFAULTS[k]) ? [] : k === "mount_labels" || k === "security.watcher" ? {} : "";
+function cset(k, v) { setPath(C, k, v === undefined ? emptyOf(k) : v); setDirty(); refreshState(k); }
+
+// what the page shows: what's in effect, then what waits for your OK, then what was saved but not taken yet
+function collectorShown() {
+  const c = cv(), nested = {};
+  for (const src of [c.settings, c.pending_values, c.wanted])
+    for (const [k, v] of Object.entries(src || {})) if (CKEYS.includes(k)) setPath(nested, k, structuredClone(v));
+  return nested;
+}
+function collectorStart() { C = collectorShown(); C0 = JSON.stringify(C); FP = {...(cv().fp || {})}; }
+// news from the collector. Where what the page showed is now what's in effect (its own save, taken late), that's the
+// value the page saw: its fingerprint becomes the baseline. adopt (only when the fields are redrawn right after):
+// settings nobody is editing show the new value too. A setting being edited keeps its baseline, so a change made on
+// the host meanwhile is refused rather than overwritten.
+function collectorRefresh(adopt) {
+  const c = cv(), fresh = collectorShown(), c0 = JSON.parse(C0), eff = c.settings || {};
+  for (const k of CKEYS) {
+    if (cnorm(k, eff[k]) === cnorm(k, getPath(c0, k))) FP[k] = (c.fp || {})[k];
+    if (!adopt || cchanged(k)) continue;
+    const v = getPath(fresh, k);
+    setPath(C, k, v === undefined ? undefined : structuredClone(v));
+    setPath(c0, k, v === undefined ? undefined : structuredClone(v));
+    FP[k] = (c.fp || {})[k];
+  }
+  C0 = JSON.stringify(c0);
+}
+const collectorChanged = () => CKEYS.some(cchanged);
+function collectorChanges() {   // what Save hands to the collector
+  return Object.fromEntries(CKEYS.filter(cchanged).map(k => {
+    const v = getPath(C, k);
+    return [k, {from: FP[k] || "", to: v === undefined || v === null ? structuredClone(DEFAULTS[k]) : v}];
+  }));
+}
+const waitingKeys = () => { const c = cv();
+  return [...new Set([...(c.pending || []), ...Object.keys(c.wanted || {}).filter(k => APPROVE.has(k))])]; };
+
+// a field's state, next to it (read out through aria-describedby): refused (and why), waiting for your OK on the host,
+// handed to the collector, will need your OK (changed, not saved yet), or quietly "needs your OK" where that applies
+function cstate(k) {
+  const c = cv(), rej = (c.rejected || []).find(([key]) => key === k);
+  if (waitingKeys().includes(k)) return '<span class="cst wait">⏳ waiting for your OK on the host</span>';
+  if (Object.hasOwn(c.wanted || {}, k)) return '<span class="cst wait">⏳ handed to the collector</span>';   // (newer than a refusal)
+  if (rej) return `<span class="cst bad">✗ refused: ${esc(rej[1])}</span>`;
+  if (!APPROVE.has(k)) return "";
+  return cchanged(k) ? '<span class="okchip">will need your OK on the host</span>' : '<span class="hostchip">needs your OK on the host</span>';
+}
+function refreshState(k) {   // after an edit: the chip next to that field, without redrawing the field
+  const box = $(cid(k) + "-st");
+  if (box) box.innerHTML = cstate(k);
+}
+const cid = k => "c-" + k.replace(/[^a-z0-9]+/gi, "-");
+const refused = k => !Object.hasOwn(cv().wanted || {}, k) && !waitingKeys().includes(k) && (cv().rejected || []).some(([key]) => key === k);
+const aria = (k, help) => ` aria-describedby="${[help ? cid(k) + "-d" : "", cid(k) + "-st"].filter(Boolean).join(" ")}"`
+  + (refused(k) ? ' aria-invalid="true"' : "");
+const chip = k => `<span class="cstate" id="${cid(k)}-st">${cstate(k)}</span>`;
+const cfield = (k, label, input, help, kw = "") => `<div class="field" data-ck="${esc(k)}"${kw ? ` data-kw="${esc(kw)}"` : ""}>
+  <div class="lrow"><label for="${cid(k)}">${esc(label)}</label>${chip(k)}</div>${input}${help ? `<small id="${cid(k)}-d">${help}</small>` : ""}</div>`;
+const dis = () => V.ui_enabled ? "" : " disabled";
+function ccheck(k, label, help) {
+  return `<div class="field" data-ck="${esc(k)}"><div class="lrow"><label class="cbox"><input type="checkbox" id="${cid(k)}" data-c="${esc(k)}" data-type="bool"${cget(k) ? " checked" : ""}${aria(k, help)}${dis()}>
+    ${esc(label)}</label>${chip(k)}</div>${help ? `<small id="${cid(k)}-d">${help}</small>` : ""}</div>`;
+}
+function cselect(k, label, opts, help) {
+  const v = cget(k), has = opts.some(([o]) => o === v);
+  return cfield(k, label, `<select id="${cid(k)}" data-c="${esc(k)}"${aria(k, help)}${dis()}>
+    ${has ? "" : `<option value="${esc(v)}" selected>${esc(v)} (not found on this machine)</option>`}
+    ${opts.map(([o, t]) => `<option value="${esc(o)}"${o === v ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`, help);
+}
+function cnum(k, label, min, max, help) {
+  return cfield(k, label, `<input type="number" id="${cid(k)}" data-c="${esc(k)}" data-type="int" min="${min}" max="${max}" step="1" value="${esc(cget(k))}"${aria(k, help)}${dis()}>`, help);
+}
+function ctext(k, label, help, kw = "") {
+  return cfield(k, label, `<input type="text" id="${cid(k)}" data-c="${esc(k)}" value="${esc(cget(k))}" spellcheck="false"${aria(k, help)}${dis()}>`, help, kw);
+}
+function clines(k, label, help, kw = "") {
+  return cfield(k, label, `<textarea id="${cid(k)}" data-c="${esc(k)}" data-type="lines" rows="3" spellcheck="false"${aria(k, help)}${dis()}>${esc(clist(k).filter(x => typeof x === "string").join("\n"))}</textarea>`, help, kw);
+}
+
+function renderCollector() {
+  const c = cv(), det = c.detected || {}, ok = c.installed && c.supported;
+  const why = !c.installed ? 'These come from the collector on the host, which isn\'t installed yet: <a href="#setup">Setup</a> says how.'
+    : !c.supported ? 'Your collector is older than this page, so these are still set in <code>/etc/homelab-dash/collector.toml</code>. '
+      + '<a href="#setup">Setup</a> says how to update it.' : "";
+  const waiting = waitingKeys(), err = ok && c.error ? `<div class="chk chk-warn"><span class="chk-ic" aria-hidden="true">!</span>
+    <div class="chk-b"><p><b>The collector can't use the page's settings right now:</b> ${esc(c.error)}</p></div></div>` : "";
+  const open = [...document.querySelectorAll("#drives details[open], #security details[open], #backups details[open]")]
+    .map(d => d.dataset.did).filter(Boolean);
+  document.querySelectorAll("[data-col-msg]").forEach(el => {
+    const sec = el.closest("section").id, mine = waiting.filter(k => csection(k) === sec);
+    el.innerHTML = why ? `<div class="empty">${why}</div>` : err
+      + (mine.length ? `<div class="chk chk-warn"><span class="chk-ic" aria-hidden="true">!</span><div class="chk-b">
+          <p><b>Waiting for your OK on the host:</b> ${mine.map(k => `<a href="#${cid(k)}">${esc(clabel(k))}</a>`).join(", ")}.</p>
+          <p>Run this on the host. It shows exactly what changes and asks: <b>y</b> applies them, <b>d</b> drops them from the
+            waiting list (and <code>--apply --undo</code> drops every setting made here):</p>${codeBlock("sudo homelab-dash-collector --apply")}</div></div>` : "");
+  });
+  document.querySelectorAll(".col-hint").forEach(el => el.hidden = !ok);
+  ["c-drives", "c-checks", "c-backups"].forEach(id => $(id).hidden = !ok);
+  if (!ok) return;
+
+  // Drives & hardware
+  const m0 = cget("mounts"), mounts = Array.isArray(m0) && m0.length ? m0 : null;   // [] = every drive it finds
+  const l0 = cget("mount_labels"), labels = l0 && typeof l0 === "object" && !Array.isArray(l0) ? l0 : {};
+  // the drives offered: what's mounted now, plus ticked or named ones that are unplugged right now (their alarm and
+  // name must stay, and a name must stay removable)
+  const found = det.mounts || [];
+  const offered = [...new Set([...found, ...[...(mounts || []), ...Object.keys(labels)].filter(m => typeof m === "string")])];
+  $("c-drives").innerHTML = `
+    <fieldset class="field" id="c-mounts" data-ck="mounts"><legend>Drives to show</legend>${chip("mounts")}
+      <label class="cbox"><input type="radio" name="c-mauto" value="auto"${mounts ? "" : " checked"} aria-describedby="c-mounts-st"${dis()}> Every drive it finds (/, and what's under /mnt, /media and /srv)</label>
+      <label class="cbox"><input type="radio" name="c-mauto" value="pick"${mounts ? " checked" : ""} aria-describedby="c-mounts-st"${dis()}> Only the ones I tick (a ticked drive that disappears shows as NOT MOUNTED)</label>
+      <fieldset class="mpicks${mounts ? "" : " auto"}"><legend class="vh">Drives</legend>
+        <div class="mrow mhead" aria-hidden="true"><span>Drive</span><span>Name on the dashboard (optional)</span></div>
+        ${offered.map((m, i) => `<div class="mrow">
+          <label class="cbox"><input type="checkbox" data-mount="${esc(m)}"${!mounts || mounts.includes(m) ? " checked" : ""}${dis()}> <code>${esc(m)}</code>${found.includes(m) ? "" : ' <small class="crit-t">not mounted right now</small>'}</label>
+          <input type="text" data-mlabel="${esc(m)}" value="${esc(labels[m] || "")}" placeholder="Name (optional)" aria-label="Name on the dashboard for ${esc(m)}" aria-describedby="c-mount-labels-st" maxlength="40"${dis()}></div>`).join("")
+          || '<p class="hint">No drives found.</p>'}</fieldset>
+      <small>Only real mount points are offered.</small> ${chip("mount_labels")}</fieldset>
+    ${cselect("net_if", "Network interface (the up/down rate)", [["", `Automatic (the one with the default route${det.default_iface ? ": " + det.default_iface : ""})`],
+              ...(det.ifaces || []).map(i => [i, i])], "The one that carries your internet traffic.")}
+    ${det.gpu ? ccheck("gpu", "Show the NVIDIA GPU") : '<p class="hint">No NVIDIA GPU found (nvidia-smi).</p>'}
+    ${ccheck("usage", "CPU and memory breakdown (which apps use the most)")}
+    ${cnum("interval", "Update every (seconds)", 2, 60, "2 to 60. Drives, disk health and security are checked less often (1 to 5 minutes).")}`;
+
+  // Security → what the collector watches
+  const jails = [["", "off"], ...(det.jails || []).map(j => [j, j])], units = [["", "off"], ...(det.ssh_units || []).map(u => [u, u])];
+  const auth = [["", "off"], ...(det.authelia || []).map(a => [a, a])], dbHint = Object.values(det.authelia_db || {})[0];
+  const w0 = cget("security.watcher"), watcher = w0 && typeof w0 === "object" && !Array.isArray(w0) && Object.keys(w0).length ? w0 : null;
+  $("c-checks").innerHTML = `
+    ${cselect("security.fail2ban_jail", "Blocked logins (fail2ban)", jails, (det.jails || []).length
+              ? "fail2ban blocks addresses that keep failing to log in. Each set of its rules is a \"jail\": pick sshd for SSH."
+              : "fail2ban isn't installed, or has no jails.")}
+    ${cselect("security.ssh_unit", "Where SSH logins are logged", units, "The SSH service (usually ssh, on some systems sshd).")}
+    ${cselect("security.authelia_container", "Authelia container (failed sign-ins)", auth, (det.authelia || []).length ? "" : "No running Authelia container found.")}
+    ${ctext("security.authelia_db", "Authelia's database (sign-ins and lock-outs in the details)",
+            dbHint ? `Found: <code>${esc(dbHint)}</code> <button type="button" class="ibtn" data-cfill="security.authelia_db" data-v="${esc(dbHint)}" aria-label="Use ${esc(dbHint)} as Authelia's database"${dis()}>Use it</button>`
+                   : "Its db.sqlite3 on the host, like <code>/srv/authelia/config/db.sqlite3</code>.", "sqlite path file")}
+    ${ccheck("security.process_watch", "Watch for crypto-miners and show the busiest programs")}
+    ${clines("security.bad_process_names", "Process names to flag (one per line)", "Letters, digits, . _ and -.")}
+    ${ccheck("security.cron_watch", "Flag any crontab change until you click \"Looks good\"")}
+    ${ccheck("security.firewall", "Show the firewall" + (det.firewall ? ` (${esc(det.firewall)})` : ""))}
+    ${clines("security.immutable_files", "Files that must stay locked (one per line)",
+             "Files you made unchangeable with <code>sudo chattr +i &lt;file&gt;</code>. The card goes red if one gets unlocked.", "chattr immutable lock")}
+    ${ccheck("security.details", "Detail views (click a box's title on the dashboard's Security & backups card)")}
+    <details class="adv" data-did="watch"${watcher ? " open" : ""}><summary>Advanced: your own watch script, and fail2ban's log</summary>
+      ${ctext("security.fail2ban_log", "fail2ban's log (for the recent bans list)", "Usually <code>/var/log/fail2ban.log</code>. Empty: off.")}
+      <div class="field" id="c-security-watcher" data-ck="security.watcher"><span class="flabel">Your own watch script</span>${chip("security.watcher")}
+        <small id="c-security-watcher-d">A script that runs from cron, shown in the Process watch details: when it last ran and what it alerted on.</small></div>
+      ${[["label", "Its name", ""], ["heartbeat", "A file it rewrites every run", "Its age is the time since the last run."],
+         ["alerts", "A file with one line per problem it alerted on", "Lines look like kind:detail."]].map(([f, l, h]) =>
+        `<div class="field"><label for="c-w-${f}">${esc(l)}</label><input type="text" id="c-w-${f}" data-cw="${f}" value="${esc((watcher || {})[f] || "")}" spellcheck="false" aria-describedby="${h ? `c-w-${f}-d ` : ""}c-security-watcher-st"${dis()}>${h ? `<small id="c-w-${f}-d">${h}</small>` : ""}</div>`).join("")}
+      <div class="field"><label for="c-w-every">Runs every (minutes)</label><input type="number" id="c-w-every" data-cw="every_minutes" min="1" max="1440" step="1" value="${esc((watcher || {}).every_minutes || "")}" aria-describedby="c-security-watcher-st"${dis()}></div>
+      <div class="field"><label for="c-w-checks">What it checks (one per line)</label><textarea id="c-w-checks" data-cw="checks" rows="3" aria-describedby="c-security-watcher-st"${dis()}>${esc((Array.isArray((watcher || {}).checks) ? watcher.checks : []).join("\n"))}</textarea></div>
+      <div class="field"><label for="c-w-kinds">Labels for its alert kinds (one per line: kind = label)</label><textarea id="c-w-kinds" data-cw="kinds" rows="3" spellcheck="false" aria-describedby="c-security-watcher-st"${dis()}>${esc(Object.entries((watcher || {}).kinds && typeof watcher.kinds === "object" && !Array.isArray(watcher.kinds) ? watcher.kinds : {}).map(([k, v]) => `${k} = ${v}`).join("\n"))}</textarea></div>
+    </details>`;
+
+  // Backups
+  const jobs = clist("backup.jobs").filter(j => j && typeof j === "object" && !Array.isArray(j));
+  const pat = 'Text the line contains, like <code>backup ok</code>. (It\'s a regular expression: <code>.</code> <code>*</code> <code>(</code> and friends have special meanings.)';
+  $("c-backups").innerHTML = `
+    ${ctext("backup.log", "Your backup script's log", "Like <code>/var/log/backup.log</code>. Each run starts at a line beginning with a date, like 2026-10-29.")}
+    ${ctext("backup.success_regex", "A line that means the run went fine (optional)", pat, "regex pattern regular expression")}
+    ${ctext("backup.failure_regex", "A line that means it failed", "Like <code>error</code> or <code>failed</code>. Empty: off (no line counts as a failure).", "regex pattern regular expression")}
+    ${cnum("backup.max_age_hours", "A backup is overdue after (hours)", 1, 8760, "This one applies by itself.")}
+    <div class="field" id="c-backup-jobs" data-ck="backup.jobs" data-kw="regex pattern"><h3 class="jobs-h">Backup jobs</h3>${chip("backup.jobs")}
+      <small>One per backup: the log line that marks it done, the files it leaves, where it goes. Shown in the Backups view.
+        (Counted checks and file patterns, <code>[[backup.checks]]</code> and <code>[[backup.artifacts]]</code>, are set in collector.toml.)</small></div>
+    <div id="c-jobs">${jobs.map((j, i) => jobCard(j, i)).join("")}</div>
+    <button type="button" id="c-add-job" class="ibtn"${dis()}>+ Add a backup job</button>`;
+  document.querySelectorAll("#drives details, #security details, #backups details").forEach(d => { if (open.includes(d.dataset.did)) d.open = true; });
+  applySearch();
+}
+function jobCard(j, i) {
+  const f = (k, label, help = "", type = "text") => `<div class="field"><label for="c-j${i}-${k}">${esc(label)}</label>
+    <input type="${type}" id="c-j${i}-${k}" data-cj="${i}" data-f="${k}" value="${esc(j[k] ?? "")}" spellcheck="false"${type === "number" ? ' min="1" max="8760" step="1"' : ""} aria-describedby="${help ? `c-j${i}-${k}-d ` : ""}c-backup-jobs-st"${dis()}>${help ? `<small id="c-j${i}-${k}-d">${help}</small>` : ""}</div>`;
+  return `<div class="jobcard" data-job="${i}" role="group" aria-labelledby="c-j${i}-h"><div class="gh"><h4 id="c-j${i}-h">${esc(j.label || "New backup job")}</h4>
+      <button type="button" class="ibtn danger" data-jdel="${i}" aria-label="Remove the backup job ${esc(j.label || "")}"${dis()}>Remove</button></div>
+    ${f("label", "Name")}
+    ${f("regex", "The log line that marks it done", "Text the line contains, like <code>snapshot done</code>.")}
+    <details class="adv" data-did="job${i}"><summary>Show the job's name, size or time from that line</summary>
+      <p class="hint">In the pattern above, <code>(?P&lt;name&gt;…)</code>, <code>(?P&lt;size&gt;…)</code> and <code>(?P&lt;took&gt;…)</code> pick out a
+        part of the line to show next to the job, like <code>dumped (?P&lt;name&gt;\\S+)</code>.</p></details>
+    ${f("fail_regex", "A log line that means it failed (optional)")}
+    <div class="field"><label for="c-j${i}-files">Files it leaves behind (one per line; * and ? work as wildcards)</label>
+      <textarea id="c-j${i}-files" data-cj="${i}" data-f="files" rows="2" spellcheck="false" aria-describedby="c-backup-jobs-st"${dis()}>${esc((Array.isArray(j.files) ? j.files : []).join("\n"))}</textarea></div>
+    ${f("dest", "Its destination folder (optional)", "Shows that drive's free space.")}
+    <label class="cbox"><input type="checkbox" data-cj="${i}" data-f="size"${j.size ? " checked" : ""}${dis()}> Also measure the destination's size (once a night, at low priority)</label>
+    ${f("every", "When it runs (a note, like \"nightly at 03:00\")")}
+    ${f("max_age_hours", "Overdue after (hours; empty = the setting above)", "", "number")}
+  </div>`;
+}
+
+// after a save that changed collector settings: say what the collector did with them (the save waits a few seconds for
+// it), then check back a few times (every 15 s, for 2 minutes) so the rest shows up without reloading the page
+function collectorSaved(changed) {
+  const c = cv(), waits = waitingKeys(), rej = new Set((c.rejected || []).map(([k]) => k).filter(k => !waits.includes(k) && !Object.hasOwn(c.wanted || {}, k)));
+  const bad = changed.filter(k => rej.has(k)), wait = changed.filter(k => !rej.has(k) && waits.includes(k));
+  const handed = changed.filter(k => !rej.has(k) && !waits.includes(k) && Object.hasOwn(c.wanted || {}, k));
+  const done = changed.length - bad.length - wait.length - handed.length;
+  clearInterval(pollTimer);
+  let n = 0;
+  pollTimer = setInterval(async () => {
+    if (++n > 8) return clearInterval(pollTimer);
+    try {
+      const v = await api("/api/settings");
+      V.collector = v.collector; V.setup = v.setup;
+      // someone is typing there, or a field shows a typing error: only the chips change now; values on the next try
+      const busy = document.activeElement?.closest("#drives, #security, #backups")
+        || document.querySelector("#drives .ferr, #security .ferr, #backups .ferr");
+      collectorRefresh(!busy); renderSetup();
+      if (!busy) renderCollector(); else CKEYS.forEach(refreshState);
+      setDirty(dirty);
+    } catch { /* the next try */ }
+  }, 15000);
+  return (done ? ` ${done} collector setting${done > 1 ? "s" : ""} applied.` : "")
+    + (handed.length ? ` ${handed.length} handed to the collector (it applies them within a minute).` : "")
+    + (bad.length ? ` <span class="crit-t">${bad.length} refused by the collector (${esc(bad.map(clabel).join(", "))}): see why next to ${bad.length > 1 ? "them" : "it"}.</span>` : "")
+    + (wait.length ? ` ${wait.length} wait${wait.length > 1 ? "" : "s"} for your OK on the host (${esc(wait.map(clabel).join(", "))}):`
+      + ` run <code>sudo homelab-dash-collector --apply</code> there.` : "");
+}
+
+// edits
+document.addEventListener("input", e => {
+  const t = e.target;
+  if (t.dataset.c) {
+    const k = t.dataset.c, ty = t.dataset.type;
+    if (ty === "int") {
+      const n = +t.value, lo = +t.min, hi = +t.max;
+      if (t.value === "" || !Number.isInteger(n) || n < lo || n > hi) return fieldErr(t, `A whole number from ${lo} to ${hi}.`);
+      clearErr(t);
+    }
+    cset(k, ty === "int" ? +t.value : ty === "lines" ? lines(t.value) : ty === "bool" ? t.checked : t.value.trim());
+  } else if (t.dataset.cw) {
+    const w0 = cget("security.watcher", {}), w = structuredClone(w0 && typeof w0 === "object" && !Array.isArray(w0) ? w0 : {}), f = t.dataset.cw;
+    if (f === "checks") w.checks = lines(t.value);
+    else if (f === "kinds") w.kinds = Object.fromEntries(lines(t.value).map(l => l.split("=")).filter(p => p.length > 1).map(([k, ...v]) => [k.trim(), v.join("=").trim()]));
+    else if (f === "every_minutes") {
+      if (t.value === "") delete w.every_minutes;
+      else if (!Number.isInteger(+t.value) || +t.value < 1 || +t.value > 1440) return fieldErr(t, "A whole number from 1 to 1440.");
+      else { clearErr(t); w.every_minutes = +t.value; }
+    }
+    else w[f] = t.value.trim();
+    Object.keys(w).forEach(k => (w[k] === "" || (Array.isArray(w[k]) && !w[k].length) || (k === "kinds" && !Object.keys(w[k]).length)) && delete w[k]);
+    cset("security.watcher", Object.keys(w).length ? w : undefined);
+  } else if (t.dataset.cj !== undefined) {
+    const jobs = structuredClone(clist("backup.jobs")), j = jobs[+t.dataset.cj], f = t.dataset.f;
+    if (!j || typeof j !== "object") return;
+    if (f === "files") j.files = lines(t.value);
+    else if (f === "size") j.size = t.checked;
+    else if (f === "max_age_hours") {
+      if (t.value === "") delete j.max_age_hours;
+      else if (!Number.isInteger(+t.value) || +t.value < 1 || +t.value > 8760) return fieldErr(t, "A whole number from 1 to 8760.");
+      else { clearErr(t); j.max_age_hours = +t.value; }
+    }
+    else j[f] = t.value.trim();
+    Object.keys(j).forEach(k => (j[k] === "" || j[k] === false || (Array.isArray(j[k]) && !j[k].length)) && delete j[k]);
+    cset("backup.jobs", jobs);
+    if (f === "label") t.closest(".jobcard").querySelector(".gh h4").textContent = j.label || "New backup job";
+  } else if (t.dataset.mlabel) {
+    const l0 = cget("mount_labels", {}), l = {...(l0 && typeof l0 === "object" && !Array.isArray(l0) ? l0 : {})};
+    if (t.value.trim()) l[t.dataset.mlabel] = t.value.trim(); else delete l[t.dataset.mlabel];
+    cset("mount_labels", Object.keys(l).length ? l : undefined);
+  }
+});
+document.addEventListener("change", e => {
+  const t = e.target;
+  if (t.name === "c-mauto" || t.dataset.mount) {
+    if (t.dataset.mount && !document.querySelector("[data-mount]:checked"))   // none ticked = every drive it finds
+      document.querySelector('[name="c-mauto"][value="auto"]').checked = true;
+    const auto = document.querySelector('[name="c-mauto"][value="auto"]').checked;
+    document.querySelector(".mpicks").classList.toggle("auto", auto);
+    cset("mounts", auto ? undefined : [...document.querySelectorAll("[data-mount]:checked")].map(b => b.dataset.mount));
+  } else if (t.dataset.c && t.tagName === "SELECT") cset(t.dataset.c, t.value);
+  else if (t.dataset.c && t.dataset.type === "bool") cset(t.dataset.c, t.checked);
+});
+document.addEventListener("click", e => {
+  const t = e.target;
+  if (t.dataset.cfill) { cset(t.dataset.cfill, t.dataset.v); renderCollector(); $(cid(t.dataset.cfill)).focus(); }
+  else if (t.id === "c-add-job") {
+    const have = new Set(clist("backup.jobs").map(j => j && j.label));   // each job needs its own name
+    let name = "New backup job";
+    for (let i = 2; have.has(name); i++) name = `New backup job ${i}`;
+    cset("backup.jobs", [...structuredClone(clist("backup.jobs")), {label: name}]);
+    renderCollector(); const n = clist("backup.jobs").length - 1; $(`c-j${n}-label`).focus(); $(`c-j${n}-label`).select();
+  } else if (t.dataset.jdel !== undefined) {
+    const jobs = structuredClone(clist("backup.jobs")), i = +t.dataset.jdel;
+    if (!confirm(`Remove the backup job "${jobs[i].label || ""}"?`)) return;
+    jobs.splice(i, 1); cset("backup.jobs", jobs); renderCollector();
+    ($(`c-j${Math.min(i, jobs.length - 1)}-label`) || $("c-add-job")).focus();
+  }
+});
+
 // ---------- About: what's set in docker-compose.yml ----------
 function renderInfra() {
   const i = V.infra, a = V.about;
@@ -536,30 +862,31 @@ addEventListener("resize", markCurrent);
 // one of its services matches; Advanced boxes with a match open up.
 const UNITS = ".field, .integ, .xrow, .chk, .grp-ed";
 function applySearch() {
-  const q = $("set-q").value.trim().toLowerCase();
+  const q = $("set-q").value.trim().toLowerCase(), words = q.split(/\s+/);
+  const hasAll = t => words.every(w => t.includes(w));      // every word you typed, in any order
   document.querySelectorAll(".q-out").forEach(el => el.classList.remove("q-out"));
   if (!q) { $("q-none").hidden = true; $("q-count").textContent = ""; return; }
-  const has = el => (el.textContent + " " + [...el.querySelectorAll("input:not([type=checkbox]):not([type=file]),textarea,select")]
-    .map(i => `${i.value} ${i.placeholder || ""} ${i.getAttribute("aria-label") || ""}`).join(" ")).toLowerCase().includes(q);
-  const rowHas = r => [r.dataset.host, ...[...r.querySelectorAll("input[data-f]")].map(i => i.value)].join(" ").toLowerCase().includes(q);
+  const has = el => hasAll((el.textContent + " " + (el.dataset.kw || "") + " " + [...el.querySelectorAll("input:not([type=checkbox]):not([type=file]),textarea,select")]
+    .map(i => `${i.value} ${i.placeholder || ""} ${i.getAttribute("aria-label") || ""}`).join(" ")).toLowerCase());
+  const rowHas = r => hasAll([r.dataset.host, ...[...r.querySelectorAll("input[data-f]")].map(i => i.value)].join(" ").toLowerCase());
   const reveal = el => { for (let d = el.closest("details"); d; d = d.parentElement.closest("details")) d.open = true; };
   let any = false, n = 0;
   document.querySelectorAll(".set-main > section").forEach(sec => {
-    let hit = [sec.querySelector("h2"), ...sec.querySelectorAll("#theme-tabs button")].some(el => el.textContent.toLowerCase().includes(q));
+    let hit = [sec.querySelector("h2"), ...sec.querySelectorAll("#theme-tabs button")].some(el => hasAll(el.textContent.toLowerCase()));
     if (!hit) {
       const hits = [];
       sec.querySelectorAll(UNITS).forEach(u => {
         if (hits.some(h => h.contains(u))) return;            // inside a unit that already matched: keep it
         if (u.matches(".grp-ed")) {
           const gname = (u.querySelector("[data-gname]")?.value ?? u.querySelector(".gh b")?.textContent ?? "").toLowerCase();
-          if (gname.includes(q)) { hits.push(u); return; }
+          if (hasAll(gname)) { hits.push(u); return; }
           u.querySelectorAll(".srow").forEach(r => r.classList.toggle("q-out", !rowHas(r)));
           if (u.querySelector(".srow:not(.q-out)")) hits.push(u); else u.classList.add("q-out");
           return;
         }
         if (has(u)) {
           hits.push(u); reveal(u);
-          u.querySelectorAll("details").forEach(d => { if (d.textContent.toLowerCase().includes(q)) d.open = true; });
+          u.querySelectorAll("details").forEach(d => { if (hasAll(d.textContent.toLowerCase())) d.open = true; });
         } else u.classList.add("q-out");
       });
       hit = hits.length > 0;
@@ -582,7 +909,8 @@ function render() {
   if (V.settings.site.favicon) document.querySelector("link[rel=icon]").href = V.settings.site.favicon;
   document.title = "Settings · " + S.site.title; $("site-title").textContent = S.site.title; $("demo-tag").hidden = !V.demo;
   document.querySelectorAll("[aria-invalid]").forEach(clearErr);
-  renderInteg(); bindFields(); renderPanels(); renderThemes(); renderServices(); renderExtras(); renderInfra(); renderSetup();
+  collectorStart();
+  renderInteg(); bindFields(); renderPanels(); renderThemes(); renderServices(); renderExtras(); renderCollector(); renderInfra(); renderSetup();
   document.querySelectorAll(".ferr").forEach(m => m.remove());
   hideErr(); setDirty(false); applySearch(); markCurrent();
 }
@@ -590,13 +918,33 @@ async function load() { V = await api("/api/settings"); render(); }
 $("reload").onclick = () => { if (!dirty || confirm("Discard your unsaved changes?")) render(); };
 $("save").onclick = async () => {
   if (document.activeElement && document.activeElement.matches("input, textarea")) document.activeElement.blur();
-  $("save").disabled = true; $("msg").textContent = "Saving…";
+  $("save").disabled = true;
+  const cch = collectorChanged() ? CKEYS.filter(cchanged) : [], keepC = JSON.stringify(C), keepFP = {...FP};
+  $("msg").textContent = cch.length ? "Saving… (and handing the collector its settings)" : "Saving…";
+  const form = document.querySelector(".set-main");   // nothing can be edited until the answer is in (it may take seconds)
+  form.inert = true; form.setAttribute("aria-busy", "true");
   try {
     // empty "not in NPM" rows aren't sent; S keeps them, so the rows on the page still match S if the save is refused
-    V = await post("/api/settings", {settings: {...S, services: S.services.filter(x => x.name || x.url)}, secrets: SEC});
-    render(); setMsg(V.demo_not_saved ? '<span class="ok-t">✓ Looks valid! (Demo: nothing is really saved, so the next visitor sees the original.)</span>'
-      : '<span class="ok-t">✓ Saved. The dashboard uses the new settings right away.</span>');
-  } catch (e) { setDirty(true); showErr(e.message, e.section); setMsg('<span class="crit-t">✗ Not saved: see the message at the top.</span>'); }
+    V = await post("/api/settings", {settings: {...S, services: S.services.filter(x => x.name || x.url)}, secrets: SEC,
+                                     ...(cch.length ? {collector: collectorChanges()} : {})});
+    render();
+    if (V.collector_warning) {   // the dashboard's part is saved; the collector's isn't: keep those edits on the page
+      C = JSON.parse(keepC); FP = keepFP; renderCollector(); setDirty(true);
+      showErr(V.collector_warning, csection(cch[0]), "Saved, except the collector's settings");
+      return setMsg('<span class="warn-t">● Saved, except the collector\'s settings: see the message at the top.</span>');
+    }
+    const note = cch.length && !V.demo_not_saved ? collectorSaved(cch) : "";
+    setMsg(V.demo_not_saved ? '<span class="ok-t">✓ Looks valid! (Demo: nothing is really saved, so the next visitor sees the original.)</span>'
+      : `<span class="ok-t">✓ Saved.</span> ${cch.length ? "Dashboard settings apply right away." + note : "The dashboard uses the new settings right away."}`);
+  } catch (e) {
+    setDirty(true);
+    // a collector setting's message names it: open its section
+    const key = e.section === "collector" && CKEYS.find(k => e.message.includes(clabel(k)));
+    showErr(e.message, e.section === "collector" ? (key ? csection(key) : "drives") : e.section);
+    setMsg('<span class="crit-t">✗ Not saved: see the message at the top.</span>');
+  } finally {
+    form.inert = false; form.removeAttribute("aria-busy");
+  }
 };
 (function bubbles() {
   const box = $("bubbles"); if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;

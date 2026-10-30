@@ -35,7 +35,9 @@
       <li><a href="#themes">Themes</a></li>
       <li><a href="#services">Services</a></li>
       <li><a href="#integrations">Integrations</a></li>
+      <li><a href="#drives">Drives &amp; hardware</a></li>
       <li><a href="#security">Security</a></li>
+      <li><a href="#backups">Backups</a></li>
       <li><a href="#about">About</a></li>
     </ul>
   </nav>
@@ -108,6 +110,13 @@
       <form class="integ-grid" id="integ" autocomplete="off"></form>
     </section>
 
+    <section id="drives" aria-labelledby="h-drives">
+      <h2 id="h-drives">Drives &amp; hardware</h2>
+      <p class="hint col-hint">What the collector on the host measures. These apply within a minute of saving.</p>
+      <div class="col-wait" data-col-msg></div>
+      <div class="form" id="c-drives"></div>
+    </section>
+
     <section id="security" aria-labelledby="h-security">
       <h2 id="h-security">Security</h2>
       <div class="form">
@@ -116,6 +125,20 @@
           <small id="d-known">Your known IPs: logins from them aren't flagged. A full address, or a prefix ending in a dot (<code>192.168.1.</code>) or a colon (<code>2001:db8:</code>).
             SSH and sign-in logins from anywhere else are flagged red (this needs the collector). It doesn't let anyone in. The list stays on the server.</small></div>
       </div>
+      <h3 id="h-checks">What the collector watches</h3>
+      <p class="hint col-hint">Switches and choices apply within a minute of saving. Files and patterns marked
+        <span class="hostchip">needs your OK on the host</span> wait until you approve them there, because the collector runs as root.</p>
+      <div class="col-wait" data-col-msg></div>
+      <div class="form" id="c-checks"></div>
+    </section>
+
+    <section id="backups" aria-labelledby="h-backups">
+      <h2 id="h-backups">Backups</h2>
+      <p class="hint">How the collector tells whether your backups ran: it reads your backup script's log and looks at the files the
+        backups leave behind. Shown on the Security &amp; backups card and its Backups view.</p>
+      <p class="hint col-hint">Files and patterns here wait for your OK on the host after you save (the overdue time applies by itself).</p>
+      <div class="col-wait" data-col-msg></div>
+      <div class="form" id="c-backups"></div>
     </section>
 
     <section id="about" aria-labelledby="h-about">

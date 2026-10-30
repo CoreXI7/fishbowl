@@ -780,9 +780,182 @@ def settings_view(host=None):
         "panels": cfgstore.PANELS,
         "via_proxy_env": VIA_PROXY_ENV,   # set in the environment: wins over the page and locks the field
         "setup": setup_checks(host),
+        "collector": collector_view(),
+        "collector_labels": COLLECTOR_LABELS,
         "about": {"listen": LISTEN or "0.0.0.0 (all addresses)", "user_header": USER_HEADER or "", "data_dir": cfgstore.DATA_DIR,
                   "npm_dir": NPM_DIR, "settings_ui": cfgstore.UI_ENABLED},
     }
+
+
+COLLECTOR_REQ = os.path.join(REQ_DIR, "collector-settings.json")   # what the page changed, for the root collector
+COLLECTOR_REQ_MAX = 200 * 1024
+# The settings the page may change on the collector, with their shape. The collector checks every value again (it
+# trusts nothing from here); this keeps the request, and what the page reads back, in shapes the page can show.
+_STRS, _STRMAP, _NUM = ("list", str), ("map", str), ("num",)
+COLLECTOR_KEYS = {
+    "interval": int, "gpu": bool, "usage": bool, "net_if": str, "mounts": _STRS, "mount_labels": _STRMAP,
+    "security.process_watch": bool, "security.cron_watch": bool, "security.firewall": bool, "security.details": bool,
+    "security.fail2ban_jail": str, "security.ssh_unit": str, "security.authelia_container": str,
+    "security.bad_process_names": _STRS, "security.authelia_db": str, "security.fail2ban_log": str,
+    "security.immutable_files": _STRS, "security.watcher": dict, "backup.max_age_hours": _NUM, "backup.log": str,
+    "backup.success_regex": str, "backup.failure_regex": str, "backup.checks": list, "backup.artifacts": list,
+    "backup.jobs": list,
+}
+
+
+# what each collector setting is called on the page, and which section has it (Setup and the page use these)
+COLLECTOR_LABELS = {
+    "interval": "Update every", "gpu": "Show the NVIDIA GPU", "usage": "CPU and memory breakdown",
+    "net_if": "Network interface", "mounts": "Drives to show", "mount_labels": "Drive names",
+    "security.process_watch": "Crypto-miner watch", "security.cron_watch": "Crontab watch", "security.firewall": "Firewall",
+    "security.details": "Detail views", "security.fail2ban_jail": "Blocked logins (fail2ban)",
+    "security.ssh_unit": "Where SSH logins are logged", "security.authelia_container": "Authelia container",
+    "security.bad_process_names": "Process names to flag", "security.authelia_db": "Authelia's database",
+    "security.fail2ban_log": "fail2ban's log", "security.immutable_files": "Files that must stay locked",
+    "security.watcher": "Your own watch script", "backup.max_age_hours": "A backup is overdue after",
+    "backup.log": "Your backup script's log", "backup.success_regex": "A line that means the run went fine",
+    "backup.failure_regex": "A line that means it failed", "backup.checks": "Backup checks",
+    "backup.artifacts": "Backup files", "backup.jobs": "Backup jobs",
+}
+collector_section = lambda key: "#backups" if key.startswith("backup.") else "#security" if key.startswith("security.") else "#drives"
+
+
+def _shape_ok(v, shape):
+    if shape is int:
+        return isinstance(v, int) and not isinstance(v, bool)
+    if shape == _NUM:
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    if shape in (bool, str):
+        return isinstance(v, shape)
+    if shape == _STRS:
+        return isinstance(v, list) and all(isinstance(x, str) for x in v)
+    if shape == _STRMAP:
+        return isinstance(v, dict) and all(isinstance(k, str) and isinstance(x, str) for k, x in v.items())
+    if shape is dict:                                        # the watch script
+        lists, maps = {"checks"}, {"kinds"}
+        return isinstance(v, dict) and all(
+            _shape_ok(x, _STRS if k in lists else _STRMAP if k in maps else (int if k == "every_minutes" else str))
+            for k, x in v.items())
+    if shape is list:                                        # backup checks / files / jobs: a list of small tables
+        return isinstance(v, list) and all(isinstance(t, dict) and all(
+            _shape_ok(x, _STRS if k == "files" else int if k == "min_count" else _NUM if k == "max_age_hours"
+                      else bool if k == "size" else str)
+            for k, x in t.items()) for t in v)
+    return False
+
+
+def collector_changes_clean(changes):
+    """{key: {"from": the fingerprint of the value the page showed ("" = not set), "to": the new value}} for the keys
+    the page may change, each in its shape. Anything else is refused, never passed on."""
+    if not isinstance(changes, dict):
+        raise cfgstore.Invalid("collector settings: must be an object")
+    out = {}
+    for k, c in changes.items():
+        if k not in COLLECTOR_KEYS:
+            raise cfgstore.Invalid(f"collector settings: unknown {str(k)[:60]}")
+        label = COLLECTOR_LABELS.get(k, k)
+        if not isinstance(c, dict) or set(c) != {"from", "to"} or c["to"] is None:
+            raise cfgstore.Invalid(f"collector setting {label}: needs what it was and what it should be")
+        if not isinstance(c["from"], str) or not re.fullmatch(r"(?:[0-9a-f]{16})?", c["from"]):   # the fingerprint it showed
+            raise cfgstore.Invalid(f"collector setting {label}: needs what it was and what it should be")
+        if not _shape_ok(c["to"], COLLECTOR_KEYS[k]):
+            raise cfgstore.Invalid(f"collector setting {label}: wrong kind of value")
+        out[k] = {"from": c["from"], "to": c["to"]}
+    return out
+
+
+def _clean_values(d):
+    return {k: v for k, v in (d.items() if isinstance(d, dict) else ()) if k in COLLECTOR_KEYS and _shape_ok(v, COLLECTOR_KEYS[k])}
+
+
+def _clean_detected(d):
+    d = d if isinstance(d, dict) else {}
+    strs = lambda v: [x for x in v if isinstance(x, str)][:200] if isinstance(v, list) else []
+    dbs = d.get("authelia_db") if isinstance(d.get("authelia_db"), dict) else {}
+    return {**{k: strs(d.get(k)) for k in ("mounts", "ifaces", "jails", "ssh_units", "authelia")},
+            "authelia_db": {k: v for k, v in dbs.items() if isinstance(k, str) and isinstance(v, str)},
+            "gpu": d.get("gpu") is True, "firewall": str(d.get("firewall") or "")[:40],
+            "default_iface": str(d.get("default_iface") or "")[:40]}
+
+
+def unhandled_request(last):
+    """The changes in the request file if the collector hasn't handled it yet (its hash isn't the collector's "last")."""
+    try:
+        with open(COLLECTOR_REQ, "rb") as f:
+            raw = f.read(COLLECTOR_REQ_MAX + 1)
+        if len(raw) > COLLECTOR_REQ_MAX or hashlib.sha256(raw).hexdigest() == last:
+            return {}
+        return collector_changes_clean(json.loads(raw).get("changes"))
+    except (OSError, ValueError, AttributeError, cfgstore.Invalid):
+        return {}
+
+
+def collector_view():
+    """The collector's side of the settings page, from hw.json: what it found on the machine, what's in effect, which
+    of those came from this page, and what waits for `--apply` or was refused. Plus what the page sent that the
+    collector hasn't taken yet (it looks every few seconds)."""
+    if DEMO:
+        return demo.COLLECTOR
+    hw = read_hw()
+    c = hw.get("collector") if isinstance(hw, dict) else None
+    view = {"installed": hw is not None, "supported": isinstance(c, dict) and c.get("v") == 3}
+    if view["supported"]:   # root wrote it, but a version mismatch or bug must not break the page: keep only sane shapes
+        strs = lambda v: [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+        last = c.get("last") if isinstance(c.get("last"), str) else ""
+        fp = c.get("fp") if isinstance(c.get("fp"), dict) else {}
+        view.update(detected=_clean_detected(c.get("detected")),
+                    settings=_clean_values(c.get("settings")), pending_values=_clean_values(c.get("pending_values")),
+                    fp={k: v for k, v in fp.items() if k in COLLECTOR_KEYS and isinstance(v, str) and re.fullmatch(r"[0-9a-f]{16}", v)},
+                    from_page=strs(c.get("from_page")), pending=strs(c.get("pending")),
+                    rejected=[[str(r[0])[:80], str(r[1])[:300]] for r in c.get("rejected") or []
+                              if isinstance(r, (list, tuple)) and len(r) == 2][:20] if isinstance(c.get("rejected"), list) else [],
+                    rejected_more=c.get("rejected_more") if isinstance(c.get("rejected_more"), int) else 0,
+                    error=str(c.get("error") or "")[:300], sandbox=str(c.get("sandbox") or "")[:40],
+                    wanted={k: ch["to"] for k, ch in unhandled_request(last).items()})
+    return view
+
+
+def check_collector_changes(changes):
+    """The request for the root collector, as text. Changes the collector hasn't taken yet from the last save stay in
+    (the new save wins for a setting in both)."""
+    if not cfgstore.UI_ENABLED:
+        raise cfgstore.Invalid("the settings page is read-only (SETTINGS_UI=0)")
+    new = collector_changes_clean(changes)
+    hw = read_hw()
+    c = hw.get("collector") if isinstance(hw, dict) else None
+    last = c.get("last") if isinstance(c, dict) and isinstance(c.get("last"), str) else ""
+    text = json.dumps({"v": 3, "id": os.urandom(8).hex(),   # its own id: the same change saved again is a new request
+                       "changes": {**unhandled_request(last), **new}}, ensure_ascii=False)
+    if len(text.encode()) > COLLECTOR_REQ_MAX:
+        raise cfgstore.Invalid("collector settings: too big")
+    return text
+
+
+def write_collector_changes(text):
+    tmp = f"{COLLECTOR_REQ}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, COLLECTOR_REQ)
+    except OSError as e:
+        raise cfgstore.Invalid(f"the collector's settings couldn't be handed over ({e.strerror}): is {REQ_DIR} mounted "
+                               "and writable by the dashboard's user?")
+
+
+COLLECTOR_WAIT = 6.0   # seconds a save waits for the collector to take its request
+
+
+def wait_for_collector(text, wait=None):
+    """After a save: give the collector a few seconds to take the request (it looks every round), so the page shows
+    what's in effect, not what was in effect before."""
+    want, end = hashlib.sha256(text.encode("utf-8")).hexdigest(), time.monotonic() + (COLLECTOR_WAIT if wait is None else wait)
+    while time.monotonic() < end:
+        hw = read_hw()
+        c = hw.get("collector") if isinstance(hw, dict) else None
+        if isinstance(c, dict) and c.get("last") == want:
+            return True
+        time.sleep(0.25)
+    return False
 
 
 def _ago(secs):
@@ -939,6 +1112,37 @@ def setup_checks(host=None):
         else:
             add("collector", "ok", "Hardware & security collector",
                 f"Connected: updated {_ago(age)} ago; security details {_ago(sd_age)} ago.")
+        cv = collector_view()
+        if not cv["supported"]:
+            add("collector_page", "todo", "Update the collector to set it up here",
+                "This collector is older than the settings page: drives, security checks and backups can only be set in "
+                "/etc/homelab-dash/collector.toml until it's updated.",
+                [("On the host, in the folder you cloned (the one with docker-compose.yml):", "sudo bash collector/install.sh")],
+                optional=True)
+        else:
+            sb = cv.get("sandbox")
+            if sb == "none":
+                add("sandbox", "todo", "The collector runs without the extra sandbox",
+                    "When it was installed, no stricter sandbox passed the collector's self-test on this machine, so it has "
+                    "the plain settings: it can't change /usr, /etc or anyone's home, but nothing stops it using the network.",
+                    [("To try again (on the host, in the folder you cloned):", "sudo bash collector/sandbox.sh")], optional=True)
+            elif sb:
+                add("sandbox", "ok", "The collector is sandboxed", f"Level: {sb} (no network, a read-only system"
+                    + (", only the root powers it needs)." if sb == "strict" else ")."), optional=True)
+            if cv.get("pending"):
+                n = len(cv["pending"])
+                names = ", ".join(COLLECTOR_LABELS.get(k, k) for k in cv["pending"][:6])
+                add("collector_pending", "warn", f"{n} collector setting{'s' if n > 1 else ''} wait{'' if n > 1 else 's'} for your OK on the host",
+                    f"Waiting: {names}. Files and patterns make the collector (it runs as root) read files and run searches, so "
+                    "a person at the host approves them. The command shows exactly what changes and asks before applying.",
+                    [("On the host:", "sudo homelab-dash-collector --apply")], link=collector_section(cv["pending"][0]))
+            if cv.get("error"):
+                add("collector_error", "warn", "The collector can't use the page's settings right now", cv["error"],
+                    link="#drives")
+            if cv.get("rejected"):
+                add("collector_refused", "warn", "The collector refused some settings",
+                    "; ".join(f"{COLLECTOR_LABELS.get(k, k)}: {why}" for k, why in cv["rejected"][:5])[:600],
+                    link=collector_section(cv["rejected"][0][0]))
 
     on = {"Torrents": QBIT["on"], "Requests": SEERR["on"], "Now playing": TAUTULLI["on"]}
     paths = {"Torrents": "/api/qbit", "Requests": "/api/requests", "Now playing": "/api/plex"}
@@ -1290,12 +1494,22 @@ class Handler(BaseHTTPRequestHandler):
                 store = cfgstore._in("integrations", cfgstore.apply_secret_changes, new, ED, cfgstore._obj(d.get("secrets"), "secrets"), STORE)
                 if VIA_PROXY_ENV:         # set in the environment: it wins, so keep what's saved (as for integration URLs)
                     new["via_proxy"] = ED["via_proxy"]
+                # the root collector's settings: checked now, handed over as a request only once the rest is saved
+                wish = cfgstore._in("collector", check_collector_changes, d.get("collector")) if "collector" in d else None
                 if DEMO:                  # public demo: check everything, store nothing (visitors can't change it for others)
                     return self.send(200, {**settings_view(self.headers.get("Host")), "settings": new, "demo_not_saved": True})
                 cfgstore._in("setup", cfgstore.save, new, store)
                 apply_settings()
+                warning = ""
+                if wish is not None:
+                    try:
+                        write_collector_changes(wish)
+                    except cfgstore.Invalid as e:   # the dashboard's settings are saved and in use; say what wasn't
+                        warning, wish = str(e), None
             print(f"settings changed by {who}", flush=True)
-            return self.send(200, settings_view(self.headers.get("Host")))
+            if wish is not None:
+                wait_for_collector(wish)
+            return self.send(200, {**settings_view(self.headers.get("Host")), **({"collector_warning": warning} if warning else {})})
         if path == "/api/settings/test":
             name = self.json_body(1024).get("name", "")
             return self.send(200, test_integration(name))

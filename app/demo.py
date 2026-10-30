@@ -259,3 +259,20 @@ def live():
             "power": {"pkg_w": round(wobble(48, 18, 25), 1), "limit_w": 88.0}, "gpu": s["hw"]["gpu"],
             "io": {"read_bps": sum(d["read_bps"] for d in disks), "write_bps": sum(d["write_bps"] for d in disks),
                    "disks": sorted(disks, key=lambda d: -d["busy"])}}
+
+
+# The collector's side of the settings page (the real one comes from hw.json's "collector" block).
+COLLECTOR = {
+    "installed": True, "supported": True, "error": "", "wanted": {}, "pending": [], "pending_values": {}, "rejected": [],
+    "rejected_more": 0, "from_page": [], "sandbox": "strict", "fp": {},
+    "detected": {"mounts": ["/", "/mnt/disk1", "/mnt/disk2", "/mnt/parity"], "ifaces": ["eth0"], "jails": ["sshd"],
+                 "ssh_units": ["ssh"], "authelia": ["authelia"], "authelia_db": {"authelia": "/srv/authelia/config/db.sqlite3"},
+                 "gpu": True, "firewall": "ufw", "default_iface": "eth0"},
+    "settings": {"interval": 5, "mount_labels": {"/": "system", "/mnt/parity": "parity"},
+                 "security.fail2ban_jail": "sshd", "security.ssh_unit": "ssh", "security.authelia_container": "authelia",
+                 "security.process_watch": True, "security.cron_watch": True, "security.firewall": True,
+                 "security.immutable_files": ["/opt/app/config.ini"], "backup.log": "/var/log/backup.log",
+                 "backup.max_age_hours": 26,
+                 "backup.jobs": [{"label": "Nightly snapshot", "regex": "snapshot done", "dest": "/mnt/backup", "size": True, "every": "nightly"},
+                                 {"label": "DB dumps", "regex": "dumped (?P<name>\\S+)", "files": ["/srv/backups/db/*.sql.gz"]}]},
+}
