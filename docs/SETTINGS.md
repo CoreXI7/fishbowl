@@ -88,24 +88,24 @@ that can forge the proxy's address (ARP spoofing needs only the default `NET_RAW
 close it, give the dash a network that only the proxy shares, and answer only there:
 
 ```sh
-docker network create --internal --subnet 10.250.81.0/29 dash_front
-docker network connect --ip 10.250.81.3 dash_front <proxy container>
+docker network create --internal --subnet 172.31.250.0/29 dash_front
+docker network connect --ip 172.31.250.3 dash_front <proxy container>
 ```
 
 ```yaml
 services:
   dash:
     environment:
-      LISTEN: "127.0.0.1 10.250.81.2"       # 127.0.0.1 keeps the healthcheck working
-      TRUSTED_PROXY: "nginx 10.250.81.3"    # Docker's DNS gives only one of the proxy's addresses: list the new one
+      LISTEN: "127.0.0.1 172.31.250.2"       # 127.0.0.1 keeps the healthcheck working
+      TRUSTED_PROXY: "nginx 172.31.250.3"    # Docker's DNS gives only one of the proxy's addresses: list the new one
     networks:
       reverse_proxy: {}                    # still needed to reach the services it checks
-      dash_front: {ipv4_address: 10.250.81.2}
+      dash_front: {ipv4_address: 172.31.250.2}
 networks:
   dash_front: {external: true}
 ```
 
-Then point the proxy host at `10.250.81.2:8000` (and add the network to the proxy's own compose file so it survives a
+Then point the proxy host at `172.31.250.2:8000` (and add the network to the proxy's own compose file so it survives a
 recreate).
 
 ## Root collector (`/etc/homelab-dash/collector.toml`)

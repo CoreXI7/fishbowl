@@ -132,7 +132,7 @@ class Setup(unittest.TestCase):
         self.assertIn(":" + app.NPM_DIR + ":ro", " ".join(s["code"] for s in st["services"]["steps"]))
 
     def test_all_set(self):
-        app = load_app(TRUSTED_PROXY="127.0.0.1", ORIGIN="https://dash.example.com", LISTEN="127.0.0.1 10.250.81.2")
+        app = load_app(TRUSTED_PROXY="127.0.0.1", ORIGIN="https://dash.example.com", LISTEN="127.0.0.1 172.31.250.2")
         npm_conf(app.NPM_DIR, "plex.example.com")
         collector_files(app)
         st = self.states(app)

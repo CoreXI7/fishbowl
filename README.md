@@ -123,7 +123,8 @@ docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1
 ```
 
 Only the newest code works (a new one appears at every start until the account exists), so nobody who finds a fresh
-install before you can claim it.
+install before you can claim it. Anyone who can read the container's log (a log viewer like Dozzle or Portainer, a log
+shipper) can read the code too: create the account right after the first start.
 
 - **Password**: 15 characters or more (a few random words work well), checked against common passwords. No other rules;
   password managers and pasting are welcome.
@@ -204,7 +205,7 @@ Most updates need nothing from you. These ones might:
 | **Clients that aren't your proxy are dropped** right away. | Make sure `TRUSTED_PROXY` names your proxy. It can now list several names or IPs, space-separated. |
 | **New `LISTEN` setting** (optional, recommended). | Lets the dash answer only on a network that your proxy alone shares with it, so no other container can reach it. [How to set it up](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen). |
 | **Upload limits**: images only (PNG, JPEG, GIF, WebP), 2 MB each, 200 files / 100 MB in all. SVG is refused. | Nothing, unless you upload a lot of icons. |
-| **Fonts are now part of the app** instead of coming from Google. | Nothing. The page loads nothing from outside any more. |
+| **Fonts are now part of the app** instead of coming from Google. | Nothing. The page no longer loads fonts from outside (service icons from a CDN and posters from TMDB still come from there when set up). |
 | **"Check through the proxy" moved onto the settings page** (Services → Advanced), and an entry can carry a path (`vault.example.com/alive`). | Nothing: if `CHECK_VIA_PROXY` is set in the compose file it still wins, and the page shows it locked. You can remove it from the compose file and manage the list on the page instead. |
 | **`.env` must exist** (the compose file loads it). | `cp .env.example .env`, even if you leave it empty. |
 
@@ -403,7 +404,8 @@ browser ──► reverse proxy ──► dash container: its own sign-in (or yo
 - **The collector** tries to hide passwords and tokens in the log and cron lines it reports (common forms: `-p`,
   `--password`, `user:pass@`, `PASSWORD=`, bearer tokens, push-service URLs). A password passed as a plain argument
   (`backup.sh hunter2`) looks like any other word: keep secrets in files or the environment, not on cron lines. The
-  only thing the dash can ask of it is "approve the cron jobs as they are now", checked by hash.
+  dash can ask it to "approve the cron jobs as they are now" (checked by hash) and pass on collector settings changed
+  on the settings page: safe ones apply by themselves, paths and patterns only after `sudo homelab-dash-collector --apply`.
 
 The limit: anyone with Docker or root access on the host can read the container's environment, as with any
 self-hosted app. Keep `.env` at `chmod 600` and out of git (`.gitignore` covers it).

@@ -34,7 +34,7 @@ services:
       - /var/lib/homelab-dash:/hw:ro
       - /var/lib/homelab-dash/req:/req
     # LAN-only use without a reverse proxy: uncomment, and set TRUSTED_PROXY: "" above.
-    # ports: ["8000:8000"]
+    # ports: ["192.168.1.10:8000:8000"]   # your host's LAN address: a bare "8000:8000" also listens on every other interface, past ufw
     networks:
       - reverse_proxy
     healthcheck:

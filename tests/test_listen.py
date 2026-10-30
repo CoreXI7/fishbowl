@@ -44,12 +44,12 @@ class Listen(unittest.TestCase):
     def test_several_entries_and_ipv6_listen(self):
         """TRUSTED_PROXY may list several names/IPs (Docker's DNS gives only one address of a container on two
         networks); LISTEN may hold IPv6 addresses and repeats without crashing."""
-        app = load_app(TRUSTED_PROXY="proxy.test 10.250.81.3")
+        app = load_app(TRUSTED_PROXY="proxy.test 172.31.250.3")
         real = app.socket.getaddrinfo
         app.socket.getaddrinfo = lambda host, *a, **k: (
-            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.18.0.36", 0))] if host == "proxy.test" else real(host, *a, **k))
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.31.0.36", 0))] if host == "proxy.test" else real(host, *a, **k))
         try:
-            self.assertEqual(app.proxy_ips(), {"172.18.0.36", "10.250.81.3"})
+            self.assertEqual(app.proxy_ips(), {"172.31.0.36", "172.31.250.3"})
         finally:
             app.socket.getaddrinfo = real
         servers = app.make_servers("127.0.0.2 127.0.0.2 ::1", 0)
@@ -63,7 +63,7 @@ class Listen(unittest.TestCase):
     def test_refused_before_a_thread_starts(self):
         """A client that isn't the proxy is dropped in verify_request(): no handler thread, so other containers
         can't use up the dash's threads (pids_limit) with idle connections."""
-        app = load_app(TRUSTED_PROXY="10.250.81.3")
+        app = load_app(TRUSTED_PROXY="172.31.250.3")
         srv = app.make_servers("127.0.0.2", 0)[0]
         import threading
         threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -82,7 +82,7 @@ class Listen(unittest.TestCase):
     def test_own_address_is_allowed(self):
         """The dash health-checks its own proxy host (dash.example -> dash:8000), i.e. connects to itself from its
         own address: that must still get an answer."""
-        app = load_app(TRUSTED_PROXY="10.250.81.3")
+        app = load_app(TRUSTED_PROXY="172.31.250.3")
         srv = app.make_servers("127.0.0.2", 0)[0]
         import threading
         threading.Thread(target=srv.serve_forever, daemon=True).start()

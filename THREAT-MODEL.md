@@ -50,7 +50,8 @@ proxy's SSO), but the reasoning applies to any install.
    JSON API and is rendered with `innerHTML`.
 4. **Upstream services ← dash.** The dash fetches from every service upstream (health check, favicon) and
    from the integrations. Any of those services may be hostile and may answer with redirects or huge bodies.
-5. **Dash → root collector.** The only intended channel is `req/cron-approve` (a hash the collector verifies).
+5. **Dash → root collector.** The intended channels are `req/cron-approve` (a hash the collector verifies) and
+   `req/collector-settings.json` (see "Collector settings from the settings page").
    The folder is writable by the dash's uid, so anything the dash (or another process with that uid) puts there
    is untrusted input to root.
 6. **Containers → collector inputs.** Containers can write to their own volumes (Authelia's database folder,

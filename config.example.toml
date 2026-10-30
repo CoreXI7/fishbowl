@@ -31,7 +31,7 @@ skip_hosts = ["www.example.com"]
 
 [security]
 # IPs you trust. Prefixes end with a dot. SSH/SSO logins from anywhere else show up red.
-known_ips = ["192.168.1.", "172.18."]
+known_ips = ["192.168.1."]   # not Docker's ranges (172.17-31.): a hairpinned or proxied visitor shows up from there
 
 # ---------- optional integrations: each one turns on when its URL is set AND its secrets are saved (settings page or .env) ----------
 
