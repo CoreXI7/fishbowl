@@ -258,7 +258,9 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
 - `TRUSTED_PROXY`: direct connections from other containers get 403 (every address of the proxy counts). A name that
   answers with two addresses of one kind is shared by another container (a compose service called like the proxy
   gets its name as an alias), so it's trusted for neither; a name that stops existing stops counting (Docker gives its
-  old address to the next container).
+  old address to the next container). On more than one network, without `LISTEN`, names aren't trusted at all: Docker
+  answers a name from one network only, so a container on another network with the proxy's name would be the only
+  "proxy". (On one network, a container with the proxy's name is still trusted while the real proxy is stopped.)
 - `LISTEN` (optional): the dash answers only on given addresses, e.g. a network that only the proxy shares with it,
   so other containers can't reach it at all. This is the control for trust boundary 2.
 - CSP `script-src 'self'`, no inline script; fonts and styles from the dashboard only.

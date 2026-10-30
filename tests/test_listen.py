@@ -150,5 +150,28 @@ class Listen(unittest.TestCase):
         self.assertTrue({i["id"]: i for i in app.setup_checks()}["listen"]["optional"])
 
 
+    def test_a_name_isnt_trusted_on_more_than_one_network(self):
+        # Docker answers a name from one of the container's networks only: a container on another network of the dash
+        # holding the proxy's name as an alias became the only "proxy" (audit round 2). On more than one network,
+        # without LISTEN, a name isn't trusted; the proxy's IP still is.
+        app = load_app(TRUSTED_PROXY="proxy.test 10.9.0.3")
+        self.resolving(app, [["10.0.0.5"]])
+        app.network_count = lambda: 2
+        self.assertEqual(app.proxy_ips(), {"10.9.0.3"})
+        item = {i["id"]: i for i in app.setup_checks()}["proxy"]
+        self.assertEqual(item["state"], "problem")
+        self.assertIn("more than one", item["title"])
+        app.network_count = lambda: 1
+        self.assertEqual(self.again(app), {"10.0.0.5", "10.9.0.3"})
+        app = load_app(TRUSTED_PROXY="proxy.test", LISTEN="127.0.0.1")
+        self.resolving(app, [["10.0.0.5"]])
+        app.network_count = lambda: 2
+        self.assertEqual(app.proxy_ips(), {"10.0.0.5"}, "with LISTEN, only the proxy's own network reaches the dash")
+
+    def test_an_odd_name_doesnt_crash(self):
+        app = load_app(TRUSTED_PROXY="a..b " + "x" * 70)
+        self.assertEqual(app.proxy_ips(), set())
+
+
 if __name__ == "__main__":
     unittest.main()

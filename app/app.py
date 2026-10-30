@@ -186,14 +186,21 @@ def proxy_ips():
     on the network): either could be the proxy, so neither counts. A lookup that fails for now keeps the last good
     answer; a name that no longer exists keeps nothing (Docker hands its old address to the next container)."""
     if time.monotonic() - _proxy_ip["at"] > 60:
-        ips, shared, by = set(), {}, _proxy_ip.setdefault("by", {})
+        ips, shared, skipped, by = set(), {}, [], _proxy_ip.setdefault("by", {})
+        # On more than one network Docker answers a name from one of them only: a container on another network holding
+        # the proxy's name as an alias would be the only "proxy". Then (unless LISTEN keeps those networks out) only
+        # addresses count.
+        names_ok = network_count() <= 1 or listen_specific()
         for entry in TRUSTED_PROXY.split():
+            if not names_ok and not is_address(entry):
+                skipped.append(entry)
+                continue
             try:
                 by[entry] = {a[4][0] for a in socket.getaddrinfo(entry, None)}
             except socket.gaierror as e:
                 if e.errno in (socket.EAI_NONAME, getattr(socket, "EAI_NODATA", socket.EAI_NONAME)):
                     by.pop(entry, None)
-            except OSError:
+            except (OSError, UnicodeError):   # (a label that's empty or too long isn't a name)
                 pass
             found = by.get(entry, set())
             if sum(":" not in a for a in found) > 1 or sum(":" in a for a in found) > 1:
@@ -203,8 +210,29 @@ def proxy_ips():
                                    "one container has that name, so none of them is trusted (name the proxy by its IP)"), flush=True)
                 continue
             ips |= found
-        _proxy_ip.update(ips=ips, at=time.monotonic(), shared=shared)
+        _proxy_ip.update(ips=ips, at=time.monotonic(), shared=shared, skipped=skipped)
     return _proxy_ip["ips"]
+
+
+def network_count():
+    """How many networks (interfaces with a route, loopback aside) the container is on; looked up once a minute."""
+    if time.monotonic() - _nets["t"] > 60:
+        _nets["t"], _nets["n"] = time.monotonic(), 1
+        try:
+            with open("/proc/net/route") as f:
+                _nets["n"] = len({line.split()[0] for line in f.read(65536).splitlines()[1:] if line.split() and line.split()[0] != "lo"})
+        except (OSError, IndexError):
+            pass
+    return _nets["n"]
+
+
+_nets = {"t": float("-inf"), "n": 1}
+
+
+def listen_specific():
+    """LISTEN names addresses (none of them a wildcard): the dash then answers only on those networks."""
+    addrs = LISTEN.split()
+    return bool(addrs) and not any(a in ("0.0.0.0", "::", "*") for a in addrs)
 
 
 def proxy_shared():
@@ -1191,6 +1219,16 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             "proxy's HTTPS in between. Fishbowl's own sign-in still protects everything.",
             [find_proxy, ("In docker-compose.yml, change the TRUSTED_PROXY line to that name:", "TRUSTED_PROXY: <your proxy's container name>")],
             compose=True)
+    elif proxy_ips() is not None and _proxy_ip.get("skipped"):
+        names = ", ".join(_proxy_ip["skipped"])
+        add("proxy", "problem", "The proxy's name isn't trusted: the dashboard is on more than one network",
+            f"TRUSTED_PROXY names {names!r}, but the dashboard is on more than one Docker network, and Docker answers a name "
+            "from one of them only: a container on another network that has the same name (or alias) could pass for "
+            "your proxy. So only addresses count until you give the proxy's IP, or LISTEN keeps the other networks out.",
+            [("Find the proxy's address on the network it shares with the dashboard:",
+              "docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' <your proxy's container name>"),
+             ("Put it in TRUSTED_PROXY in docker-compose.yml (after the name, or instead of it):", "TRUSTED_PROXY: <the proxy's IP>"),
+             ("Or answer only on the proxy's network: see LISTEN in docs/SETTINGS.md.", "")], compose=True)
     elif proxy_shared():
         entry, found = next(iter(proxy_shared().items()))
         add("proxy", "problem", "More than one container answers to the proxy's name",

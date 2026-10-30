@@ -38,6 +38,7 @@ def load_app(**env):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     mod.TEST_TMP = tmp
+    mod.network_count = lambda: 1   # (a container on one network; the host running the tests may have many)
     if "AUTH" not in env and not mod.DEMO:
         mod.AUTH = "proxy"   # tests of other things skip the sign-in (it has its own: test_auth.py, with AUTH set)
     return mod
