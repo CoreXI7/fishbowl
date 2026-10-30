@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import socket
+import stat
 import sys
 import threading
 import time
@@ -244,17 +245,27 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 # ---------- services (from NPM + config) ----------
 
 def parse_npm_conf(path):
-    """One NPM proxy host file -> {name, upstream, auth}, or None if it isn't a plain proxy host."""
+    """One NPM proxy host file -> {name, upstream, auth}, or None if it isn't a plain proxy host. Read like data from
+    another program: a regular file only (not through a link, never waiting on a FIFO), at most 256 KB, any bytes;
+    only http(s) upstreams (a file:// one would have the icon fetch read local files)."""
     try:
-        with open(path) as f:
-            txt = f.read()
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > 256 * 1024:
+            return None
+        txt = os.read(fd, 256 * 1024).decode("utf-8", "replace")
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
     name = re.search(r"server_name\s+([^\s;]+)", txt)
     server = re.search(r'set \$server\s+"?([^";]+)"?;', txt)
     port = re.search(r"set \$port\s+(\d+);", txt)
     scheme = re.search(r"set \$forward_scheme\s+(\w+);", txt)
-    if not (name and server and port):
+    if not (name and server and port) or (scheme and scheme.group(1) not in ("http", "https")):
         return None
     return {
         "name": name.group(1),
