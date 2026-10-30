@@ -49,6 +49,19 @@ class NpmConf(unittest.TestCase):
         self.assertFalse(t.is_alive())
         self.assertLess(time.monotonic() - t0, 2)
 
+    def test_long_comments_and_error_texts_stay_quick(self):
+        # (a 250 KB comment in NPM's Advanced box took 28 s to parse, a 64 KB error line 1.5 s to scrub, a page of 200 KB
+        # of "<link" 1.6 s to search, each holding the GIL; audit round 3)
+        import time
+        self.write("long.conf", 'server {\n  server_name long.example;\n  set $server "10.0.0.8";\n  set $port 80;\n  # '
+                   + 'set $server "' * 12_000 + "include x" * 5_000 + "\n}\n")
+        t = time.monotonic()
+        self.assertIn("long.example", self.names())
+        self.app.scrub("BadStatusLine: " + "http://" * 9000)
+        import re
+        self.app.link_tags("<link" * 40_000)
+        self.assertLess(time.monotonic() - t, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

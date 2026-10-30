@@ -169,6 +169,7 @@ def scrub(text):
     text = str(text)
     for v in SECRETS:
         text = text.replace(v, "***").replace(urllib.parse.quote_plus(v), "***").replace(urllib.parse.quote(v, safe=""), "***")
+    text = text[:2000]   # (the patterns below slow down on long text: a 64 KB error line took 1.5 s)
     text = re.sub(r"(?i)(api_?key|token|pass(word)?|secret)=[^&\s'\"]*", r"\1=***", text)
     return re.sub(r"(https?://[^\s'\"?]*)\?[^\s'\"]*", r"\1?…", text)[:300]
 
@@ -291,6 +292,9 @@ def parse_npm_conf(path):
         if not stat.S_ISREG(st.st_mode) or st.st_size > 256 * 1024:
             return None
         txt = os.read(fd, 256 * 1024).decode("utf-8", "replace")
+        # NPM's own lines are short: comments and lines over 4 KB (an Advanced box can hold anything) are dropped before
+        # the patterns run (one 250 KB comment took 28 s to parse)
+        txt = "\n".join(l for l in txt.splitlines() if len(l) <= 4096 and not l.lstrip().startswith("#"))
     except OSError:
         return None
     finally:
@@ -394,16 +398,25 @@ def read_npm_hosts():
         sig = tuple(sorted((e.name, e.stat().st_mtime_ns) for e in os.scandir(NPM_DIR) if e.name.endswith(".conf")))
     except OSError:
         sig = ()
-    if sig != _npm["sig"]:
-        conf = [h for h in (parse_npm_conf(os.path.join(NPM_DIR, n)) for n, _ in sig) if h]
-        hosts = [h for h in conf if h["name"] not in SKIP_HOSTS]
-        n_npm = len(hosts)
-        for s in EXTRA_SERVICES:
-            if s.get("name") and s.get("url") and s["name"] not in SKIP_HOSTS:
-                hosts.append({"name": s["name"], "upstream": s["url"].rstrip("/"), "auth": bool(s.get("auth"))})
-        hosts.sort(key=lambda h: (h["name"].split(".", 1)[-1], h["name"]))   # group by domain, then name
-        _npm.update(sig=sig, hosts=hosts, conf=conf, n_npm=n_npm)
+    with _npm_lock:   # (one re-parse at a time: requests arriving meanwhile use its result)
+        if sig != _npm["sig"]:
+            _reparse_npm(sig)
     return _npm["hosts"]
+
+
+_npm_lock = threading.Lock()
+
+
+def _reparse_npm(sig):
+    """Re-read the NPM proxy-host files (read_npm_hosts calls it under _npm_lock)."""
+    conf = [h for h in (parse_npm_conf(os.path.join(NPM_DIR, n)) for n, _ in sig) if h]
+    hosts = [h for h in conf if h["name"] not in SKIP_HOSTS]
+    n_npm = len(hosts)
+    for s in EXTRA_SERVICES:
+        if s.get("name") and s.get("url") and s["name"] not in SKIP_HOSTS:
+            hosts.append({"name": s["name"], "upstream": s["url"].rstrip("/"), "auth": bool(s.get("auth"))})
+    hosts.sort(key=lambda h: (h["name"].split(".", 1)[-1], h["name"]))   # group by domain, then name
+    _npm.update(sig=sig, hosts=hosts, conf=conf, n_npm=n_npm)
 
 
 def check(host):
@@ -535,6 +548,12 @@ ICON_BUDGET = 20
 _icon_locks = {}
 
 
+def link_tags(html):
+    """The <link> tags of a page's first 64 KB (where its head is), each at most 2,000 characters: an unbounded search
+    of a page full of "<link" took seconds, holding every thread."""
+    return re.findall(r"<link\b[^>]{0,2000}>", html[:65536], re.I)
+
+
 def _favicon(name, deadline):
     host = next((h for h in read_npm_hosts() if h["name"] == name), None)
     if not host:
@@ -544,8 +563,7 @@ def _favicon(name, deadline):
     cands = []
     page = fetch_same_host(base + "/", base, name, 200_000)      # every fetch stays on the service's own upstream
     if page:
-        html = page[1].decode("utf-8", "replace")
-        for tag in re.findall(r"<link\b[^>]*>", html, re.I):
+        for tag in link_tags(page[1].decode("utf-8", "replace")):
             if re.search(r'rel=["\'][^"\']*icon', tag, re.I):
                 href = re.search(r'href=["\']([^"\']+)', tag, re.I)
                 if href and not href.group(1).startswith("data:"):

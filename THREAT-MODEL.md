@@ -292,6 +292,10 @@ bloat the collector.
 
 ## Still open
 
+- Over plain HTTP on a LAN name or IP, browsers send no `Sec-Fetch-Site`, so the rule that refuses API reads from
+  other sites can't tell them apart there; `Cross-Origin-Resource-Policy: same-origin` still keeps other pages from
+  reading the answers.
+
 - Plain-HTTP sign-in is refused when a visitor arrives straight from the container's IPv4 gateway (every visitor
   looks alike there). An IPv6 gateway, or a gateway address the proxy passes on as X-Real-IP (Docker's userland
   proxy in front of the proxy), isn't recognised: behind such a setup, use HTTPS.
