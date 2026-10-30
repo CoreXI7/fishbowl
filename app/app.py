@@ -1326,7 +1326,8 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
                           for g in heads)) + " Nginx Proxy Manager sends both.",
                 [("If you use Caddy: in the reverse_proxy block for the dashboard, add:", "header_up X-Real-IP {remote_host}"),
                  ("Or, if you use HAProxy: in the dashboard's backend, add:",
-                  "http-request set-header X-Real-IP %[src]\nhttp-request set-header X-Forwarded-Proto https if { ssl_fc }"),
+                  "http-request set-header X-Real-IP %[src]\nhttp-request set-header X-Forwarded-Proto https if { ssl_fc }\n"
+                  "http-request set-header X-Forwarded-Proto http if !{ ssl_fc }"),
                  ("Or, with any other proxy: send X-Real-IP (the visitor's address) and X-Forwarded-Proto (http or https).", "")])
         if "gateway" in proxy_gaps:
             add("gateway", "warn", "Every visitor looks like the same address",
