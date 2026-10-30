@@ -5,6 +5,8 @@ symlinks in paths from collector.toml (showing root-only files on the card), and
 snapshot readable by everyone."""
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -109,6 +111,36 @@ class Files(unittest.TestCase):
         self.authelia_db("CREATE TABLE authentication_logs (id INTEGER PRIMARY KEY, time TEXT, successful INT, banned INT, "
                          "username TEXT, auth_type TEXT, remote_ip TEXT, request_uri TEXT);")
         self.assertIsNotNone(self.col.authelia_detail(), "a plain table still works")
+
+class AutheliaLog(unittest.TestCase):
+    """Anyone on the internet can fill Authelia's log with failed sign-ins (long user names too). Reading the last 24 h
+    of it whole got the collector OOM-killed (200 MB cap) at ~55 MB of log, every minute again (audit 2026-10-30)."""
+
+    def test_a_huge_log_is_streamed(self):
+        tmp = tempfile.mkdtemp(prefix="hd-authelia-")
+        stub = os.path.join(tmp, "docker")
+        with open(stub, "w") as f:
+            f.write(f"#!{sys.executable} -I\n"
+                    "import sys\n"
+                    "line = 'time=\"2026-10-30T09:%02d:00Z\" level=error msg=\"Unsuccessful 1FA authentication attempt by user ' "
+                    "+ chr(39) + 'x' * 1500 + chr(39) + '\" remote_ip=203.0.113.9\\n'\n"
+                    "for i in range(120_000):\n"
+                    "    sys.stdout.write(line % (i % 60))\n"
+                    "sys.stdout.flush()\n"
+                    "sys.stderr.write('time=\"2026-10-30T10:00:00Z\" msg=\"Unsuccessful 2FA authentication attempt by user '"
+                    " + chr(39) + 'newest' + chr(39) + '\" remote_ip=203.0.113.7\\n')\n")
+        os.chmod(stub, 0o755)
+        code = ("import os, resource, sys; sys.path.insert(0, %r); from test_collector_requests import load_collector; "
+                "col, _ = load_collector(); before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss; "
+                "n, recent = col.authelia_failures('authelia'); "
+                "print(n, recent[0]['user'], len(recent), (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before) >> 10)"
+                % os.path.dirname(os.path.abspath(__file__)))
+        out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=120,
+                             env={**os.environ, "PATH": tmp + os.pathsep + os.environ.get("PATH", "")})
+        self.assertEqual(out.returncode, 0, out.stderr[-500:])
+        n, newest, kept, grew_mb = out.stdout.split()
+        self.assertEqual((int(n), newest, int(kept)), (120_001, "newest", 6), "every failure counted, the newest first")
+        self.assertLess(int(grew_mb), 50, "~190 MB of log, read without holding it")
 
 
 if __name__ == "__main__":

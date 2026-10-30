@@ -83,6 +83,7 @@ proxy's SSO), but the reasoning applies to any install.
 | Upstream answer speed (one byte every few seconds) | dash threads and connection slots | every outbound request has an overall deadline (3x its timeout: 15 s for checks and icons, 30 s for integrations); at the deadline its socket is shut down; an icon cut short isn't kept |
 | Upstream answer size | dash memory | `read_json()`: 32 MB qBittorrent, 8 MB Seerr/Tautulli, at most 1,000,000 JSON values; the torrent state is capped at 20,000 (ids at 64 characters), lists at 100 Plex sessions and 50 requests, qBittorrent's cookies at 50 |
 | SSH journal (log lines an attacker writes) | root collector | one bounded read a minute: lines over 1,100 bytes skipped without being held, ASCII only, newest 100,000 kept, process group killed on timeout; the card and the details use the same anchored parser |
+| Authelia's log (failed sign-ins anyone can cause, user names they choose) | root collector | streamed line by line, lines over 2,000 bytes skipped without being held, only the count and the newest 6 kept; docker's process group killed after 30 s |
 | Shell | none | every command is an argument list, never a shell string |
 
 ## What runs as root

@@ -21,6 +21,7 @@ import fcntl
 import fnmatch
 import glob
 import hashlib
+import heapq
 import ipaddress
 import json
 import os
@@ -471,15 +472,15 @@ _journal = {"at": float("-inf"), "lines": None, "lock": threading.Lock()}
 LAST_SSH = [None]             # the card's last good SSH numbers: shown again when a read fails, not "all quiet"
 
 
-def _journal_lines(stream):
+def _journal_lines(stream, line_max=JOURNAL_LINE_MAX):
     """Lines from journalctl's binary output: split on \\n only (a \\r can't start a fake line), at most
-    JOURNAL_LINE_MAX bytes read per line (the rest of a longer one is skipped without ever holding it), kept as
+    line_max bytes read per line (the rest of a longer one is skipped without ever holding it), kept as
     ASCII (sshd escapes 8-bit bytes anyway; anything else becomes "?"), so 100,000 lines stay under ~110 MB."""
     while True:
-        line = stream.readline(JOURNAL_LINE_MAX + 1)
+        line = stream.readline(line_max + 1)
         if not line:
             return
-        if len(line) > JOURNAL_LINE_MAX:
+        if len(line) > line_max:
             while line and not line.endswith(b"\n"):    # skip the rest of an over-long line
                 line = stream.readline(65536)
             continue
@@ -541,6 +542,51 @@ def ssh_journal(units, timeout=60, wait=None):
         _journal["lock"].release()
 
 
+AUTHELIA_FAIL = re.compile(r'time="([^"]+)".*Unsuccessful (\w+) authentication attempt by user \'([^\']*)\'.*remote_ip=(\S+)')
+
+
+def authelia_failures(container, timeout=30):
+    """(how many, the newest 6) failed sign-ins in the Authelia container's last 24 h of log. Streamed line by line
+    (lines over 2,000 bytes skipped without being held) and only those two kept: anyone on the internet can fill that
+    log with failed sign-ins and long user names, and reading it whole got the collector OOM-killed (200 MB cap) at
+    ~55 MB of log, again every minute. On timeout docker's process group is killed (a hung dockerd can't hold the
+    security card)."""
+    try:
+        p = subprocess.Popen(["docker", "logs", "--since", "24h", container], stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, start_new_session=True)
+    except OSError:
+        return 0, []
+
+    def kill_group():
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    timer = threading.Timer(timeout, kill_group)
+    count, newest = 0, []                                 # a heap of the 6 newest (stdout and stderr interleave)
+    try:
+        timer.start()
+        for n, line in enumerate(_journal_lines(p.stdout, 2000)):
+            if "Unsuccessful" not in line:
+                continue
+            m = AUTHELIA_FAIL.search(line)
+            if m:
+                count += 1
+                item = (m.group(1), n, {"time": m.group(1), "factor": m.group(2), "user": m.group(3), "ip": m.group(4)})
+                (heapq.heappush if len(newest) < 6 else heapq.heappushpop)(newest, item)
+    finally:
+        timer.cancel()
+        if timer.ident is not None:
+            timer.join()
+        p.stdout.close()
+        try:
+            p.wait(5)
+        except subprocess.TimeoutExpired:
+            kill_group()
+            p.wait()
+    return count, [x[2] for x in sorted(newest, reverse=True)]
+
+
 MINERS = ("xmrig", "minerd", "cryptonight", "kdevtmpfsi", "kinsing", "kworkerds", "xmr-stak")
 LAST_TOP = []        # the 10 busiest processes from the latest security() round (shown in the Process watch details)
 TOP_AT = [0]         # ... and when they were measured
@@ -579,21 +625,8 @@ def security():
         s["ssh"] = {**(LAST_SSH[0] or {"logins": [], "failed_24h": 0, "as_of": None}), "stale": lines is None}
     authelia = SEC.get("authelia_container", "")
     if authelia and have("docker"):
-        fails = []
-        try:                    # a hung dockerd must not take the whole security card (fail2ban, SSH, firewall) with it
-            out = subprocess.run(["docker", "logs", "--since", "24h", authelia], capture_output=True, text=True,
-                                 errors="replace", timeout=30)
-            text_out = out.stdout + out.stderr
-        except (subprocess.TimeoutExpired, OSError):
-            text_out = ""
-        for line in text_out.splitlines():
-            if len(line) > 2000 or "Unsuccessful" not in line:      # crafted giant lines made the regex below crawl
-                continue
-            m = re.search(r'time="([^"]+)".*Unsuccessful (\w+) authentication attempt by user \'([^\']*)\'.*remote_ip=(\S+)', line)
-            if m:
-                fails.append({"time": m.group(1), "factor": m.group(2), "user": m.group(3), "ip": m.group(4)})
-        fails.sort(key=lambda f: f["time"])
-        s["authelia"] = {"failed_24h": len(fails), "recent": fails[-6:][::-1]}
+        count, recent = authelia_failures(authelia)
+        s["authelia"] = {"failed_24h": count, "recent": recent}
     if SEC.get("process_watch", True):
         procs = run(["ps", "-eo", "pid=,pcpu=,comm=,args=", "--sort=-pcpu"]).splitlines()
         watch = tuple(SEC.get("bad_process_names", MINERS))
