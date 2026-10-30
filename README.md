@@ -133,6 +133,7 @@ Most updates need nothing from you. These ones might:
 | Change | What to do |
 |---|---|
 | **homelab-dash is now called Fishbowl.** GitHub forwards the old address. | Nothing required. Optionally run `git remote set-url origin https://github.com/CoreXI7/fishbowl`. The collector keeps its `homelab-dash` names. |
+| **The collector's settings are on the settings page now, and it runs in a sandbox.** | Run `sudo bash collector/install.sh` again. Until then the page's Drives & hardware, Security and Backups sections say the collector is too old, and its settings stay in `/etc/homelab-dash/collector.toml`. |
 | **The collector gained new checks** (security details, CPU power, safer reading of logs). | Run `sudo bash collector/install.sh` again and restart it. Without that, the new detail views and the live window's power reading stay empty. |
 | **Redirects are no longer followed** when the dash talks to other services. A service that answers with a redirect still counts as **up**. | If qBittorrent, Seerr or Tautulli sits behind a redirect, point its URL straight at the real address. The settings page's **Test** button tells you if one redirects. |
 | **Clients that aren't your proxy are dropped** right away. | Make sure `TRUSTED_PROXY` names your proxy. It can now list several names or IPs, space-separated. |
@@ -160,6 +161,26 @@ and for what can't be, the Setup checklist gives the exact fix.
 - **Every theme edited the same way** (the Default theme picker moved into Themes), and services not in NPM get their own tile link.
 - **Accessible**: readable contrast in every theme, a visible focus ring, labels on every field, works with the
   keyboard alone and on a phone.
+
+#### 🧰 The collector's settings on the page, and a sandbox for it (Oct 29)
+
+![Backups on the settings page: a changed log file will need an OK on the host](docs/screenshot-collector.png)
+
+Drives, what the security card watches, and your backups are set on the settings page too. The collector runs as root,
+so it decides what it accepts:
+
+- **Switches and choices apply within a minute**: which drives to show and their names, the update interval, the
+  network interface, the fail2ban jail, the SSH service, the Authelia container, process names to flag. The collector
+  only accepts what it found on the machine itself.
+- **Files and patterns wait for your OK on the host** (log files, Authelia's database, locked files, backup jobs,
+  counted checks, file patterns, your own watch script), because they make root read a file or run a search.
+  `sudo homelab-dash-collector --apply` shows exactly what changes (`+` added, `-` removed, `~` changed) and asks.
+  `--apply --undo` drops everything the page set. A later edit of `collector.toml` by hand always wins.
+- **A sandbox for the collector.** The installer tries the collector under three systemd sandboxes, keeps the
+  strictest one under which it still sees everything (no network at all, a read-only system except its own folder,
+  only the root powers it needs), and checks that it keeps updating afterwards.
+
+How it's kept safe, step by step: [SECURITY.md](SECURITY.md) and [THREAT-MODEL.md](THREAT-MODEL.md).
 
 #### 🔒 Security audit and hardening (Oct 29)
 
@@ -258,10 +279,12 @@ Click **⚙** (or open `/settings`). Use the side menu or the search box; change
 |---|---|
 | **Setup** | What's working and what isn't, each with its fix |
 | **Look & feel** | Title, and which panels to show |
-| **Themes** | The default theme; per theme its mascot (upload an image), tab icon, taglines, click emoji and lines |
+| **Themes** | The default theme and background motion; per theme its mascot (upload an image), tab icon, taglines, click emoji and lines |
 | **Services** | Everything found in NPM: groups (create, rename, reorder), labels, icons (any [dashboard-icons](https://dashboard-icons.homarr.dev) name), hiding. Services not in NPM (NAS, router, …). Advanced: services to check through the proxy |
 | **Integrations** | qBittorrent, Seerr / Overseerr / Jellyseerr, Tautulli, each with a **Test** button that says what's wrong |
-| **Security** | **Your own IPs** (was "Trusted IPs"): logins from them aren't flagged (or add them from the SSH details) |
+| **Drives & hardware** | Which drives to show and their names, the network interface, the GPU, the update interval (the collector applies them) |
+| **Security** | **Your own IPs** (was "Trusted IPs"): logins from them aren't flagged (or add them from the SSH details). What the collector watches: fail2ban, SSH, Authelia, miners, crontabs, locked files, the firewall, your own watch script |
+| **Backups** | Your backup log, what counts as OK or failed, backup jobs, counted checks and file patterns (files and patterns wait for your OK on the host) |
 | **About** | What's set in `docker-compose.yml`, and why it can't be changed here |
 
 Everything is saved in `data/` (`settings.json`, keys in `secrets.json`, both `chmod 600`). Prefer a file? Put a

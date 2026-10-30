@@ -118,7 +118,8 @@ open that file:
 
 - **Switches and choices** (what's shown, the interval, drives, the jail, the network interface, ...) apply within a
   minute. The collector checks each one itself, against what it found on the machine.
-- **Files and patterns** (log files, the Authelia database, locked files, backup jobs, regexes, your watch script) make
+- **Files and patterns** (log files, the Authelia database, locked files, backup jobs, counted checks, backup file
+  patterns, regexes, your watch script) make
   root read a file or run a search, so they wait until you approve them on the host:
   `sudo homelab-dash-collector --apply` shows each change, marked and whole, and asks (y applies, d drops them
   from the waiting list). Approved values are kept in
