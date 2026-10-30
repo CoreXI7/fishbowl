@@ -790,6 +790,9 @@ def read_regular(path, limit, no_links=False):
         os.close(fd)
 
 
+LINK_FOLDERS = ("/", "/usr", "/var")   # where a link is the system's own (/bin, /var/run, Fedora Atomic's /home)
+
+
 def _root_only(dir_fd):
     st = os.fstat(dir_fd)
     return st.st_uid == 0 and not st.st_mode & 0o022
@@ -798,8 +801,9 @@ def _root_only(dir_fd):
 def _walk(path, strict=False):
     """An O_PATH descriptor of path if it's a regular file, reached without being steered: every part is opened as a
     path only (O_PATH runs no driver code: opening a device node a container planted would, e.g. /dev/watchdog resets
-    the host) and checked first. A link is followed only when it sits in a folder only root can write (/var/run, /bin,
-    Fedora Atomic's /home): one in a folder others can write could lead root anywhere. strict: no links at all."""
+    the host) and checked first. A link is followed only where it sits in one of the system's own folders (LINK_FOLDERS,
+    owned by root, writable by root alone: /var/run, /bin, Fedora Atomic's /home): anywhere else (a container's folder,
+    even one Docker made root:root 0755) it could lead root anywhere. strict: no links at all."""
     path = os.path.normpath(path)
     if not path.startswith("/") or path == "/":
         raise OSError(errno.EINVAL, "not an absolute file path")
@@ -813,8 +817,8 @@ def _walk(path, strict=False):
             if stat.S_ISLNK(mode):
                 os.close(nfd)
                 hops += 1
-                if strict or hops > 40 or not _root_only(fd):
-                    raise OSError(errno.ELOOP, "a link in a folder others can write to")
+                if strict or hops > 40 or done not in LINK_FOLDERS or not _root_only(fd):
+                    raise OSError(errno.ELOOP, "a link outside the system's own folders")
                 target = os.path.normpath(os.path.join(done, os.readlink(part, dir_fd=fd)))
                 parts = [x for x in target.strip("/").split("/") if x] + parts
                 os.close(fd)

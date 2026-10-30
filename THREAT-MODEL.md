@@ -103,8 +103,9 @@ namespaces, SUID or realtime, and, at the strictest level, only the capabilities
 `authorized_keys`, Authelia's database (as above), configured log files (tails). Every one of these is reached part
 by part as a path only (`O_PATH`, which runs no driver code), checked to be a regular file, and only then opened (so
 a device node planted in a container's folder is never opened: `/dev/watchdog` would reset the host); a link is
-followed only where it sits in a folder only root can write (`/var/run`, `/bin`), never in one a container or user
-can write. Backup files' sizes and dates come from regular files only, never a link's target.
+followed only where it sits in one of the system's own folders (`/`, `/usr`, `/var`, root's alone: `/var/run`, `/bin`),
+never anywhere else (a folder Docker made `root:root 0755` for a container is the container's to write).
+Backup files' sizes and dates come from regular files only, never a link's target.
 It writes only to its state folder (and, with `--apply`, `collector.page.toml`), every file created readable by root
 alone (umask 077, `UMask=0077`); `hw.json` and `sec-detail.json` are opened up to the dash's group only once complete.
 

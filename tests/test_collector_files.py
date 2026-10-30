@@ -87,6 +87,21 @@ class Files(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(self.col.CRON_APPROVED).st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.col.OUT_DIR, "hw.json")).st_mode), 0o640)
 
+    def test_a_link_in_a_root_owned_container_folder_is_not_followed(self):
+        # Docker creates bind-mount folders root:root 0755, and a root container writes them: "owned by root, nobody
+        # else can write" isn't "only the system": links are followed in system folders only (audit round 2)
+        secret = os.path.join(self.tmp, "root-only.conf")
+        with open(secret, "w") as f:
+            f.write("password = hunter2\n")
+        logs = tempfile.mkdtemp(dir=self.tmp)
+        os.symlink(secret, os.path.join(logs, "backup.log"))
+        real = self.col._root_only
+        self.col._root_only = lambda fd: True          # (as if root owned the container's folder)
+        try:
+            self.assertEqual(self.col.tail_lines(os.path.join(logs, "backup.log")), [])
+        finally:
+            self.col._root_only = real
+
     def authelia_db(self, create):
         import sqlite3
         path = os.path.join(self.tmp, "db.sqlite3")
