@@ -16,6 +16,7 @@ import collections
 import contextlib
 import copy
 import datetime
+import errno
 import fcntl
 import fnmatch
 import glob
@@ -637,14 +638,15 @@ def backups():
             b["ok"] = False
     max_age = float(BAK.get("max_age_hours", 26)) * 3600
     for a in arts:
-        files = [f for f in glob.glob(a.get("glob", "")) if os.path.isfile(f) and page_path("backup.artifacts", f)]
+        strict = "backup.artifacts" in APPROVED_NOW
+        files = [st for st in (regular_stat(f, strict) for f in glob.glob(a.get("glob", ""))) if st]
         if not files:
             b["artifacts"].append({"label": a.get("label", "files"), "count": 0, "fresh": False})
             continue
-        newest = max(files, key=os.path.getmtime)
-        mt = os.path.getmtime(newest)
+        newest = max(files, key=lambda st: st.st_mtime)
+        mt = newest.st_mtime
         b["artifacts"].append({"label": a.get("label", "files"), "count": len(files), "newest": int(mt),
-                               "size": os.path.getsize(newest), "fresh": time.time() - mt < max_age})
+                               "size": newest.st_size, "fresh": time.time() - mt < max_age})
     if b["artifacts"] and b["ok"] is not False:
         b["ok"] = all(a["fresh"] for a in b["artifacts"])
     return b
@@ -706,7 +708,9 @@ def read_regular(path, limit, no_links=False):
     FIFO, and only if it's a regular file of at most limit bytes (for files in folders a container can write to)."""
     name = os.path.basename(path)
     try:
-        fd = open_no_links(path) if no_links else os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = open_regular(path, strict=no_links)
+    except NotRegular:
+        raise CheckFailed(f"{name} isn't a regular file")
     except OSError as e:
         raise CheckFailed(f"can't open {name}: {e.strerror}")
     try:
@@ -727,21 +731,73 @@ def read_regular(path, limit, no_links=False):
         os.close(fd)
 
 
-def open_no_links(path, flags=os.O_RDONLY | os.O_NONBLOCK):
-    """Open path without following a link at any part of it: folder by folder, each opened with O_NOFOLLOW, so a
-    folder someone else can write to can't swap a link in halfway."""
-    parts = [x for x in path.split("/") if x]
-    if not path.startswith("/") or not parts:
-        raise OSError(22, "not an absolute file path")
+def _root_only(dir_fd):
+    st = os.fstat(dir_fd)
+    return st.st_uid == 0 and not st.st_mode & 0o022
+
+
+def _walk(path, strict=False):
+    """An O_PATH descriptor of path if it's a regular file, reached without being steered: every part is opened as a
+    path only (O_PATH runs no driver code: opening a device node a container planted would, e.g. /dev/watchdog resets
+    the host) and checked first. A link is followed only when it sits in a folder only root can write (/var/run, /bin,
+    Fedora Atomic's /home): one in a folder others can write could lead root anywhere. strict: no links at all."""
+    path = os.path.normpath(path)
+    if not path.startswith("/") or path == "/":
+        raise OSError(errno.EINVAL, "not an absolute file path")
+    parts, done, hops = path.strip("/").split("/"), "/", 0
     fd = os.open("/", os.O_PATH | os.O_DIRECTORY)
     try:
-        for part in parts[:-1]:
-            nfd = os.open(part, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        while parts:
+            part = parts.pop(0)
+            nfd = os.open(part, os.O_PATH | os.O_NOFOLLOW, dir_fd=fd)
+            mode = os.fstat(nfd).st_mode
+            if stat.S_ISLNK(mode):
+                os.close(nfd)
+                hops += 1
+                if strict or hops > 40 or not _root_only(fd):
+                    raise OSError(errno.ELOOP, "a link in a folder others can write to")
+                target = os.path.normpath(os.path.join(done, os.readlink(part, dir_fd=fd)))
+                parts = [x for x in target.strip("/").split("/") if x] + parts
+                os.close(fd)
+                fd, done = os.open("/", os.O_PATH | os.O_DIRECTORY), "/"
+                continue
             os.close(fd)
-            fd = nfd
-        return os.open(parts[-1], flags | os.O_NOFOLLOW, dir_fd=fd)
+            fd, done = nfd, os.path.join(done, part)
+            if parts and not stat.S_ISDIR(mode):
+                raise OSError(errno.ENOTDIR, "not a folder")
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise NotRegular(errno.EINVAL, "not a regular file")
+        out, fd = fd, None
+        return out
     finally:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
+
+
+class NotRegular(OSError):
+    pass
+
+
+def open_regular(path, strict=False):
+    """A read-only, non-blocking descriptor of path (see _walk), reopened from the checked O_PATH one, so nothing can
+    be swapped in between."""
+    pfd = _walk(path, strict)
+    try:
+        return os.open(f"/proc/self/fd/{pfd}", os.O_RDONLY | os.O_NONBLOCK)
+    finally:
+        os.close(pfd)
+
+
+def regular_stat(path, strict=False):
+    """os.stat of path if it's a regular file reached as _walk allows, else None (a link's target isn't a backup file)."""
+    try:
+        pfd = _walk(path, strict)
+    except OSError:
+        return None
+    try:
+        return os.fstat(pfd)
+    finally:
+        os.close(pfd)
 
 
 APPROVED_NOW = frozenset()   # the approval keys whose value came from the settings page (--apply), not collector.toml
@@ -757,7 +813,7 @@ def tail_lines(path, max_bytes=2_000_000, key=None):
     """The last max_bytes of a log file as lines (some logs can be grown at will by anyone who can reach the box).
     key = the setting it came from: when the settings page set it, no part of the path may be a link."""
     try:
-        fd = open_no_links(path) if key in APPROVED_NOW else os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        fd = open_regular(path, strict=key in APPROVED_NOW)
     except OSError:
         return []
     with os.fdopen(fd, "rb") as f:
@@ -1053,9 +1109,10 @@ def procs_detail():
     if isinstance(w, dict) and w:   # {} = off, like not set
         beat, alerts = w.get("heartbeat", ""), w.get("alerts", "")
         every = float(w.get("every_minutes", 5))
-        last = int(os.path.getmtime(beat)) if beat and os.path.exists(beat) and page_path("security.watcher", beat) else None
+        beat_st = regular_stat(beat, "security.watcher" in APPROVED_NOW) if beat else None
+        last = int(beat_st.st_mtime) if beat_st else None
         hits, kinds = [], w.get("kinds", {}) if isinstance(w.get("kinds"), dict) else {}   # alert-line prefix -> label
-        if alerts and os.path.isfile(alerts):
+        if alerts:
             for line in tail_lines(alerts, 200_000, "security.watcher")[-200:]:
                 kind = line.split(":", 1)[0]
                 hits.append({"kind": clip(kinds.get(kind, kind), 60), "detail": redact(clip(line.split(":", 1)[-1], 160))})
@@ -1184,10 +1241,8 @@ def backup_detail():
     if not jobs_cfg:
         return None
     lines = (tail_lines(log + ".1", 4_000_000, "backup.log") + tail_lines(log, 4_000_000, "backup.log")) if log else []   # + last rotation's
-    try:
-        log_mtime = os.path.getmtime(log) if log else None
-    except OSError:
-        log_mtime = None
+    log_st = regular_stat(log, "backup.log" in APPROVED_NOW) if log else None
+    log_mtime = log_st.st_mtime if log_st else None
     now = time.time()
     stamped = [(when(l), l) for l in lines]
     run_info, run_lines = None, []

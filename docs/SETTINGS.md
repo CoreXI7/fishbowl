@@ -114,6 +114,10 @@ Every option is in `collector/collector.example.toml` with a comment: drives and
 the GPU, the security checks (fail2ban jail, SSH unit, Authelia container and database, process watch names, cron
 watch, immutable files, firewall), the backup jobs, and how often it writes.
 
+Files the collector reads (logs, backup files, Authelia's database, `authorized_keys`) must be regular files, and a
+symlink on the way is followed only where it sits in a folder only root can write (like `/var/run`): one in a folder
+a container or user can write is refused, so point those settings at the real file.
+
 Most of them can also be changed on the settings page (Drives & hardware, Security, Backups), so you rarely need to
 open that file:
 

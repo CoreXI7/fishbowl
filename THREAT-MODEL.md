@@ -98,7 +98,11 @@ namespaces, SUID or realtime, and, at the strictest level, only the capabilities
 `CAP_CHOWN`, `CAP_FOWNER`, `CAP_SYS_RAWIO`, `CAP_NET_ADMIN`, `CAP_NET_RAW`), `MemoryDenyWriteExecute` and the
 `@system-service` syscall set (an unexpected call fails with EPERM instead of killing the collector). Commands: `journalctl`, `docker ps/logs`, `ps`, `top`, `fail2ban-client`, `ufw`, `lsattr`,
 `smartctl`, `nvidia-smi`, `findmnt`, `systemctl list-timers`, `du` (idle priority). Files: `/proc`, `/sys`, crontabs,
-`authorized_keys` (no symlink at the name), Authelia's database (as above), configured log files (tails, regular files only).
+`authorized_keys`, Authelia's database (as above), configured log files (tails). Every one of these is reached part
+by part as a path only (`O_PATH`, which runs no driver code), checked to be a regular file, and only then opened (so
+a device node planted in a container's folder is never opened: `/dev/watchdog` would reset the host); a link is
+followed only where it sits in a folder only root can write (`/var/run`, `/bin`), never in one a container or user
+can write. Backup files' sizes and dates come from regular files only, never a link's target.
 It writes only to its state folder (and, with `--apply`, `collector.page.toml`).
 
 ## Collector settings from the settings page (the second channel from the dash to root)
@@ -134,7 +138,7 @@ written by an attacker who controls the dash container:
 - Paths must be absolute and normalized (no `..`, no `//`), wildcards only after the first folder, and never in `/proc`,
   `/sys`, `/dev` or the collector's own folder (checked part by part, so a wildcard can't reach them either); patterns
   must compile and are capped at 300 characters, paths at 512. A path the page set is never read through a link,
-  anywhere on the way (opened folder by folder with `O_NOFOLLOW`), and FIFOs never block. Approving a path still means
+  anywhere on the way (opened folder by folder with `O_NOFOLLOW`), and FIFOs and device nodes are never opened. Approving a path still means
   root reads that file: read what it shows.
 
 ## The sign-in (`AUTH=login`)
