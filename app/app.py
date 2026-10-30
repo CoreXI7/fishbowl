@@ -1525,7 +1525,7 @@ class Handler(BaseHTTPRequestHandler):
         ip, headers = self.client_address[0], getattr(self, "headers", None)
         via_proxy = headers is not None and self.via_proxy()
         who = (self.real_ip() if via_proxy else None) or ip   # (checked: never the header's raw text)
-        user = headers.get(USER_HEADER) if via_proxy and USER_HEADER else None
+        user = self.one_header(USER_HEADER) if via_proxy and USER_HEADER else None   # (two copies: the client added one)
         return log_safe(f"{user} ({who})" if user else who, 120)
 
     def send(self, code, body, ctype="application/json", cache="no-store", extra=None, cookies=()):

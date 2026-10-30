@@ -55,6 +55,16 @@ class Logging(unittest.TestCase):
                     pass
             line = [l for l in out.getvalue().splitlines() if "marked as reviewed" in l][0]
             self.assertIn("alice (198.51.100.9)", line)
+            # a proxy that appends instead of replacing: the client's own copy comes first (audit 2026-10-30)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+                s.sendall(b"POST /api/security/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://127.0.0.1:%d\r\n"
+                          b"Remote-User: mallory\r\nRemote-User: alice\r\nX-Real-IP: 198.51.100.9\r\n"
+                          b"Content-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}" % (port, port))
+                while s.recv(65536):
+                    pass
+            line = [l for l in out.getvalue().splitlines() if "marked as reviewed" in l][0]
+            self.assertNotIn("mallory", line, "two copies of the user header: nobody is named")
         finally:
             srv.shutdown()
 
