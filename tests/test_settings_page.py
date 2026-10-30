@@ -380,6 +380,41 @@ class IntegrationUrls(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertNotIn("banner", r["detail"])
 
+    def test_one_integration_test_at_a_time(self):
+        # (Tests aren't cached and took turns on qBittorrent's lock: 80 at once from a page user held the connection
+        # table for minutes, the owner refused; audit round 3)
+        import threading
+        import time
+        import urllib.request
+        app = load_app()
+        started = threading.Event()
+
+        def slow(name):
+            started.set()
+            time.sleep(1.5)
+            return {"ok": False, "detail": "slow"}
+        real = app.test_integration
+        app.test_integration = slow
+        self.addCleanup(lambda: setattr(app, "test_integration", real))
+        srv, url = serve(app.Handler)
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
+
+        def post():
+            req = urllib.request.Request(url + "/api/settings/test", data=json.dumps({"name": "qbit"}).encode(), method="POST",
+                                         headers={"Content-Type": "application/json", "Origin": url})
+            try:
+                return urllib.request.urlopen(req, timeout=10).status
+            except urllib.error.HTTPError as e:
+                return e.code
+        first = []
+        t = threading.Thread(target=lambda: first.append(post()))
+        t.start()
+        started.wait(5)
+        self.assertEqual(post(), 429, "a second Test while one runs is turned away, not queued")
+        t.join()
+        self.assertEqual(first, [200])
+
+
 class NewCode(unittest.TestCase):
     def test_code_changed_on_disk_asks_for_a_restart(self):
         # (the app is a bind mount: "git pull, then docker compose up -d" left the old code running, as Compose saw no

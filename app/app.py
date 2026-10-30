@@ -65,6 +65,7 @@ auth.configure(cfgstore.DATA_DIR)
 ACCOUNT, SESSIONS, THROTTLE = auth.Account(), auth.Sessions(), auth.Throttle()
 _pending = {}                 # sha256(pre-sign-in token) -> {"t", "keep", "tries", "wrong", "dev", "epoch", "tls", "from"}: the password was right, a code is due
 _ran_out = []                 # half-finished sign-ins that ran out, until they're noted as failures (tell_ran_out)
+_test_lock = threading.Lock()  # one integration Test at a time
 _pending_totp = {}            # sha256(session token) -> {"t", "secret", "epoch"}: an authenticator being set up, not confirmed yet
 _recent_fails = {}            # trusted-device hash -> [(time, "password" | "code", address)]: typos in that browser, forgiven at its next sign-in
 _session_tries = {}           # sha256(session token) -> (wrong tries, last): re-confirming the password in Settings
@@ -2685,7 +2686,13 @@ class Handler(BaseHTTPRequestHandler):
             name = self.json_body(1024).get("name", "")
             if not isinstance(name, str):
                 return self.send(400, {"error": "name: text expected"})
-            return self.send(200, test_integration(name))
+            if not _test_lock.acquire(blocking=False):   # one Test at a time: they aren't cached, and queued ones held
+                return self.send(429, {"error": "A test is running: try again in a moment.", "retry": 3},   # connections
+                                 extra={"Retry-After": "3"})
+            try:
+                return self.send(200, test_integration(name))
+            finally:
+                _test_lock.release()
         if path == "/api/upload":
             if DEMO:
                 raise cfgstore.Invalid("uploads are turned off in the demo")
