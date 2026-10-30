@@ -115,6 +115,17 @@ class Files(unittest.TestCase):
         self.assertNotEqual(self.col.cron_files(), before, "the changed line must show as changed")
         self.assertEqual(self.col.card_lines([f"line {i}" for i in range(25)])[-1], "… and 5 more lines", "nothing approved unseen")
 
+    def test_a_long_line_is_redacted_quickly(self):
+        import time
+        t = time.monotonic()
+        out = self.col.redact("x " + "-p" * 200_000)
+        self.assertLess(time.monotonic() - t, 1, "a 400 KB line took minutes (quadratic regexes)")
+        self.assertIn("characters", out, "a cut line says so")
+        lines = os.path.join(self.tmp, "big.log")
+        with open(lines, "w") as f:
+            f.write("a" * 3_000_000 + "\nend\n")
+        self.assertTrue(all(len(l) <= 8192 for l in self.col.tail_lines(lines, 4_000_000)))
+
     def authelia_db(self, create):
         import sqlite3
         path = os.path.join(self.tmp, "db.sqlite3")

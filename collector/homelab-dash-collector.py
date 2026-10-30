@@ -391,7 +391,9 @@ def cron_hash(snap):
 
 
 def redact(line):
-    """Strip secrets from cron/log lines before they go into hw.json (and onto the dashboard)."""
+    """Strip secrets from cron/log lines before they go into hw.json (and onto the dashboard). The line is cut first
+    (some patterns are slow on very long lines: a 32 KB one took seconds), and a cut line says how much is left out."""
+    n, line = len(line), line[:1000]
     line = re.sub(r"https?://\S*(webhook|token|key|api|secret|sig)\S*", "[url]", line, flags=re.I)
     line = re.sub(r"(\w+://)[^/\s:@]+:[^@\s]+@", r"\1***@", line)                       # user:pass@host
     val = r"('[^']*'|\"[^\"]*\"|\S+)"
@@ -415,7 +417,8 @@ def redact(line):
     line = re.sub(r"(?i)((?:x-api-key|api-key|cookie|x-auth-token)\s*:\s*)[^\s'\"]+", r"\1***", line)
     line = re.sub(r"(?i)([?&](?:k|key|token|apikey|api_key|auth|sig|signature|secret|pass(?:word)?)=)[^&\s'\"]+", r"\1***", line)
     line = re.sub(r"(?i)(authorization:\s*\w+\s+)\S+", r"\1***", line)
-    return re.sub(r"[A-Za-z0-9_\-+=]{28,}", "…", line)[:220]   # long random-looking tokens
+    line = re.sub(r"[A-Za-z0-9_\-+=]{28,}", "…", line)   # long random-looking tokens
+    return line if len(line) <= 220 and n <= 1000 else line[:200] + f"… (+{max(n, len(line)) - 200} characters)"
 
 
 def load_approved():
@@ -898,7 +901,7 @@ def tail_lines(path, max_bytes=2_000_000, key=None):
         size = f.tell()
         f.seek(max(0, size - max_bytes))
         data = f.read()
-    lines = data.decode("utf-8", "replace").splitlines()
+    lines = [l[:8192] for l in data.decode("utf-8", "replace").splitlines()]   # (no log line needs more; regexes stay quick)
     return lines[1:] if size > max_bytes else lines         # the first line was cut in the middle
 
 
