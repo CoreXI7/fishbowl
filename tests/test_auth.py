@@ -1579,6 +1579,17 @@ class Audit(Base):
         host("  include conf.d/include/force-ssl.conf;\n  set_real_ip_from 127.0.0.2/32;\n")
         self.assertNotIn("npm-headers", ids())
 
+    def test_a_new_browser_kept_waiting_is_told_why(self):
+        # Someone else's guessing makes every new browser wait (on purpose: it stops guessing from many addresses);
+        # the owner is told there that a browser they've used before isn't kept waiting (audit 2026-10-30).
+        self.create()
+        self.app.ACCOUNT.update(lambda d: d.update(failures=6, last_fail=int(time.time())))
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        st, _, d = self.login()
+        self.assertEqual(st, 429)
+        self.assertIn("signed in with before", d["error"])
+        self.assertTrue(d.get("hint"), "the sign-in page shows this text instead of its own")
+
 
 if __name__ == "__main__":
     unittest.main()

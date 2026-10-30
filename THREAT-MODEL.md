@@ -162,9 +162,12 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
 - **Guessing**: per address (the proxy's X-Real-IP only from `TRUSTED_PROXY`; IPv6 per /64) and for the account: after 5 failures
   each try waits twice as long (≤15 min); each try is counted (and saved) before it is checked, under one lock, so
   parallel tries can't slip under a limit; 100 consecutive failures lock the account for new browsers until
-  `auth.py unlock` on the host. Password, code and setup-code failures all count. The code step counts too but never
-  waits (its own cap is 5 codes per password step): otherwise someone else's guessing could stretch the waits past
-  the 5 minutes the step lasts, and no new browser could finish signing in.
+  `auth.py unlock` on the host. The account-wide waits are on purpose (they stop guessing from many addresses at once), so
+  someone who keeps guessing keeps every *new* browser waiting, and a trickle of about a day reaches the lock; browsers
+  that signed in before aren't affected, and the sign-in page says so when it makes a new one wait. Password, code
+  and setup-code failures all count. The code step counts too but never waits (its own cap is 5 codes per password
+  step): otherwise someone else's guessing could stretch the waits past the 5 minutes the step lasts, and no new browser
+  could finish signing in.
 - **Trusted devices** (OWASP "device cookies"): a browser that signed in before carries a 1-year `fishbowl-device`
   token (stored as SHA-256, 10 kept). Its tries count on their own (10 wrong ones and it's just another browser), so
   someone guessing can't lock the owner out; its successes never reset the account's count, so the lock still trips.

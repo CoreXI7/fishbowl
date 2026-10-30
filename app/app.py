@@ -1902,7 +1902,9 @@ class Handler(BaseHTTPRequestHandler):
         ACCOUNT.update(lambda x: x["devices"][dev].update(fails=0) if dev and dev in x.get("devices", {})
                        else x.update(failures=0, last_fail=0))   # (a device forgotten mid-try was counted on the account)
 
-    def refuse_wait(self, wait):
+    def refuse_wait(self, wait, new_browser=False):
+        """new_browser: a sign-in from a browser that never signed in here (someone else's guessing can keep it waiting:
+        the account-wide waits are what stop guessing from many addresses at once), so it's told the way around."""
         if wait == -2:
             SESSIONS.end(self._token or "")
             ip = self.client_ip()
@@ -1917,6 +1919,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(423, {"error": f"Sign-ins from new browsers are locked after {auth.LOCK_AT} wrong tries in a row. "
                                             "A browser that signed in here before can still sign in; or unlock it on the host: "
                                             "docker exec -it <container> python /app/auth.py unlock"})
+        if new_browser:
+            return self.send(429, {"error": f"Too many wrong tries (anyone's count). Wait {fmt_wait(wait)}, or sign in from a "
+                                            "browser you've signed in with before: it isn't kept waiting.", "retry": wait,
+                                   "hint": True}, extra={"Retry-After": str(wait)})
         return self.send(429, {"error": f"Too many tries. Wait {fmt_wait(wait)}, then try again.", "retry": wait},
                          extra={"Retry-After": str(wait)})
 
@@ -2121,7 +2127,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(400, {"error": "Type your name and password.", "field": "user" if not s("user").strip() else "password"})
             wait = self.begin_try(ip, dev)
             if wait:
-                return self.refuse_wait(wait)
+                return self.refuse_wait(wait, new_browser=not dev)
             acct = ACCOUNT.get()   # fresh: the account as it is now that this try is counted
             if acct is None:
                 return self.send(409, {"error": "There's no account yet: create it first.", "setup": True, "restart": True})

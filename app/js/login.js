@@ -74,7 +74,7 @@ async function submit(form, path, body, onOk) {
   try {
     const {status, d} = await call(path, body);
     if (status === 200) return onOk(d);
-    if (status === 429) { wait(d.retry || 60, d.busy ? d.error : null); refocus = form.querySelector("input:not([type=checkbox]):not([type=hidden])"); return; }
+    if (status === 429) { wait(d.retry || 60, d.busy || d.hint ? d.error : null); refocus = form.querySelector("input:not([type=checkbox]):not([type=hidden])"); return; }
     if (status === 503) { await init(); return $("f-broken").hidden ? say(d.error) : undefined; }   // re-read: show what's true now
     if (d.setup) { show("f-setup"); return say(d.error); }
     if (d.restart) { $("c-code").value = ""; show("f-signin"); return say(d.error || "Sign in again."); }

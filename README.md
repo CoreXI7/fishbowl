@@ -135,8 +135,10 @@ install before you can claim it.
 - **⚙ → Account**: confirm it's you (the password, plus a code when two-step is on), then change the password, turn
   two-step on or off, make new recovery codes, see which browsers are signed in and sign any of them out, and see recent
   sign-ins and failed tries. A new password signs every other browser out.
-- **If someone guesses**: after 5 wrong tries the waits double (up to 15 minutes). After 100 in a row, browsers that never
-  signed in are locked out until you unlock it on the host; browsers you've signed in with before still get in. Your next
+- **If someone guesses**: after 5 wrong tries the waits double (up to 15 minutes), for everyone. After 100 in a row,
+  browsers that never signed in are locked out until you unlock it on the host; browsers you've signed in with before
+  still get in. So someone who keeps guessing (it needs no password) can make a *new* browser of yours wait, or lock it
+  out after about a day: sign in from a browser you've used before, or run `auth.py unlock` on the host. Your next
   sign-in tells you what failed since the last one. The right password with a wrong code stays on the Setup checklist
   until you change the password or press "That was me".
 - **Plain HTTP** (no HTTPS): passwords are only accepted from your own network, and that sign-in only works from the

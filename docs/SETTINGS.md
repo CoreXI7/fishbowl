@@ -180,7 +180,10 @@ open that file:
 - **Wrong tries**: after 5 (per address, and for the account), each try waits twice as long as the last, up to 15
   minutes. 100 wrong tries in a row lock the account for browsers that never signed in here. A browser that did
   (it keeps a `fishbowl-device` cookie for a year) still signs in, and its wrong tries count on their own, so someone
-  guessing can't lock you out (after 10 wrong tries of its own it's just another browser). The next sign-in shows what
+  guessing can't lock it out (after 10 wrong tries of its own it's just another browser). A new browser of yours does
+  wait while someone keeps guessing (one try every few minutes is enough, and about a day of it reaches the lock): use
+  a browser you've signed in with before, or `auth.py unlock` on the host. That's on purpose: the account-wide waits
+  are what stop guessing from many addresses at once. The next sign-in shows what
   failed since the last one (not your own typos just before it). The right password with a wrong code becomes a
   Setup problem until you change the password, or press "That was me" in Settings → Account.
 - **Settings → Account** has one "Confirm it's you" box: the current password (and a code when two-step is on, a new
