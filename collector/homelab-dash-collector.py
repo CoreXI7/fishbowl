@@ -391,15 +391,23 @@ def cron_hash(snap):
     return hashlib.sha256(json.dumps(snap, sort_keys=True).encode()).hexdigest()
 
 
+_RD_URL = re.compile(r"webhook|token|key|api|secret|sig", re.I)
+_RD_VAL = r"('[^']{0,300}'|\"[^\"]{0,300}\"|\S+)"
+# a name holding a key word, found by a look-ahead from the start of each word (once per word: linear)
+_RD_NAME = re.compile(r"(?i)(?<!\w)(?=\w*?(?:pass(?:word|wd)?|token|secret|api_?key))(\w+)(\s*[=:]\s*)" + _RD_VAL)
+_RD_OPT = re.compile(r"(?i)(?<![\w-])(?=--?[\w-]*?(?:pass(?:word|wd)?|token|secret|key|auth))(--?[\w-]+)([\s=]+)" + _RD_VAL)
+
+
 def redact(line):
-    """Strip secrets from cron/log lines before they go into hw.json (and onto the dashboard). The line is cut first
-    (some patterns are slow on very long lines: a 32 KB one took seconds), and a cut line says how much is left out."""
+    """Strip secrets from cron/log lines before they go into hw.json (and onto the dashboard). The line is cut first,
+    and a cut line says how much is left out. Every pattern takes a token once and checks it for key words afterwards
+    (a pattern with the key word between two runs of letters was cubic: a 1,000-character line of "--pass" took 0.1 s,
+    and a crontab can hold a thousand such lines)."""
     n, line = len(line), line[:1000]
-    line = re.sub(r"https?://\S*(webhook|token|key|api|secret|sig)\S*", "[url]", line, flags=re.I)
-    line = re.sub(r"(\w+://)[^/\s:@]+:[^@\s]+@", r"\1***@", line)                       # user:pass@host
-    val = r"('[^']*'|\"[^\"]*\"|\S+)"
-    line = re.sub(r"(?i)\b(\w*(pass(word|wd)?|token|secret|api_?key)\w*\s*[=:]\s*)" + val, r"\1***", line)   # PASSWORD=x
-    line = re.sub(r"(?i)(--?[\w-]*(pass(word|wd)?|token|secret|key|auth)[\w-]*[\s=]+)" + val, r"\1***", line)  # --password x, --b2-key x
+    line = re.sub(r"(?i)https?://\S+", lambda m: "[url]" if _RD_URL.search(m.group(0)) else m.group(0), line)
+    line = re.sub(r"(?<!\w)(\w+://)[^/\s:@]+:[^@\s]+@", r"\1***@", line)                 # user:pass@host
+    line = _RD_NAME.sub(r"\1\2***", line)                                                     # PASSWORD=x
+    line = _RD_OPT.sub(r"\1\2***", line)                                                      # --password x, --b2-key x
     line = re.sub(r"(\s-p)(?!\s)\S+", r"\1***", line)                                     # mysql -pSecret
     # -p pw (docker login, mongodump), -P pw (zip, mosquitto), -k pw (openssl): not when it's a path, a URL or a port
     line = re.sub(r"(\s-[pPk]\s+)(?![/~.$-]|\w+://|\d[\d.:]*(?:/(?:tcp|udp))?(?:\s|$))\S+", r"\1***", line)

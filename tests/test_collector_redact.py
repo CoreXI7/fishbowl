@@ -33,6 +33,16 @@ class Redact(unittest.TestCase):
         leaks = [line for line in SECRET_LINES if PW in self.col.redact("0 3 * * * root " + line)]
         self.assertEqual(leaks, [])
 
+    def test_hostile_lines_stay_quick(self):
+        # a crontab can hold a thousand lines of up to ~1,000 characters (Debian; cronie takes 128 K); one pattern was
+        # cubic: 0.1 s for a line of "--pass", minutes for a whole crontab of them (audit round 2)
+        import time
+        t = time.monotonic()
+        for unit in ("--pass", "pass", "-", "https://", "x://", "--user=", "token", "a=" * 3):
+            for _ in range(100):
+                self.col.redact((unit * 1000)[:1000])
+        self.assertLess(time.monotonic() - t, 2, "800 hostile 1,000-character lines")
+
     def test_ordinary_lines_stay_readable(self):
         for line in PLAIN_LINES:
             self.assertEqual(self.col.redact("0 3 * * * root " + line), "0 3 * * * root " + line)
