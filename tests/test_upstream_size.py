@@ -48,6 +48,31 @@ class UpstreamSize(unittest.TestCase):
         finally:
             self.up.routes["/api/v2/sync/maindata"] = (200, {}, big_json_list(40 * MB))
 
+class ChunkSize(unittest.TestCase):
+    """http.client reads a chunk size of "-1" as "everything up to the end" (CVE-2026-103995, not fixed in 3.12.16):
+    every byte cap was bypassed, and one hostile upstream got the dash OOM-killed (audit round 3)."""
+
+    def test_a_negative_chunk_size_is_refused(self):
+        import http.client
+        import io
+        load_app()          # (puts app/ on the import path)
+        import upstream
+
+        class Sock:
+            def __init__(self, data):
+                self.data = data
+
+            def makefile(self, *a, **k):
+                return io.BufferedReader(io.BytesIO(self.data))
+        raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n-1\r\n" + b"x" * 5_000_000
+        r = upstream.StrictResponse(Sock(raw))
+        r.begin()
+        with self.assertRaises(http.client.HTTPException) as e:
+            r.read(1000)
+        self.assertLess(len(getattr(e.exception, "partial", b"")), 2000, "it stopped instead of reading to the end")
+        for cls in (upstream.DeadlineHTTPConnection, upstream.DeadlineHTTPSConnection):
+            self.assertIs(cls.response_class, upstream.StrictResponse)
+
 
 if __name__ == "__main__":
     unittest.main()

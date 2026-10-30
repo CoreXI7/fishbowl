@@ -67,15 +67,32 @@ def unwatch(conn):
         _watched.pop(conn, None)
 
 
+class StrictResponse(http.client.HTTPResponse):
+    """A response whose chunk sizes must be plain hex: http.client takes "-1" as "read to the end" (CVE-2026-103995,
+    still in 3.12.16), which bypassed every byte cap here and let one hostile upstream use up the memory."""
+    def _read_next_chunk_size(self):
+        line = self.fp.readline(1025)
+        if len(line) > 1024:
+            raise ValueError("chunk size line too long")
+        size = line.split(b";", 1)[0].strip()
+        if not re.fullmatch(rb"[0-9A-Fa-f]{1,15}", size):
+            raise ValueError("bad chunk size")   # (http.client turns it into IncompleteRead)
+        return int(size, 16)
+
+
 class DeadlineHTTPConnection(http.client.HTTPConnection):
     # (no unwatch on close(): http.client closes the connection object as soon as the headers of an answer that "will
     # close" are in, and its body is still being read; the entry just lapses at the deadline)
+    response_class = StrictResponse
+
     def connect(self):
         super().connect()
         watch(self)
 
 
 class DeadlineHTTPSConnection(http.client.HTTPSConnection):
+    response_class = StrictResponse
+
     def connect(self):
         super().connect()
         watch(self)
