@@ -59,6 +59,8 @@ addEventListener("keydown", e => {   // Ctrl+S / ⌘+S saves
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); if (!$("save").disabled) $("save").click(); }
 });
 
+if (/Mac|iPhone|iPad/.test(navigator.platform)) $("save").title = "Save (⌘S)";
+
 // ---------- simple fields (data-k="site.title"; data-list = one entry per line) ----------
 const getPath = (o, k) => k.split(".").reduce((a, p) => a && a[p], o);
 const setPath = (o, k, v) => { const ps = k.split("."), last = ps.pop(); ps.reduce((a, p) => a[p] = a[p] || {}, o)[last] = v; };
@@ -112,6 +114,9 @@ function clearErr(el) {
 // ---------- error summary (a failed save, upload or load): what's wrong, and a link to the field or section ----------
 const FIELD_OF = {"known IP": "f-known", "check through the proxy": "f-via", "title": "f-title", "home IP": "i-home",
                   "qbittorrent URL": "i-qbittorrent-url", "seerr URL": "i-seerr-url", "tautulli URL": "i-tautulli-url"};
+const FIELD_LABEL = {"known IP": "Your own IPs", "check through the proxy": "Check these through the proxy", "title": "Title",
+                     "home IP": "Your home's public IP", "qbittorrent URL": "qBittorrent address", "seerr URL": "Seerr address",
+                     "tautulli URL": "Tautulli address"};
 function showErr(msg, section, title = "Not saved") {
   const k = Object.keys(FIELD_OF).find(k => msg.startsWith(k + ":")), field = k && $(FIELD_OF[k]);
   if (field) {
@@ -119,7 +124,8 @@ function showErr(msg, section, title = "Not saved") {
     fieldErr(field, msg.slice(k.length + 1).trim());
   }
   const box = $("err-sum");
-  box.innerHTML = `<h2>${esc(title)}</h2><p>${esc(msg)}</p>` +
+  const shown = k ? `${FIELD_LABEL[k]}: ${msg.slice(k.length + 1).trim()}` : msg;
+  box.innerHTML = `<h2>${esc(title)}</h2><p>${esc(shown)}</p>` +
     (field ? `<p><a href="#${field.id}" data-focus="${field.id}">Go to the field →</a></p>`
      : secName(section) ? `<p><a href="#${section}">Go to ${esc(secName(section))} →</a></p>` : "");
   box.hidden = false;
@@ -145,7 +151,8 @@ function chk(i) {
   return `<div class="chk chk-${esc(i.state)}"><span class="chk-ic" aria-hidden="true">${icon}</span><div class="chk-b">
     <h3 class="chk-t">${esc(i.title)}<span class="vh"> (${word})</span>${i.optional ? ' <small class="mute">optional</small>' : ""}</h3>
     <p>${esc(i.detail)}</p>
-    ${(i.steps || []).map(s => (s.text ? `<p class="chk-step">${esc(s.text)}</p>` : "") + (s.code ? codeBlock(s.code) : "")).join("")}
+    ${i.why ? `<details class="chk-why"><summary>Why?</summary><p>${esc(i.why)}</p></details>` : ""}
+    ${(i.steps || []).length ? `<ol class="chk-steps">${i.steps.map(s => `<li>${s.text ? `<p>${esc(s.text)}</p>` : ""}${s.code ? codeBlock(s.code) : ""}</li>`).join("")}</ol>` : ""}
     ${link && secName(link.slice(1)) ? `<a class="chk-go" href="${link}">Go to ${esc(secName(link.slice(1)))} →</a>` : ""}
     ${doc ? `<a class="chk-go" href="${esc(doc)}" target="_blank" rel="noopener">How to, in the docs ↗</a>` : ""}
   </div></div>`;
@@ -159,6 +166,7 @@ function renderSetup() {
   $("setup-list").innerHTML =
     (fix.length ? `<p class="chk-sum bad"><span aria-hidden="true">⚠ </span>${fix.length} thing${fix.length > 1 ? "s" : ""} to fix</p>`
                 : `<p class="chk-sum good"><span aria-hidden="true">✓ </span>All set${todo.length ? `, with ${todo.length} optional extra${todo.length > 1 ? "s" : ""} below` : ""}</p>`) +
+    ([...fix, ...todo].some(i => i.compose) ? `<div class="chk-note"><p>After changing docker-compose.yml, run this in its folder, then click <b>Check again</b> below:</p>${codeBlock("docker compose up -d")}</div>` : "") +
     fix.map(chk).join("") + todo.map(chk).join("") +
     (ok.length ? `<details class="chk-ok-list"><summary>${ok.length} check${ok.length > 1 ? "s" : ""} passed</summary>${ok.map(chk).join("")}</details>` : "");
 }
@@ -272,7 +280,7 @@ const iconSrc = (host) => {
 function iconFail(img) { const d = document.createElement("span"); d.className = "lt"; d.textContent = img.dataset.letter || "?"; img.replaceWith(d); }
 // broken icons fall back to their letter: one capturing listener, no inline onerror (the CSP allows no inline script)
 document.addEventListener("error", e => { if (e.target.tagName === "IMG" && "letter" in e.target.dataset) iconFail(e.target); }, true);
-const app = host => S.apps[host] = S.apps[host] || {};
+const app = host => Object.hasOwn(S.apps, host) ? S.apps[host] : host === "__proto__" ? {} : (S.apps[host] = {});
 function cleanApp(host) { const a = S.apps[host]; if (a && !a.label && !a.icon && !a.url) delete S.apps[host]; }
 
 function srow(host, gi, idx, len) {
@@ -288,9 +296,9 @@ function srow(host, gi, idx, len) {
     <label class="sl"><span class="sl-t">Icon<span class="vh"> for ${h}</span></span>
       <input type="text" placeholder="automatic" value="${esc(a.icon || "")}" data-f="icon"></label>
     <span class="acts">
+      <label class="sl"><span class="sl-t">Group<span class="vh"> for ${h}</span></span><select data-a="move">${opts}</select></label>
       ${gi >= 0 ? `<button type="button" class="ibtn" data-a="up" ${idx === 0 ? "disabled" : ""} aria-label="Move ${h} up" title="move up">↑</button>`
                 + `<button type="button" class="ibtn" data-a="down" ${idx === len - 1 ? "disabled" : ""} aria-label="Move ${h} down" title="move down">↓</button>` : ""}
-      <label class="sl"><span class="sl-t">Group<span class="vh"> for ${h}</span></span><select data-a="move">${opts}</select></label>
       <button type="button" class="ibtn danger" data-a="hide" aria-label="Hide ${h} from the dashboard" title="hide from the dashboard">hide</button>
     </span></div>`;
 }
@@ -381,14 +389,14 @@ $("add-group").onclick = () => {
 // ---------- services not in NPM ----------
 function renderExtras() {
   $("extras").innerHTML = S.services.map((x, i) => `<div class="xrow" data-i="${i}">
-      <div class="field"><label for="x-name-${i}">Name</label><input type="text" id="x-name-${i}" value="${esc(x.name)}" data-x="name" aria-describedby="x-d-${i}">
-        <small id="x-d-${i}">A host name, like nas.lan. It's the tile's name.</small></div>
-      <div class="field"><label for="x-url-${i}">Address to check</label><input type="url" id="x-url-${i}" value="${esc(x.url)}" data-x="url" aria-describedby="x-u-${i}">
-        <small id="x-u-${i}">What the dashboard checks, like http://192.168.1.5:5000.</small></div>
+      <div class="field"><label for="x-name-${i}">Name</label><input type="text" id="x-name-${i}" value="${esc(x.name)}" data-x="name" data-was="${esc(x.name)}"${i ? "" : ` aria-describedby="x-d-0"`}>
+        ${i ? "" : `<small id="x-d-${i}">A host name, like nas.lan. It's the tile's name.</small>`}</div>
+      <div class="field"><label for="x-url-${i}">Address to check</label><input type="url" id="x-url-${i}" value="${esc(x.url)}" data-x="url"${i ? "" : ` aria-describedby="x-u-0"`}>
+        ${i ? "" : `<small id="x-u-${i}">What the dashboard checks, like http://192.168.1.5:5000.</small>`}</div>
       <div class="field"><label for="x-link-${i}">Link on the tile (optional)</label><input type="url" id="x-link-${i}" value="${esc((S.apps[x.name] || {}).url || "")}" data-x="link" aria-describedby="x-l-${i}">
         <small id="x-l-${i}">Empty: https://${esc(x.name || "name")}</small></div>
-      <div class="field xauth"><label><input type="checkbox" ${x.auth ? "checked" : ""} data-x="auth" aria-describedby="x-a-${i}"> Behind your sign-in</label>
-        <small id="x-a-${i}">Only a label in the tile's tooltip.</small></div>
+      <div class="field xauth"><label><input type="checkbox" ${x.auth ? "checked" : ""} data-x="auth"${i ? "" : ` aria-describedby="x-a-0"`}> Behind your sign-in</label>
+        ${i ? "" : `<small id="x-a-${i}">Only a label in the tile's tooltip.</small>`}</div>
       <button type="button" class="ibtn danger" data-xdel aria-label="Remove ${esc(x.name || "this service")}">Remove</button></div>`).join("") || '<div class="hint">None yet.</div>';
   $("extras").querySelectorAll("input,button").forEach(el => el.disabled = !V.ui_enabled);
   $("add-extra").disabled = !V.ui_enabled;
@@ -399,16 +407,25 @@ $("extras").addEventListener("input", e => {
   const x = S.services[+row.dataset.i], k = e.target.dataset.x, v = e.target.value.trim();
   if (k === "auth") x.auth = e.target.checked;
   else if (k === "link") { app(x.name).url = v; cleanApp(x.name); }
-  else if (k === "name") {   // a rename keeps the tile's label, icon and link
-    if (S.apps[x.name] && !S.apps[v]) { S.apps[v] = S.apps[x.name]; delete S.apps[x.name]; }
-    x.name = v; $("x-l-" + row.dataset.i).textContent = "Empty: https://" + (v || "name");
-  } else x[k] = v;
+  else if (k === "name") { x.name = v; $("x-l-" + row.dataset.i).textContent = "Empty: https://" + (v || "name"); }
+  else x[k] = v;
   setDirty();
+});
+$("extras").addEventListener("change", e => {   // a finished rename takes the tile's label, icon and link along
+  const el = e.target; if (el.dataset.x !== "name") return;
+  const was = el.dataset.was, now = el.value.trim();
+  const shared = V.discovered.includes(was) || S.services.filter(x => x.name === was).length;
+  if (was && now && was !== now && Object.hasOwn(S.apps, was) && !Object.hasOwn(S.apps, now) && !shared) {
+    S.apps[now] = S.apps[was]; delete S.apps[was]; setDirty();
+  }
+  el.dataset.was = now;
 });
 $("extras").addEventListener("click", e => {
   if (!e.target.hasAttribute("data-xdel")) return;
-  S.services.splice(+e.target.closest("[data-i]").dataset.i, 1);
+  const i = +e.target.closest("[data-i]").dataset.i;
+  S.services.splice(i, 1);
   renderExtras(); renderServices(); setDirty();
+  ($("x-name-" + Math.min(i, S.services.length - 1)) || $("add-extra")).focus();   // focus stays nearby
 });
 $("add-extra").onclick = () => { S.services.push({name: "", url: "", auth: false}); renderExtras(); setDirty(); $("x-name-" + (S.services.length - 1)).focus(); };
 
@@ -483,20 +500,28 @@ function markCurrent() {
   const line = document.querySelector("header").offsetHeight + (barOnTop ? nav.offsetHeight : 0) + 40;
   let cur = sections.filter(s => !s.classList.contains("q-out")).filter(s => s.getBoundingClientRect().top <= line).pop() || sections[0];
   if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4) cur = sections.filter(s => !s.classList.contains("q-out")).pop() || cur;
+  if (pinned) {   // the section a menu click went to stays current while it's on screen (a short one can't reach the top)
+    const r = $(pinned).getBoundingClientRect();
+    if (r.bottom > line && r.top < innerHeight - 60) cur = $(pinned); else pinned = "";
+  }
   if (cur.id === curId) return;
   curId = cur.id;
   navLinks.forEach(a => a.hash === "#" + curId ? a.setAttribute("aria-current", "true") : a.removeAttribute("aria-current"));
   const a = navLinks.find(a => a.hash === "#" + curId), ul = a.closest("ul");
   if (ul.scrollWidth > ul.clientWidth) ul.scrollTo({left: a.offsetLeft - ul.offsetLeft - 16});   // phone: keep it in view
 }
-let spyQueued = false, spyPausedUntil = 0;
+let spyQueued = false, spyPausedUntil = 0, spyCatchUp = 0, pinned = "";
 addEventListener("scroll", () => {
-  if (performance.now() < spyPausedUntil) { spyPausedUntil = performance.now() + 150; return; }   // until a menu jump settles
+  if (performance.now() < spyPausedUntil) {   // until a menu jump settles; then catch up with wherever scrolling ended
+    spyPausedUntil = performance.now() + 150;
+    clearTimeout(spyCatchUp); spyCatchUp = setTimeout(markCurrent, 200);
+    return;
+  }
   if (!spyQueued) { spyQueued = true; requestAnimationFrame(() => { spyQueued = false; markCurrent(); }); }
 }, {passive: true});
 document.querySelector(".set-nav ul").addEventListener("click", e => {
   const a = e.target.closest("a"); if (!a) return;
-  curId = ""; spyPausedUntil = performance.now() + 600;
+  curId = ""; spyPausedUntil = performance.now() + 600; pinned = a.hash.slice(1);
   navLinks.forEach(l => l === a ? l.setAttribute("aria-current", "true") : l.removeAttribute("aria-current"));
   curId = a.hash.slice(1);
 });
@@ -522,7 +547,8 @@ function applySearch() {
       sec.querySelectorAll(UNITS).forEach(u => {
         if (hits.some(h => h.contains(u))) return;            // inside a unit that already matched: keep it
         if (u.matches(".grp-ed")) {
-          if (has(u.querySelector(".gh"))) { hits.push(u); return; }
+          const gname = (u.querySelector("[data-gname]")?.value ?? u.querySelector(".gh b")?.textContent ?? "").toLowerCase();
+          if (gname.includes(q)) { hits.push(u); return; }
           u.querySelectorAll(".srow").forEach(r => r.classList.toggle("q-out", !rowHas(r)));
           if (u.querySelector(".srow:not(.q-out)")) hits.push(u); else u.classList.add("q-out");
           return;
