@@ -21,7 +21,9 @@ Nobody gets in without signing in: Fishbowl's own sign-in is on by default (or y
    (`docker logs <container> 2>&1 | grep "^SETUP CODE" | tail -n 1`), and **turn on the authenticator app** (Settings → Account).
    Or, if your reverse proxy's sign-in (Authelia, Authentik, an access list) already protects it: `AUTH: proxy`.
 2. **Reach it over HTTPS** through your reverse proxy, so the password and the session cookie are encrypted.
-3. **Set `TRUSTED_PROXY`** to your proxy's container name, so nothing else can connect.
+3. **Set `TRUSTED_PROXY`** to your proxy's container name, so nothing else can connect, and make the proxy **set**
+   `X-Real-IP` and `X-Forwarded-Proto` itself (Nginx Proxy Manager: `set_real_ip_from 127.0.0.2/32;` under Advanced,
+   and Force SSL; other proxies: [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default)).
 4. **Set `ORIGIN`** to the address you open it at.
 5. Optional, recommended: **`LISTEN`** on a network only the proxy shares ([how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen)).
 

@@ -139,7 +139,7 @@ class Primitives(unittest.TestCase):
         self.assertIsNotNone(a.name_problem(""))
         self.assertIsNotNone(a.name_problem("x" * 65))
         self.assertIsNotNone(a.name_problem("a\nb"))
-        self.assertIsNone(a.name_problem("Vic"))
+        self.assertIsNone(a.name_problem("Sam"))
 
     def test_recovery_codes(self):
         codes, hashes = self.auth.new_recovery_codes()
@@ -1131,7 +1131,7 @@ class RoundThree(Base):
     def test_a_blank_looking_name_is_refused(self):
         for n in ("ㅤ", "​", " ⠀ ", "́"):
             self.assertIsNotNone(self.auth.name_problem(n), repr(n))
-        self.assertIsNone(self.auth.name_problem("Vic"))
+        self.assertIsNone(self.auth.name_problem("Sam"))
 
     def test_a_session_on_disk(self):
         tok = self.app.SESSIONS.create(False, "ip", "ua", 7)[0]

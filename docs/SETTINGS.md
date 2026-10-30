@@ -88,24 +88,24 @@ that can forge the proxy's address (ARP spoofing needs only the default `NET_RAW
 close it, give the dash a network that only the proxy shares, and answer only there:
 
 ```sh
-docker network create --internal --subnet 172.31.250.0/29 dash_front
-docker network connect --ip 172.31.250.3 dash_front <proxy container>
+docker network create --internal --subnet 10.89.250.0/29 dash_front
+docker network connect --ip 10.89.250.3 dash_front <proxy container>
 ```
 
 ```yaml
 services:
   dash:
     environment:
-      LISTEN: "127.0.0.1 172.31.250.2"       # 127.0.0.1 keeps the healthcheck working
-      TRUSTED_PROXY: "nginx 172.31.250.3"    # Docker's DNS gives only one of the proxy's addresses: list the new one
+      LISTEN: "127.0.0.1 10.89.250.2"       # 127.0.0.1 keeps the healthcheck working
+      TRUSTED_PROXY: "nginx 10.89.250.3"    # Docker's DNS gives only one of the proxy's addresses: list the new one
     networks:
       reverse_proxy: {}                    # still needed to reach the services it checks
-      dash_front: {ipv4_address: 172.31.250.2}
+      dash_front: {ipv4_address: 10.89.250.2}
 networks:
   dash_front: {external: true}
 ```
 
-Then point the proxy host at `172.31.250.2:8000` (and add the network to the proxy's own compose file so it survives a
+Then point the proxy host at `10.89.250.2:8000` (and add the network to the proxy's own compose file so it survives a
 recreate).
 
 ## Root collector (`/etc/homelab-dash/collector.toml`)
@@ -195,7 +195,9 @@ open that file:
 - **Settings → Account** has one "Confirm it's you" box: the current password (and a code when two-step is on, a new
   one each time) before every change there, including signing browsers out. A code typed twice is refused as "just
   used", not counted as wrong.
-- **`AUTH: proxy`** needs `TRUSTED_PROXY`; without it the dashboard keeps its own sign-in on (and says so).
+- **`AUTH: proxy`** needs `TRUSTED_PROXY`; without it the dashboard keeps its own sign-in on (and says so). With it,
+  everything your proxy lets through is the admin: don't give the dashboard's host any SSO bypass rule (an Authelia
+  `bypass` for `^/api`, say, which phone apps need on other hosts), or anyone could read and change its settings.
 - **On the host** (`docker exec -it <container> python /app/auth.py ...`): `status`; `unlock` (after the lock);
   `setup-code` (a new setup code, while there's no account); `signout` (signs every browser out and forgets trusted browsers, the account stays);
   `reset` (deletes the account and every session, keeps your settings and keys, prints a new setup code).

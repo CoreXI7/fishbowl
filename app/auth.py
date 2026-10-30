@@ -784,7 +784,8 @@ def _cli(argv):
             acct.update(lambda x: (x.update(epoch=new_epoch(x["epoch"]), devices={}),
                                    Account.event(x, "every browser signed out on the host", "host")))
         print("Every browser is signed out and none is trusted any more (no restart needed). If someone else may know the "
-              "password, sign in and change it.")
+              "password, sign in and change it. If someone keeps guessing, new browsers have to wait: auth.py unlock "
+              "clears that.")
         return 0
     if cmd == "unlock":
         if d is None:

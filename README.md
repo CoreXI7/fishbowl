@@ -86,7 +86,9 @@ container name), the path to your NPM `proxy_host` folder, and your proxy's Dock
 docker compose up -d
 ```
 
-In NPM, add a proxy host that forwards to `dash:8000` (with HTTPS). Open the dashboard: the first time, it asks you to
+In NPM, add a proxy host that forwards to `dash:8000` (with HTTPS), and in it add `set_real_ip_from 127.0.0.2/32;`
+under **Advanced** and turn on **Force SSL** (otherwise a visitor can choose the address the dashboard sees; other
+proxies: [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default)). Open the dashboard: the first time, it asks you to
 create your account, with a one-time **setup code** from the container's log
 (`docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1`).
 Already have SSO (Authelia, Authentik, …)? Put the proxy host behind it and set `AUTH: proxy` instead.

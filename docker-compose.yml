@@ -10,6 +10,9 @@ services:
     restart: unless-stopped
     mem_limit: 256m                 # a bug can never eat the host's RAM (it restarts instead)
     pids_limit: 128
+    logging:                        # every visitor's request is logged: keep the log from filling the disk
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     user: "1000:1000"
     read_only: true
     cap_drop: [ALL]
@@ -23,7 +26,7 @@ services:
       NPM_DIR: /npm
       # SETTINGS_UI: "0"                  # make the settings page read-only
       # USER_HEADER: Remote-User          # name the SSO user in the log; ONLY if your proxy sets this header itself
-      # LISTEN: "127.0.0.1 172.31.250.2"  # answer only on these addresses: see "Lock the dash to the proxy" in docs/SETTINGS.md
+      # LISTEN: "127.0.0.1 10.89.250.2"  # answer only on these addresses: see "Lock the dash to the proxy" in docs/SETTINGS.md
       # CHECK_VIA_PROXY: demo.example.com vault.example.com/alive # hosts on networks the dash can't reach: health-check them through the proxy (optional path instead of /). Also on the settings page (Services → Advanced); set here, it wins and locks that field
     volumes:
       - ./app:/app:ro
