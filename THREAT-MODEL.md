@@ -226,8 +226,8 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   (`frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`), `X-Frame-Options: DENY`; every POST (sign-in
   included) must carry the dashboard's Origin, be JSON, and not be marked cross-site by the browser.
 - **Connections**: at most 80 at once for the whole process (every `LISTEN` address), 32 per address (IPv6 per /64;
-  through the proxy, per browser address when the proxy sends X-Real-IP); when all 80 are taken, the oldest one still
-  sending its request is cut to make room. The request (line, headers, body) must arrive within 20 s, every connection
+  through the proxy, per browser address when the proxy sends X-Real-IP); when all 80 are taken, or an address's 32 are, the
+  oldest one still sending its request (that address's own, in the second case) is cut to make room. The request (line, headers, body) must arrive within 20 s, every connection
   is cut after 120 s, request headers are at most 64 KB, and cookie parsing is linear and tries at most 300 values.
   Proxies that pass request bodies on as they arrive (Caddy, Traefik, HAProxy by default) should buffer them (see
   docs/SETTINGS.md). Someone who can reach port 8000 directly from many addresses can still keep it busy (keep it

@@ -1148,13 +1148,18 @@ class RoundThree(Base):
         for x in socks:
             x.sendall(b"GET / HTTP/1.1\r\n")   # trickling: never finishes its headers
         time.sleep(0.5)
+        # full for this address: its own oldest connection still sending its request makes room (audit 2026-10-30:
+        # refusing instead let one address, e.g. everyone behind a proxy nobody named, lock the others out)
         extra = so.create_connection(("127.0.0.1", port))
         extra.settimeout(5)
-        self.assertEqual(extra.recv(10), b"", "the 4th connection from one address is closed at once")
-        socks[0].settimeout(10)
+        extra.sendall(b"GET /healthz HTTP/1.1\r\nHost: x\r\n\r\n")
+        self.assertTrue(extra.recv(12).startswith(b"HTTP/1."), "the 4th connection from one address is answered")
+        socks[0].settimeout(5)
+        self.assertEqual(socks[0].recv(10), b"", "the oldest slow sender from that address is cut")
+        socks[1].settimeout(10)
         t = time.monotonic()
         try:
-            while socks[0].recv(4096):
+            while socks[1].recv(4096):
                 pass
         except OSError:
             pass

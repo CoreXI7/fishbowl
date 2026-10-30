@@ -2570,10 +2570,15 @@ class Server(ThreadingHTTPServer):
             threading.Thread(target=Server._reaper, daemon=True).start()
         key, now = auth.Throttle._key(ip), time.monotonic()   # (IPv6 per /64)
         with self._conn_lock:
-            mine = sum(1 for v in self._conns.values() if v[1] == key)
-            if mine >= self.MAX_PER_IP and ip not in proxy_ips():
-                self._note(ip, f": too many connections ({mine} from it)")
-                return False
+            mine = [(v[0], r) for r, v in self._conns.items() if v[1] == key and v[2] != "cut"]
+            if len(mine) >= self.MAX_PER_IP and ip not in proxy_ips():
+                # full for this address: cut its own oldest connection still sending its request, so one address
+                # trickling requests (everyone behind a proxy nobody named in TRUSTED_PROXY, say) only crowds itself
+                slow = [x for x in mine if self._conns[x[1]][2] is True]
+                if not slow:
+                    self._note(ip, f": too many connections ({len(mine)} from it)")
+                    return False
+                self._cut(min(slow, key=lambda x: x[0])[1])
             if len(self._conns) >= self.MAX_CONN:
                 # full: cut the oldest connection still sending its request, so slow senders (through a proxy that
                 # passes bodies on as they come, from many addresses) can't hold every place
@@ -2581,14 +2586,17 @@ class Server(ThreadingHTTPServer):
                 if not slow:
                     self._note(ip, f": too many connections ({len(self._conns)} open)")
                     return False
-                oldest = min(slow, key=lambda x: x[0])[1]
-                self._conns[oldest][2] = "cut"
-                try:
-                    oldest.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
+                self._cut(min(slow, key=lambda x: x[0])[1])
             self._conns[request] = [now, key, True, now + self.READ_DEADLINE, now + self.DEADLINE]
         return True
+
+    def _cut(self, request):
+        """End a connection still sending its request (holding _conn_lock): its thread sees the socket close."""
+        self._conns[request][2] = "cut"
+        try:
+            request.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
     def read_done(self, request):
         with self._conn_lock:

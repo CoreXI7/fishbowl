@@ -27,7 +27,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     mem_limit: 128m
     memswap_limit: 128m
-    pids_limit: 64
+    pids_limit: 128                 # 80 connections at once + a few threads (64 ran out before the oldest slow ones were cut)
     cpu_period: 100000
     cpu_quota: 50000
     logging:
