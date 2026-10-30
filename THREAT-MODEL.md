@@ -211,7 +211,9 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   (`X-Forwarded-Proto: https`), or the browser's address is known (through the proxy: its X-Real-IP, IPv4-mapped
   addresses mapped, scoped ones refused) and private, loopback or link-local. `ORIGIN` alone doesn't count. A proxy
   nobody named in `TRUSTED_PROXY` that sends forwarding headers makes the address unknown (the sign-in page says to set
-  `TRUSTED_PROXY`). The Setup checklist says when the proxy leaves out either header, or when every request comes from
+  `TRUSTED_PROXY`). The proxy must set both headers itself (stock Nginx Proxy Manager believes a visitor's own X-Real-IP from private
+  addresses and passes on their X-Forwarded-Proto: docs/SETTINGS.md has the tested line for each proxy, and the Setup
+  checklist warns when the dashboard's NPM host lacks it). The Setup checklist says when the proxy leaves out either header, or when every request comes from
   the container's gateway (Docker's userland proxy, rootless Docker/Podman: visitors can't be told apart). A repeated X-Real-IP or
   X-Forwarded-Proto counts as missing. "Your own network" is spelled out: 10/8, 172.16/12, 192.168/16, 127/8,
   169.254/16, fc00::/7, fe80::/10, ::1. With `ORIGIN` unset, changes over plain

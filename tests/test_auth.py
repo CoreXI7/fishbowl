@@ -1561,6 +1561,24 @@ class Audit(Base):
         self.assertLessEqual(max(v.get("fails", 0) for v in d["devices"].values()), self.auth.DEVICE_FAILS)
         self.assertGreaterEqual(d["failures"], 3, "past its own 10, the device's tries count toward the account lock")
 
+    def test_npm_that_lets_visitors_choose_their_address_is_a_setup_item(self):
+        # Stock Nginx Proxy Manager believes a visitor's own X-Real-IP from any private address and passes on their
+        # X-Forwarded-Proto (audit 2026-10-30): the Setup checklist says how to stop it on the dashboard's host.
+        ids = lambda: {i["id"]: i for i in self.app.setup_checks(host="dash.example.com", https=True)}
+        self.create()
+        conf = os.path.join(self.app.NPM_DIR, "1.conf")
+
+        def host(extra):
+            with open(conf, "w") as f:
+                f.write("server {\n  set $forward_scheme http;\n  set $server \"dash\";\n  set $port 8000;\n"
+                        f"  server_name dash.example.com;\n{extra}  location / {{ include conf.d/include/proxy.conf; }}\n}}\n")
+            self.app._npm["sig"] = None
+            self.app.read_npm_hosts()
+        host("")
+        self.assertEqual(ids().get("npm-headers", {}).get("state"), "warn")
+        host("  include conf.d/include/force-ssl.conf;\n  set_real_ip_from 127.0.0.2/32;\n")
+        self.assertNotIn("npm-headers", ids())
+
 
 if __name__ == "__main__":
     unittest.main()

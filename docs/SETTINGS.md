@@ -150,8 +150,22 @@ open that file:
   (7 days without a visit); otherwise 12 hours (1 hour without a visit). Over HTTPS the cookie is `__Host-fishbowl`
   (Secure, HttpOnly, SameSite=Strict); over plain HTTP `fishbowl` (the Setup checklist warns).
 - **Your reverse proxy** must send `X-Real-IP` (the visitor's address) and `X-Forwarded-Proto` (http or https), and be
-  named in `TRUSTED_PROXY`. Nginx Proxy Manager sends both headers. Caddy: `header_up X-Real-IP {remote_host}`.
-  HAProxy: `http-request set-header X-Real-IP %[src]` and `http-request set-header X-Forwarded-Proto https if { ssl_fc }`.
+  named in `TRUSTED_PROXY`. It must **set** both itself, never pass on what the visitor sent: otherwise a visitor
+  picks the address the dashboard sees (and can pass for one on your network) and can claim HTTPS. Out of the box
+  only Traefik gets this right; the others need these lines (each tested with that proxy):
+  - **Nginx Proxy Manager**: it sends both, but its stock config believes a visitor's own `X-Real-IP` when the visitor
+    comes from a private address (Docker's userland proxy makes every IPv6 visitor one) and passes on a visitor's
+    `X-Forwarded-Proto`. In the dashboard's proxy host, add `set_real_ip_from 127.0.0.2/32;` under **Advanced** (it
+    replaces that trust for this host), and turn on **Force SSL** under **SSL**.
+  - **Caddy**: `header_up X-Real-IP {remote_host}` in the `reverse_proxy` block (required: without it a visitor's own
+    X-Real-IP goes through). Caddy sets X-Forwarded-Proto itself.
+  - **HAProxy**: `http-request set-header X-Real-IP %[src]`, `http-request set-header X-Forwarded-Proto https if { ssl_fc }`
+    and `http-request set-header X-Forwarded-Proto http if !{ ssl_fc }` (without the last one a visitor's own value
+    stays on plain HTTP).
+  - **Traefik**: nothing to add (it replaces both unless you trust forwarded headers from the visitor's side).
+  - **A CDN or tunnel in front of the proxy** (Cloudflare and the like): the proxy must take the visitor's address
+    from that service's header (e.g. `CF-Connecting-IP`) and only for that service's own addresses.
+
   Without X-Real-IP every visitor shares one count of wrong tries and plain-HTTP sign-in is refused; without
   X-Forwarded-Proto sign-in from outside your network is refused (the sign-in page and the Setup checklist say which
   header is missing). If your proxy passes request bodies on as they arrive (Caddy, Traefik and HAProxy do by

@@ -142,9 +142,11 @@ install before you can claim it.
 - **Plain HTTP** (no HTTPS): passwords are only accepted from your own network, and that sign-in only works from the
   same address. Your browser also sends the dashboard's cookies to every other web app on that address (any port),
   so over plain HTTP only run apps you trust next to it, or put it behind HTTPS.
-- **Your reverse proxy** must send `X-Real-IP` and `X-Forwarded-Proto` (Nginx Proxy Manager does). Caddy, Traefik and
-  HAProxy need a line or two: see [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). The Setup
-  checklist tells you when something's missing.
+- **Your reverse proxy** must set `X-Real-IP` and `X-Forwarded-Proto` itself, never pass on what the visitor sent.
+  Nginx Proxy Manager, Caddy and HAProxy need a line or two for that (NPM: `set_real_ip_from 127.0.0.2/32;` under
+  Advanced, and Force SSL); Traefik is fine as it is: see
+  [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). The Setup checklist tells you when a header
+  is missing (it can't tell when the proxy lets a visitor choose it).
 
 **Forgot the password, locked out, or lost a device?** On the host:
 

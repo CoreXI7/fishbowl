@@ -265,6 +265,10 @@ def parse_npm_conf(path):
         # NPM's "Cache Assets": caches .css/.js/.png/... for 30 minutes whatever the app says (cookies and
         # Cache-Control ignored), so one visitor's images or a "sign in first" answer could reach everyone
         "caches": bool(re.search(r"^\s*include\s+conf\.d/include/assets\.conf\s*;", txt, re.M)),
+        # NPM believes a visitor's own X-Real-IP from any private address unless the host sets its own trusted list
+        # (Advanced: set_real_ip_from), and passes on a visitor's X-Forwarded-Proto unless plain HTTP is redirected
+        "real_ip": bool(re.search(r"^\s*set_real_ip_from\s+\S+\s*;", txt, re.M)),
+        "force_ssl": bool(re.search(r"^\s*include\s+conf\.d/include/force-ssl\.conf\s*;", txt, re.M)),
     }
 
 
@@ -1210,6 +1214,14 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
                 "send X-Forwarded-Proto: https.)",
                 [("Reach it through your reverse proxy's https address, and set ORIGIN in docker-compose.yml to that address:",
                   "ORIGIN: https://dash.example.com")], compose=True)
+        if mine and not (mine.get("real_ip") and mine.get("force_ssl")):
+            add("npm-headers", "warn", "Nginx Proxy Manager lets visitors choose their address",
+                f"{mine['name']}'s proxy host uses Nginx Proxy Manager's defaults, which believe a visitor's own X-Real-IP "
+                "when they come from a private address (Docker turns every IPv6 visitor into one) and pass on a visitor's "
+                "X-Forwarded-Proto. Then someone outside can pass for a browser on your network, and the limits per "
+                "address count nothing. (Already set for every host in custom/server_proxy.conf? Then ignore this.)",
+                [("In Nginx Proxy Manager, edit that proxy host; under Advanced, add:", "set_real_ip_from 127.0.0.2/32;"),
+                 ("Under SSL, turn on Force SSL.", "")], doc=DOCS + "#signing-in-auth-login-the-default")
         if mine and mine.get("caches"):
             add("cache", "warn", "Turn off Cache Assets for the dashboard",
                 f"{mine['name']}'s proxy host has Nginx Proxy Manager's Cache Assets on: it keeps images and files for 30 "
