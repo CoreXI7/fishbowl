@@ -1678,6 +1678,19 @@ class Audit(Base):
         self.assertEqual(st, 200, d)
         self.assertEqual(d.get("notice", {}).get("code"), 1, "the wrong code is shown")
 
+    def test_an_empty_forwarding_header_first_hides_nothing(self):
+        # HAProxy (option forwardfor) adds X-Forwarded-For after the visitor's own: the "proxy nobody named" check read
+        # only the first copy, so an empty one sent first made the visitor pass for the proxy's private address
+        # (audit round 2, the fuzzer)
+        conn = http.client.HTTPConnection(self.url.split("//")[1], timeout=10)
+        body = json.dumps({"code": self.setup_code(), "user": "admin", "password": PW}).encode()
+        conn.putrequest("POST", "/api/setup-account")
+        for k, v in (("Content-Type", "application/json"), ("Origin", self.url), ("X-Forwarded-For", ""),
+                     ("X-Forwarded-For", "203.0.113.9"), ("Content-Length", str(len(body)))):
+            conn.putheader(k, v)
+        conn.endheaders(body)
+        self.assertEqual(conn.getresponse().status, 403, "the browser's address is unknown: no plain-HTTP sign-in")
+
 
 if __name__ == "__main__":
     unittest.main()

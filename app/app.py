@@ -1801,7 +1801,7 @@ class Handler(BaseHTTPRequestHandler):
         """The browser's own address when it's known: the proxy's X-Real-IP for requests through the proxy (anyone else
         could send that header themselves; X-Forwarded-For's first entry is the client's to choose), otherwise the
         connection's address. None when the proxy doesn't say (Caddy doesn't send X-Real-IP by default)."""
-        if not self.via_proxy() and any(self.headers.get(h) for h in FORWARD_HEADERS):
+        if not self.via_proxy() and any(self.headers.get_all(h) for h in FORWARD_HEADERS):
             return None   # a proxy we weren't told about: the connection's address is the proxy's, not the browser's
         if self.via_proxy():
             try:
@@ -1866,7 +1866,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.via_proxy():
             gaps += ["X-Real-IP"] if not self.real_ip() else []
             gaps += ["X-Forwarded-Proto"] if (self.one_header("X-Forwarded-Proto") or "").lower() not in ("http", "https") else []
-        elif AUTH == "login" and any(self.headers.get(h) for h in FORWARD_HEADERS):
+        elif AUTH == "login" and any(self.headers.get_all(h) for h in FORWARD_HEADERS):
             gaps.append("untrusted")
         elif AUTH == "login" and self.client_address[0] == default_gateway():
             gaps.append("gateway")
