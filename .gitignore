@@ -1,5 +1,6 @@
 # your settings and secrets stay local
 .env
+docker-compose.override.yml
 data/
 config.toml
 collector.toml

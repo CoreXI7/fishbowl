@@ -58,6 +58,7 @@ def read_toml(path, root_only=False):
 FILE_CFG = read_toml(CONFIG_FILE)   # what you wrote; CFG = the settings in effect (see apply_config())
 CFG = FILE_CFG
 
+BUILD = 20261030   # written into hw.json: the dashboard asks for `sudo bash collector/install.sh` when it wants a newer one
 OUT_DIR = FILE_CFG.get("out_dir", "/var/lib/homelab-dash")
 OUT = os.path.join(OUT_DIR, "hw.json")
 DETAIL = os.path.join(OUT_DIR, "sec-detail.json")   # the Security & backups detail views (bigger, read on demand)
@@ -2674,7 +2675,7 @@ def main():
             data["power"] = {"pkg_w": round((e - prev_energy[1]) / 1e6 / (t - prev_energy[0]), 1), "limit_w": power_limit}
         prev_energy = (t, e)
 
-        data["updated"] = int(time.time())
+        data["updated"], data["build"] = int(time.time()), BUILD
         write_output(data)
         time.sleep(int(CFG.get("interval", 5)))
 

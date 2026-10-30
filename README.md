@@ -194,10 +194,15 @@ Every window has its own link, handy for bookmarks or a second screen:
 
 ### Updating? What to check
 
-Most updates need nothing from you. These ones might:
+Most updates need nothing from you. To update: `git pull`, then `docker compose up -d`. If `git pull` refuses
+because you edited `docker-compose.yml`, run `git stash`, `git pull`, `git stash pop` and look over the merged file;
+next time keep your changes in a `docker-compose.override.yml` next to it (Compose reads it on top, git leaves it
+alone). **The collector runs on the host and only updates when you run `sudo bash collector/install.sh` again**: the
+Setup checklist says when it's older than the dashboard. These updates might need more:
 
 | Change | What to do |
 |---|---|
+| **Security fixes from a pre-release audit (Oct 30)**, the root collector's included. | Update as above, and run `sudo bash collector/install.sh` again. Over plain HTTP everyone signs in once more (sign-ins are now tied to the exact address). |
 | **Fishbowl has its own sign-in now, on by default.** | If your reverse proxy's sign-in (Authelia, Authentik, an access list) already protects it, add `AUTH: proxy` to the `environment:` of docker-compose.yml. Otherwise, after updating, open the dashboard and create your account with the setup code from `docker logs <container> 2>&1 \| grep "^SETUP CODE" \| tail -n 1`. |
 | **homelab-dash is now called Fishbowl.** GitHub forwards the old address. | Nothing required. Optionally run `git remote set-url origin https://github.com/CoreXI7/fishbowl`. The collector keeps its `homelab-dash` names. |
 | **The collector's settings are on the settings page now, and it runs in a sandbox.** | Run `sudo bash collector/install.sh` again. Until then the page's Drives & hardware, Security and Backups sections say the collector is too old, and its settings stay in `/etc/homelab-dash/collector.toml`. |

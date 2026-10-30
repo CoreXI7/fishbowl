@@ -1137,6 +1137,7 @@ def _ago(secs):
 
 
 DOCS = "https://github.com/CoreXI7/fishbowl/blob/main/docs/SETTINGS.md"
+COLLECTOR_BUILD = 20261030   # the oldest collector build this dashboard is happy with (collector/...: BUILD)
 
 
 def setup_checks(host=None, https=None, proxy_gaps=()):
@@ -1366,6 +1367,12 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
         else:
             add("collector", "ok", "Hardware & security collector",
                 f"Connected: updated {_ago(age)} ago; security details {_ago(sd_age)} ago.")
+        if num(hw.get("build"), 0) < COLLECTOR_BUILD:
+            add("collector_update", "warn", "Update the collector",
+                "The collector on the host is older than this dashboard, and newer ones fix security problems in it (it "
+                "runs as root). Updating the dashboard doesn't update it: run its installer again.",
+                [("On the host, in the folder you cloned (the one with docker-compose.yml), after git pull:",
+                  "sudo bash collector/install.sh")])
         cv = collector_view()
         if not cv["supported"]:
             add("collector_page", "todo", "Update the collector to set it up here",
