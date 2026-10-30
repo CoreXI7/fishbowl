@@ -1,4 +1,6 @@
-# homelab-dash 🫧
+# Fishbowl 🐟🫧
+
+*Your whole server in a fishbowl.*
 
 **One page that tells you if your home server is OK.** Services up or down, who's watching Plex, pending requests,
 torrents (with a VPN-leak alarm), temperatures, drives, security and backups, all at a glance.
@@ -58,7 +60,7 @@ Every panel is optional: unconfigured ones hide themselves, and you can hide any
 ### Just look (demo mode, no setup)
 
 ```sh
-git clone https://github.com/CoreXI7/homelab-dash && cd homelab-dash
+git clone https://github.com/CoreXI7/fishbowl && cd fishbowl
 DEMO=1 python3 app/app.py          # Python 3.11+, then open http://localhost:8000
 ```
 
@@ -94,6 +96,7 @@ sudo systemctl restart homelab-dash-collector
 
 It needs Python 3.11+ and `smartctl`; it also uses `nvidia-smi`, `fail2ban-client` and `docker` if they're there.
 It costs under a second of CPU a minute. Remove it with `sudo bash collector/install.sh --uninstall`.
+The collector keeps Fishbowl's old name, homelab-dash, in its service and folders, so existing installs update in place.
 Its config is a file on purpose: it runs as root, so no web page should be able to change what it does.
 
 ---
@@ -123,6 +126,7 @@ Most updates need nothing from you. These ones might:
 
 | Change | What to do |
 |---|---|
+| **homelab-dash is now called Fishbowl.** GitHub forwards the old address. | Nothing required. Optionally run `git remote set-url origin https://github.com/CoreXI7/fishbowl`. The collector keeps its `homelab-dash` names. |
 | **The collector gained new checks** (security details, CPU power, safer reading of logs). | Run `sudo bash collector/install.sh` again and restart it. Without that, the new detail views and the live window's power reading stay empty. |
 | **Redirects are no longer followed** when the dash talks to other services. A service that answers with a redirect still counts as **up**. | If qBittorrent, Seerr or Tautulli sits behind a redirect, point its URL straight at the real address. The settings page's **Test** button tells you if one redirects. |
 | **Clients that aren't your proxy are dropped** right away. | Make sure `TRUSTED_PROXY` names your proxy. It can now list several names or IPs, space-separated. |

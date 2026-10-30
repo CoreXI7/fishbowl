@@ -1,4 +1,4 @@
-"""homelab-dash: a glance dashboard for a self-hosted server.
+"""Fishbowl: a glance dashboard for a self-hosted server.
 
 Stdlib only (Python 3.11+). Settings are edited on the /settings page (stored in the data folder),
 optionally seeded from config.toml; secrets can also come from environment variables.
@@ -790,7 +790,7 @@ def _ago(secs):
     return f"{secs} s" if secs < 120 else f"{secs // 60} min" if secs < 7200 else f"{secs // 3600} h"
 
 
-DOCS = "https://github.com/CoreXI7/homelab-dash/blob/main/docs/SETTINGS.md"
+DOCS = "https://github.com/CoreXI7/fishbowl/blob/main/docs/SETTINGS.md"
 
 
 def setup_checks(host=None):
@@ -1384,7 +1384,7 @@ if __name__ == "__main__":
     # LISTEN: the addresses to answer on (space-separated). Default: all. Set it to "127.0.0.1 <address on a network
     # only the proxy shares>" so other containers on the proxy's network can't reach the dash at all.
     servers = make_servers(os.environ.get("LISTEN") or "0.0.0.0", port)
-    print(f"homelab-dash listening on {', '.join(f'{s.server_address[0]}:{port}' for s in servers)}"
+    print(f"Fishbowl listening on {', '.join(f'{s.server_address[0]}:{port}' for s in servers)}"
           + (" (DEMO mode, fake data)" if DEMO else "") + f" · data folder {cfgstore.DATA_DIR}", flush=True)
     if TRUSTED_PROXY and not proxy_ips():
         print(f"WARNING: TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve yet, so connections are refused (it's looked up "

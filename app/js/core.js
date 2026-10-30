@@ -1,5 +1,5 @@
 // =====================================================================================================
-// homelab-dash page script. No framework: each panel has a load*() that fetches its /api/... endpoint and
+// Fishbowl page script. No framework: each panel has a load*() that fetches its /api/... endpoint and
 // a render step that builds HTML strings. Polling is at the bottom (startPolling).
 //
 // Efficiency rules used throughout:

@@ -1,6 +1,6 @@
 # Threat model
 
-What homelab-dash protects, who might attack it, where the trust boundaries are, and which controls hold each one.
+What Fishbowl protects, who might attack it, where the trust boundaries are, and which controls hold each one.
 Written for the reference setup (a home server behind a reverse proxy with SSO), but the reasoning applies to any install.
 
 ## What's worth protecting

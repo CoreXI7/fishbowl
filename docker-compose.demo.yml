@@ -1,4 +1,4 @@
-# Public live demo of homelab-dash: fake data only, safe to leave open to the internet.
+# Public live demo of Fishbowl: fake data only, safe to leave open to the internet.
 #   docker compose -f docker-compose.demo.yml up -d     then point your reverse proxy at homelab-demo:8000
 # What a visitor can and can't do:
 #   - Everything is fake (DEMO=1). No secrets, no host folders, no Docker socket, no outbound connections.
@@ -14,7 +14,7 @@ services:
     environment:
       DEMO: "1"
       DATA_DIR: /tmp/demo
-      # REPO_URL: https://github.com/CoreXI7/homelab-dash   # the "demo · fake data" label links here
+      # REPO_URL: https://github.com/CoreXI7/fishbowl   # the "demo · fake data" label links here
     volumes:
       - ./app:/app:ro
       - ./config.example.toml:/config.example.toml:ro

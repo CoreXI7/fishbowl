@@ -1,4 +1,4 @@
-# homelab-dash. Put it behind your reverse proxy + SSO (Authelia, Authentik, ...); it publishes no ports.
+# Fishbowl. Put it behind your reverse proxy + SSO (Authelia, Authentik, ...); it publishes no ports.
 # Setup: see README.md. Everything else is set on the dashboard's /settings page.
 services:
   dash:

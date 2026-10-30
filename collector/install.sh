@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Installs (or updates) the homelab-dash collector as a systemd service.
+# Installs (or updates) Fishbowl's collector as a systemd service. Its service, config and data names keep the
+# original homelab-dash name (homelab-dash-collector, /etc/homelab-dash, /var/lib/homelab-dash), so updates stay in place.
 # Usage: sudo bash collector/install.sh            uninstall: sudo bash collector/install.sh --uninstall
 set -euo pipefail
 cd "$(dirname "$0")"

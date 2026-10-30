@@ -1,4 +1,4 @@
-"""Settings for homelab-dash: what the settings page can edit, how it's validated and stored.
+"""Settings for Fishbowl: what the settings page can edit, how it's validated and stored.
 
 Layers (later wins):  config.toml (optional seed)  <  data/settings.json (saved from the GUI)  <  environment.
 Secrets live in data/secrets.json (chmod 600) or in the environment; an env value is "locked" (GUI can't change it).
@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 def _data_dir():
     d = os.environ.get("DATA_DIR", "/data")
     if DEMO and not os.access(d if os.path.isdir(d) else os.path.dirname(d) or ".", os.W_OK):
-        d = tempfile.mkdtemp(prefix="homelab-dash-demo-")
+        d = tempfile.mkdtemp(prefix="fishbowl-demo-")
     return d
 
 

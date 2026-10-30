@@ -10,7 +10,7 @@ import urllib.request
 INSECURE = ssl.create_default_context()      # upstreams are on the LAN, often with self-signed certs
 INSECURE.check_hostname = False
 INSECURE.verify_mode = ssl.CERT_NONE
-UA = "homelab-dash"
+UA = "fishbowl"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

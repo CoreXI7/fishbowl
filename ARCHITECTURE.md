@@ -1,4 +1,4 @@
-# How homelab-dash is put together
+# How Fishbowl is put together
 
 A small stdlib-only Python server, two HTML pages, plain CSS and plain JavaScript files. No framework, no build step,
 no dependencies. The optional root collector (`collector/`) gathers what the container can't see and writes JSON files

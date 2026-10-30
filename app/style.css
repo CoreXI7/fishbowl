@@ -1,4 +1,4 @@
-/* homelab-dash styles (shared by the dashboard and the settings page) */
+/* Fishbowl styles (shared by the dashboard and the settings page) */
 :root{--bg:#f4f6f9;--card:#fff;--fg:#1b2330;--mute:#6b7685;--line:#e3e7ee;--up:#1f9d55;--down:#d64545;--warn:#c98a00;--acc:#2f7de1;--bar:#e8edf4}
 @media (prefers-color-scheme:dark){:root{--bg:#0f141b;--card:#171e28;--fg:#e4e9f0;--mute:#8b96a6;--line:#263040;--up:#3ccf7e;--down:#ff6b6b;--warn:#f0b429;--acc:#5aa2ff;--bar:#243042}}
 *{box-sizing:border-box}

@@ -1,4 +1,4 @@
-# homelab-dash config: OPTIONAL. Almost everything here can be set on the dashboard's /settings page instead (not
+# Fishbowl config: OPTIONAL. Almost everything here can be set on the dashboard's /settings page instead (not
 # origin, npm_dir and trusted_proxy: they protect the dashboard, so they're set in docker-compose.yml, which wins).
 # If you prefer a file: copy it to data/config.toml. It's used until the first save from the settings page.
 # Secrets (passwords, API keys) do NOT go here: use the settings page or .env.
