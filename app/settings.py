@@ -10,6 +10,7 @@ import os
 import re
 import tempfile
 import tomllib
+import urllib.parse
 
 DEMO = os.environ.get("DEMO", "") == "1"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -199,6 +200,9 @@ def _obj(v, what):
 
 HOST = r"(?!(__proto__|constructor|prototype)$)(\*\.)?[A-Za-z0-9_.-]{1,253}"   # NPM allows "_" and "*." (wildcards); never a JS built-in name
 URL = r"https?://[^\s<>\"']{1,500}"
+# an integration's URL: a host and maybe a path, no query, fragment or user (urllib drops what follows #, so
+# "http://camera/snap.jpg#" made the poster proxy return the camera's picture)
+INTEGRATION_URL = r"https?://[^\s<>\"'?#@]{1,500}"
 ICON = r"[a-z0-9][a-z0-9-]{0,80}|/(static|uploads)/[\w.-]{1,120}"
 
 
@@ -317,6 +321,15 @@ def _home_ip(qbit_in):
     return home
 
 
+def _integration_url(v, name, loading):
+    """An integration's URL (INTEGRATION_URL). A saved file from before that rule (loading) has its query, fragment and
+    user dropped instead of stopping the dashboard from starting."""
+    if loading and isinstance(v, str) and re.search(r"[?#@]", v):
+        u = urllib.parse.urlsplit(v.strip())
+        v = f"{u.scheme}://{u.hostname or ''}{f':{u.port}' if u.port else ''}{u.path}" if u.scheme in ("http", "https") else ""
+    return _s(v, 500, f"{name} URL", INTEGRATION_URL)
+
+
 def validate(d, _old):
     """Check and normalise a whole settings object (from the browser, settings.json or config.toml).
     Returns a clean copy; raises Invalid with a message the settings page can show. (_old is unused, kept for callers.)"""
@@ -333,7 +346,7 @@ def validate(d, _old):
         "known_ips": _in("security", lambda v: [ip for ip in (_ip_or_prefix(x) for x in _list(v, 200, "known IPs")) if ip], d.get("known_ips")),
     }
     for name in INTEGRATIONS:
-        out[name] = {"url": _in("integrations", _s, _obj(d.get(name), name).get("url"), 500, f"{name} URL", URL)}
+        out[name] = {"url": _in("integrations", _integration_url, _obj(d.get(name), name).get("url"), name, _old is None)}
     out["qbittorrent"]["home_ip"] = _in("integrations", _home_ip, d.get("qbittorrent"))
     return out
 

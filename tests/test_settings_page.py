@@ -339,6 +339,35 @@ class OddFields(unittest.TestCase):
                 st = e.code
             self.assertEqual(st, 400, path)
 
+class IntegrationUrls(unittest.TestCase):
+    """A page user (a stolen session, anyone past the SSO) must not read other things on the LAN through the
+    integrations: a Tautulli URL of http://camera/snap.jpg# made /api/plexart return the camera's picture (urllib drops
+    what follows #), and a Test of a service that isn't HTTP showed its first line (audit round 2)."""
+
+    def test_integration_urls_have_no_query_fragment_or_user(self):
+        app = load_app()
+        for bad in ("http://camera/snap.jpg#", "http://camera/x?y=1", "http://me@camera/"):
+            with self.assertRaises(app.cfgstore.Invalid, msg=bad):
+                app.cfgstore.validate({**app.ED, "tautulli": {"url": bad}}, {})
+        app.cfgstore.validate({**app.ED, "tautulli": {"url": "http://nas:8181/tautulli"}}, {})
+        loaded = app.cfgstore.validate({**app.ED, "tautulli": {"url": "http://me@nas:8181/t?x=1#y"}}, None)   # (a saved file)
+        self.assertEqual(loaded["tautulli"]["url"], "http://nas:8181/t", "an older saved file still loads, cleaned")
+
+    def test_a_test_shows_no_text_from_a_service_that_isnt_http(self):
+        import socketserver
+        import threading
+
+        class Banner(socketserver.StreamRequestHandler):
+            def handle(self):
+                self.wfile.write(b"SSH-2.0-OpenSSH_9.6 secret-banner\r\n")
+        srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Banner)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
+        app = load_app(TAUTULLI_URL=f"http://127.0.0.1:{srv.server_address[1]}", TAUTULLI_KEY="k")
+        r = app.test_integration("tautulli")
+        self.assertFalse(r["ok"])
+        self.assertNotIn("banner", r["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

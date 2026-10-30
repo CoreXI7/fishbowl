@@ -1529,7 +1529,7 @@ def _test_integration(name, i):
             detail = f"connected · {d['total']} torrents · external IP {d['external_ip'] or '?'}"
         elif name == "seerr":
             d = seerr("/status")
-            detail = f"connected · version {d.get('version', '?')}"
+            detail = f"connected · version {text(d.get('version'), 40) or '?'}"
         else:
             d = tautulli("get_activity")
             detail = f"connected · {d.get('stream_count', 0)} streams now"
@@ -1542,6 +1542,8 @@ def _test_integration(name, i):
         return {"ok": False, "detail": scrub(why_no_answer(e.reason, i["url"]))}
     except (TimeoutError, ConnectionError, socket.gaierror) as e:
         return {"ok": False, "detail": scrub(why_no_answer(e, i["url"]))}
+    except http.client.HTTPException as e:   # (its message is the service's own first line: an SSH banner, say)
+        return {"ok": False, "detail": f"it didn't answer like {name} ({type(e).__name__})"}
     except Exception as e:
         return {"ok": False, "detail": scrub(f"{type(e).__name__}: {e}")}
 
