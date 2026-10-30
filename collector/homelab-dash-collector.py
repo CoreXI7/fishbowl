@@ -363,16 +363,23 @@ def net_bytes():
 
 # ---------- cron watch: flags any crontab change until you approve it on the dash ----------
 
+CRON_GLOBS = ("/etc/crontab", "/etc/cron.d/*", "/var/spool/cron/crontabs/*",
+              "/var/spool/cron/*")                       # (the last: RHEL-style per-user crontabs; dirs are skipped below)
+
+
 def cron_files():
-    """Every crontab's active lines (comments and blanks dropped), by file."""
-    files = ["/etc/crontab"] + sorted(glob.glob("/etc/cron.d/*")) + sorted(glob.glob("/var/spool/cron/crontabs/*")) \
-        + sorted(glob.glob("/var/spool/cron/*"))         # RHEL-style per-user crontabs (dirs are skipped below)
+    """Every crontab's active lines (comments and blanks dropped), by file. Split on \\n only, as cron does: Python's
+    universal newlines also split on \\r, so "approved line\\r#; payload" read as the approved line plus a comment
+    while cron ran the payload. A \\r is kept, shown as the two characters \\r."""
+    files = [f for g in CRON_GLOBS for f in (sorted(glob.glob(g)) if "*" in g else [g])]
     snap = {}
     for f in files:
         if not os.path.isfile(f):
             continue
         try:
-            lines = [l.strip() for l in open(f, errors="replace") if l.strip() and not l.strip().startswith("#")]
+            with open(f, "rb") as fh:
+                text = fh.read(4 << 20).decode("utf-8", "replace").replace("\r", "\\r")
+            lines = [l.strip() for l in text.split("\n") if l.strip() and not l.strip().startswith("#")]
         except OSError:
             continue
         snap[f] = lines
@@ -432,6 +439,11 @@ def save_approved(snap):
     os.replace(tmp, CRON_APPROVED)
 
 
+def card_lines(lines, n=20):
+    """At most n lines for the card, redacted, and a last one saying how many more there are (approving approves all)."""
+    return [redact(l) for l in lines[:n]] + ([f"… and {len(lines) - n} more lines"] if len(lines) > n else [])
+
+
 def cron_state():
     """Compare the crontabs with the approved snapshot: what was added/removed in which file."""
     snap = cron_files()
@@ -446,7 +458,7 @@ def cron_state():
         removed = [l for l in old.get(f, []) if l not in snap.get(f, [])]
         if added or removed or (f in snap) != (f in old):
             changes.append({"file": f, "new_file": f not in old, "deleted": f not in snap,
-                            "added": [redact(l) for l in added][:20], "removed": [redact(l) for l in removed][:20]})
+                            "added": card_lines(added), "removed": card_lines(removed)})
     return {"ok": not changes, "hash": cron_hash(snap), "approved_at": appr.get("approved_at"),
             "files": len(snap), "changes": changes}
 

