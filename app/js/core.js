@@ -12,12 +12,12 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const noTyping = e => !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
-// Background motion (bubbles, drifting effects): "auto" follows the device's reduce-motion setting, "on" and "off"
-// override it. Saved per browser (🫧 button or M), so a wall screen and a laptop can differ.
-const MOTION_MODES = ["auto", "on", "off"];
-let MOTION = "auto";
-try { MOTION = MOTION_MODES.includes(localStorage.getItem("motion")) ? localStorage.getItem("motion") : "auto"; } catch (e) {}
-const reducedMotion = () => MOTION === "off" || (MOTION === "auto" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+// Background motion (bubbles, drifting effects): "on" or "off" as chosen in this browser with 🫧 / M, else the
+// dashboard's default (site.motion), where "auto" follows the device's reduce-motion setting.
+let MOTION = "", SITE_MOTION = "auto";
+try { MOTION = ["on", "off"].includes(localStorage.getItem("motion")) ? localStorage.getItem("motion") : ""; } catch (e) {}
+const motionMode = () => MOTION || SITE_MOTION;
+const reducedMotion = () => motionMode() === "off" || (motionMode() === "auto" && matchMedia("(prefers-reduced-motion: reduce)").matches);
 const applyMotion = () => { document.documentElement.dataset.motion = reducedMotion() ? "still" : "move"; };
 applyMotion();
 
@@ -104,6 +104,8 @@ const CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/png/";
 
 function applyConfig() {
   document.title = CFG.title;
+  SITE_MOTION = ["auto", "on", "off"].includes(CFG.motion) ? CFG.motion : "auto";
+  applyMotion(); showMotion();
   $("site-title").textContent = CFG.title;
   $("gear").hidden = !CFG.settings_ui;
   if (CFG.demo) {
@@ -153,13 +155,14 @@ $("theme-btn").addEventListener("click", nextTheme);
 addEventListener("keydown", e => { if (e.key.toLowerCase() === "t" && noTyping(e)) nextTheme(); });
 
 function showMotion() {
-  const label = {auto: "follows this device's setting", on: "always on", off: "off"}[MOTION];
-  $("motion-btn").title = `Background motion: ${label} (click to change · M)`;
-  $("motion-btn").setAttribute("aria-label", `Background motion: ${label}`);
-  $("motion-btn").classList.toggle("off", reducedMotion());
+  const state = reducedMotion() ? "off" : "on", why = MOTION ? "" : " (dashboard default)";
+  $("motion-btn").title = `Background motion: ${state}${why}. Click to turn it ${state === "on" ? "off" : "on"} in this browser (M)`;
+  $("motion-btn").setAttribute("aria-label", "Background motion");
+  $("motion-btn").setAttribute("aria-pressed", state === "on");
+  $("motion-btn").classList.toggle("off", state === "off");
 }
-function nextMotion() {
-  MOTION = MOTION_MODES[(MOTION_MODES.indexOf(MOTION) + 1) % MOTION_MODES.length];
+function nextMotion() {   // one click always flips what you see
+  MOTION = reducedMotion() ? "on" : "off";
   try { localStorage.setItem("motion", MOTION); } catch (e) {}
   applyMotion(); showMotion(); bubbles();
 }

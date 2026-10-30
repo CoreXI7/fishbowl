@@ -106,6 +106,7 @@ Its config is a file on purpose: it runs as root, so no web page should be able 
 | Do this | To get |
 |---|---|
 | **T** or 🎨 | Switch theme (remembered per browser, so a wall screen keeps its own) |
+| **M** or 🫧 | Background bubbles on or off in this browser. By default they follow your device's reduce-motion setting; set `motion` in `settings.json` to `on` to show them everywhere |
 | **W** or the monitor button | Wall mode: fits 1920×1080 with no scrolling, hides the cursor |
 | Click **⚡ breakdown** or the CPU tile | What's using the machine, live. Click a tile for its busiest processes |
 | Click **🌡 live** on Temperatures | The every-second live window |

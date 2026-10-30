@@ -755,7 +755,7 @@ def page_config():
         "greeting": SITE["greeting"], "quotes": SITE["quotes"], "click_emoji": SITE["click_emoji"],
         "groups": ED["groups"], "apps": ED["apps"],
         "features": {"qbit": QBIT["on"], "seerr": SEERR["on"], "plex": TAUTULLI["on"]},
-        "hidden_panels": SITE["hidden_panels"], "settings_ui": cfgstore.UI_ENABLED, "demo": DEMO,
+        "hidden_panels": SITE["hidden_panels"], "motion": SITE["motion"], "settings_ui": cfgstore.UI_ENABLED, "demo": DEMO,
         "repo": os.environ.get("REPO_URL", "") if re.fullmatch(r"https://[\w./-]+", os.environ.get("REPO_URL", "")) else "",
     }
 

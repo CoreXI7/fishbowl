@@ -38,7 +38,8 @@ SECRET_ENV = {field: env for _, (_, fields) in INTEGRATIONS.items() for field, e
 
 DEFAULT_SITE = {"title": "my homelab", "tagline": "everything's running ✨", "tagline_down": "uh oh, something's down!",
                 "click_emoji": "🫧", "greeting": "", "quotes": [], "mascot": "", "mascot_credit": "", "favicon": "",
-                "theme": "bubbles", "themes": {}, "hidden_panels": []}
+                "theme": "bubbles", "themes": {}, "hidden_panels": [], "motion": "auto"}
+MOTION_MODES = ("auto", "on", "off")
 # Panels you can switch off on the settings page (site.hidden_panels). Hiding a panel keeps its summary tile at the top.
 PANELS = {"services": "Services", "system": "System", "temps": "Temperatures", "gpu": "GPU", "mascot": "Mascot",
           "plex": "Plex", "requests": "Requests", "torrents": "Torrents", "security": "Security & backups", "drives": "Drives"}
@@ -230,6 +231,9 @@ def _site(site_in):
     site["theme"] = theme if isinstance(theme, str) and theme in THEMES else "bubbles"
     hidden = (_s(p, 20, "hidden panel") for p in _list(site_in.get("hidden_panels"), 20, "hidden panels"))
     site["hidden_panels"] = [p for p in dict.fromkeys(hidden) if p in PANELS]   # unknown names (older/newer versions): dropped
+    # background motion for browsers that haven't chosen with 🫧: "auto" follows the device's reduce-motion setting
+    motion = site_in.get("motion")
+    site["motion"] = motion if motion in MOTION_MODES else "auto"
     themes_in = site_in.get("themes") or {}
     if not isinstance(themes_in, dict):
         raise Invalid("themes: invalid")

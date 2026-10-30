@@ -25,6 +25,7 @@ save from the settings page. Every field is validated on the server; a bad value
 | `favicon` | `/static/…` or `/uploads/…` path | Browser tab icon |
 | `theme` | `bubbles`, `miku` or `gura` | The default theme (each browser can switch with 🎨 or T and remembers its pick) |
 | `themes.<id>` | the personality fields above | Per-theme mascot, quotes, taglines, click emoji, tab icon (Bubbles uses the top-level fields) |
+| `motion` | `auto`, `on` or `off` | Background motion (bubbles and drifting effects) for browsers that haven't chosen with 🫧 / M. `auto` (default) follows the device's reduce-motion setting |
 | `hidden_panels` | list of `services`, `system`, `temps`, `gpu`, `mascot`, `plex`, `requests`, `torrents`, `security`, `drives` | Panels to leave off the page. Their summary tile at the top stays (a VPN leak still shows with Torrents hidden). Unknown names are ignored. |
 
 ### Services
