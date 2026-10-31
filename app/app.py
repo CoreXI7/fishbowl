@@ -1859,7 +1859,8 @@ class Handler(BaseHTTPRequestHandler):
                                                       bool(re.fullmatch(r"/js/[a-z-]+\.js", p)))
         if ok:
             return True
-        print(log_safe(f"blocked direct request from {ip} {self.command} {self.path[:80]}"), flush=True)
+        if ip != local:   # (the dashboard's own check of its proxy host, every minute: the access log has it)
+            print(log_safe(f"blocked direct request from {ip} {self.command} {self.path[:80]}"), flush=True)
         self.send(403, {"error": "forbidden"})
         return False
 

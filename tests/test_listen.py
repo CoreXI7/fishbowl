@@ -205,7 +205,12 @@ class Listen(unittest.TestCase):
                 c.request("GET", path)
                 return c.getresponse().status
             self.assertEqual(get("/api/settings"), 403, "not the dashboard's data")
-            self.assertEqual(get("/"), 403, "its own health check still counts as up (any answer under 500)")
+            import contextlib
+            import io
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(get("/"), 403, "its own health check still counts as up (any answer under 500)")
+            self.assertNotIn("blocked direct request", out.getvalue(), "no extra log line every minute for it")
             self.assertEqual(get("/favicon.ico"), 200, "its own icon still loads")
         finally:
             srv.shutdown()
