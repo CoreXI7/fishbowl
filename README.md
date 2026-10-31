@@ -1,250 +1,131 @@
 # Fishbowl
 
-A self-hosted status page for a home server. One page shows whether your services are up, who is watching Plex,
-pending Seerr requests, qBittorrent downloads (with a VPN-leak check), temperatures, drives, security events and
-backups.
-
-- Python standard library only: no pip packages, no Node, no database. Uses about 25–40 MB of RAM.
-- Runs in Docker behind your reverse proxy. Has its own sign-in, or can use your existing SSO.
-- Optional host helper (the "collector") for drives, GPU, power and security checks.
-
-Live demo with fake data: https://demo.vicy.us
+Your whole home server in one glanceable page.
 
 ![Fishbowl in wall mode](docs/screenshot-wall-dark.png)
 
+Fishbowl shows your services, Plex streams, media requests, torrents, temperatures, drives, security events and backups
+on one page. It is a single Python app with no dependencies, made to run in Docker behind a reverse proxy.
+
+[Live demo](https://demo.vicy.us) (fake data)
+
 ## Contents
 
-1. [Features](#features)
-2. [Requirements](#requirements)
-3. [Install](#install)
-4. [Sign-in](#sign-in)
-5. [Configuration](#configuration)
-6. [Updating](#updating)
-7. [Keys and links](#keys-and-links)
-8. [Screenshots](#screenshots)
-9. [Security](#security)
-10. [Demo, tests and other docs](#demo-tests-and-other-docs)
+- [Features](#features)
+- [Install](#install)
+- [Usage](#usage)
+- [Updating](#updating)
+- [Screenshots](#screenshots)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-| Panel | Shows | Needs |
-|---|---|---|
-| Services | Each Nginx Proxy Manager host (or ones you add), checked every 30 s | NPM's config folder, or a list on the settings page |
-| Plex | Current streams: who, what, direct play or transcode | Tautulli |
-| Requests | Pending requests, with Approve / Decline | Seerr, Overseerr or Jellyseerr |
-| Torrents | Downloads, speeds, and an alert if your real IP shows | qBittorrent |
-| System | CPU per thread, RAM, network, temperatures, NVIDIA GPU | nothing (GPU: the collector) |
-| Drives | Space, SMART health and temperature | the collector |
-| Security & backups | fail2ban, SSH logins from unknown places, Authelia failures, miner watch, cron changes, locked files, last backup | the collector |
-
-Also: a wall mode for an always-on screen, a live view of CPU/temps/power/disk I/O, a breakdown of what uses CPU and
-memory, three themes with light and dark, and a settings page with a Setup checklist that finds problems in your
-install. Panels you don't configure stay hidden.
-
-## Requirements
-
-- Docker with Compose
-- A reverse proxy in front of it with HTTPS (Nginx Proxy Manager, Caddy, Traefik, HAProxy, nginx)
-- For the optional collector: Linux with systemd, Python 3.11+, `smartctl`
+- Service status for every Nginx Proxy Manager host, or a list you enter
+- Plex now playing (Tautulli), requests with approve/decline (Seerr, Overseerr, Jellyseerr)
+- qBittorrent downloads with a VPN-leak alert
+- CPU, memory, network, temperatures and NVIDIA GPU, with a live per-second view
+- Drive space and SMART health, fail2ban, SSH logins, Authelia failures, cron changes and backup status (with the
+  optional collector)
+- Wall mode for an always-on screen, three themes, light and dark
+- Built-in sign-in with optional two-step, or your existing SSO
+- About 25–40 MB of RAM, no database
 
 ## Install
 
-**1. Get the code and create the data folder**
+Requirements: Docker with Compose, and a reverse proxy with HTTPS.
 
 ```sh
 git clone https://github.com/CoreXI7/fishbowl && cd fishbowl
 mkdir data && sudo chown 1000:1000 data
-cp .env.example .env && chmod 600 .env    # can stay empty
+cp .env.example .env && chmod 600 .env
 ```
 
-**2. Edit `docker-compose.yml`**
-
-| Setting | Set it to |
-|---|---|
-| `ORIGIN` | The URL you'll open it at, e.g. `https://dash.example.com` |
-| `TRUSTED_PROXY` | Your reverse proxy's container name, e.g. `npm` |
-| NPM folder volume | Path to NPM's `data/nginx/proxy_host` (or remove the line if you don't use NPM) |
-| `networks` | Your reverse proxy's Docker network |
-
-Not sure of the network name? `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <proxy>`
-
-**3. Start it**
+In `docker-compose.yml`, set `ORIGIN` (the dashboard's URL), `TRUSTED_PROXY` (your proxy's container name), the path
+to Nginx Proxy Manager's `proxy_host` folder (if you use it) and your proxy's network. Then:
 
 ```sh
 docker compose up -d
 ```
 
-**4. Add it to your reverse proxy**
+Point your reverse proxy at `dash:8000`. It must set the `X-Real-IP` and `X-Forwarded-Proto` headers;
+[docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default) has the lines for common proxies.
 
-Forward your host name to `dash:8000` over HTTPS. Your proxy must set `X-Real-IP` and `X-Forwarded-Proto` itself:
-
-- Nginx Proxy Manager: turn on **Force SSL**, and under **Advanced** add `set_real_ip_from 127.0.0.2/32;`
-- Traefik: works as is.
-- Caddy, HAProxy, nginx: see [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default).
-
-**5. Create your account**
-
-Open the dashboard. It asks for a setup code, which is in the container's log:
+Open the dashboard and create your account with the setup code from the log:
 
 ```sh
 docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1
 ```
 
-Already use SSO (Authelia, Authentik)? Skip this: add `AUTH: proxy` under `environment:` in docker-compose.yml and run
-`docker compose up -d` again.
+Then open **⚙ → Setup**: it checks the rest of your install and shows how to fix anything missing.
 
-**6. Finish in the browser**
+### Optional: the collector
 
-Click **⚙** → **Setup**. It lists anything still missing (proxy headers, integrations, the collector) with the exact fix.
-Add qBittorrent, Seerr and Tautulli under **Integrations**.
-
-**7. Optional: install the collector**
+Drives, GPU, power and the security panel come from a small helper that runs on the host as root, in a systemd sandbox
+and without network access:
 
 ```sh
 sudo bash collector/install.sh
-sudo nano /etc/homelab-dash/collector.toml    # drives, fail2ban jail, backup log, ...
+sudo nano /etc/homelab-dash/collector.toml
 sudo systemctl restart homelab-dash-collector
 ```
 
-It runs as root in a systemd sandbox, never uses the network, and writes a file the dashboard reads. Remove it with
-`sudo bash collector/install.sh --uninstall`. Settings that make it read a file or run a pattern only apply after you
-approve them on the host with `sudo homelab-dash-collector --apply`.
+## Usage
 
-**Troubleshooting:** an empty page or 502 usually means `TRUSTED_PROXY` doesn't match your proxy. `docker logs dash`
-says why.
+- **Settings:** click ⚙ or open `/settings`. Services, integrations, themes, drives, security checks and your account
+  are all set there.
+- **Sign-in:** one account, password of 15+ characters (long passwords are what resist offline guessing), optional
+  authenticator app with recovery codes. Already using SSO? Set `AUTH: proxy` in `docker-compose.yml`.
+- **Locked out:** `docker exec -it dash python /app/auth.py reset` (also `status`, `unlock`, `signout`).
+- **Keys:** `W` wall mode, `T` theme, `M` background motion, `Esc` close a window.
 
-## Sign-in
-
-- One account. Password of at least 15 characters (up to 1,024), checked against common passwords. Four random words
-  work well. *Why 15?* Length is what stops someone with a copy of the password's hash from guessing it offline; it's
-  what NIST SP 800-63B-4 asks for when a password is the only factor.
-- Two-step sign-in (optional, recommended): **⚙ → Account** → authenticator app. Save the 10 recovery codes.
-- "Keep me signed in": 30 days. Otherwise 12 hours.
-- Wrong guesses: waits grow after 5 tries; after 100 in a row, new browsers are locked out until you run `unlock`.
-  If someone enters your right password without the right code, you are warned at your next sign-in.
-- Plain HTTP (no HTTPS): sign-in only from your local network. Use HTTPS if you can.
-
-Recovery commands, run on the host:
-
-| `docker exec -it dash python /app/auth.py ...` | Does |
-|---|---|
-| `status` | Show the account, lock, two-step, signed-in browsers |
-| `unlock` | Clear the lock after 100 wrong tries |
-| `signout` | Sign out every browser (lost device) |
-| `reset` | Delete the account (settings stay) and print a new setup code |
-
-With `AUTH: proxy`, Fishbowl's sign-in is off and your proxy's sign-in protects it. Then `TRUSTED_PROXY` is required,
-and your SSO must not have bypass rules covering the dashboard's paths.
-
-## Configuration
-
-Most settings are on the settings page (**⚙** or `/settings`) and apply without a restart:
-
-| Section | Contains |
-|---|---|
-| Setup | Checks your install and shows fixes |
-| Look & feel, Themes | Title, visible panels, theme, mascot, taglines |
-| Services | Groups, names, icons, hidden hosts, services not in NPM |
-| Integrations | qBittorrent, Seerr, Tautulli, each with a Test button |
-| Drives & hardware, Security, Backups | What the collector shows and checks |
-| Account | Password, two-step, recovery codes, signed-in browsers |
-
-They are saved in `data/settings.json`; keys in `data/secrets.json` (both mode 600). A `data/config.toml` can be used
-instead ([example](config.example.toml)).
-
-Security settings live only in `docker-compose.yml`: `ORIGIN`, `TRUSTED_PROXY`, `LISTEN`, `AUTH`, `SETTINGS_UI`.
-Recommended: set `LISTEN` so only your proxy can reach the dashboard. Every setting is described in
-[docs/SETTINGS.md](docs/SETTINGS.md).
+All settings and environment variables: [docs/SETTINGS.md](docs/SETTINGS.md).
 
 ## Updating
 
 ```sh
 git pull
 docker compose up -d --force-recreate
-sudo bash collector/install.sh        # only if you use the collector
+sudo bash collector/install.sh    # if you use the collector
 ```
 
-If `git pull` refuses because you edited `docker-compose.yml`: run `git stash`, `git pull`, `git stash pop`. On a
-conflict, merge the file by hand, then `git add docker-compose.yml`, `git reset -q`, `git stash drop`. To avoid this,
-put your changes in `docker-compose.override.yml` instead.
-
-Upgrading from homelab-dash (before 1.0): the built-in sign-in is now on by default. Either create an account (step 5)
-or set `AUTH: proxy`. Also re-run the collector installer.
-
-## Keys and links
-
-| Key | Action |
-|---|---|
-| `W` | Wall mode (fits 1920×1080, hides the cursor) |
-| `T` | Change theme |
-| `M` | Background animation on/off |
-| `Esc` | Close a window |
-
-Direct links: `/?wall`, `/?live`, `/?breakdown`, `/?security=ssh` (also `fw`, `auth`, `procs`, `cron`, `locks`,
-`backups`), `/settings`. Click a box title on the Security & backups card to see its details.
+Keep your own compose changes in `docker-compose.override.yml` so `git pull` doesn't conflict.
 
 ## Screenshots
 
-All screenshots use demo mode (fake data).
-
 | | |
 |---|---|
-| ![Wall mode, light](docs/screenshot-wall-light.png) Wall mode, light | ![Full page](docs/screenshot-full.png) Full page |
-| ![Setup checklist](docs/screenshot-setup.png) Setup checklist | ![Settings](docs/screenshot-settings.png) Settings page |
-| ![Sign-in](docs/screenshot-signin.png) Sign-in | ![Account](docs/screenshot-account.png) Account, with a password warning |
-| ![SSH details](docs/screenshot-security.png) Security details: SSH | ![Backups](docs/screenshot-backups.png) Security details: backups |
-| ![Live window](docs/screenshot-live.png) Live window | ![Breakdown](docs/screenshot-breakdown.png) CPU / memory breakdown |
-| ![Gura theme](docs/screenshot-gura.png) Gura theme | ![Miku theme](docs/screenshot-miku.png) Miku theme |
+| ![Full page](docs/screenshot-full.png) | ![Setup checklist](docs/screenshot-setup.png) |
+| ![Sign-in](docs/screenshot-signin.png) | ![Account](docs/screenshot-account.png) |
+| ![SSH logins](docs/screenshot-security.png) | ![Backups](docs/screenshot-backups.png) |
+| ![Live view](docs/screenshot-live.png) | ![Gura theme](docs/screenshot-gura.png) |
 
 ## Security
 
-How it is built:
+The web app runs unprivileged in a read-only container and accepts connections only from your proxy. API keys never
+reach the browser. The collector runs as root but never uses the network, and nothing the web app sends can change
+what it reads without your approval on the host.
 
-- The web part runs as a normal user in a read-only container with no capabilities, capped at 256 MB.
-- The collector, which runs as root, never uses the network. The dashboard cannot make it read files or run patterns
-  without your approval on the host.
-- API keys never reach the browser. Changing an integration's address requires entering its key again.
-- Only your reverse proxy may connect (`TRUSTED_PROXY`, `LISTEN`), and changes must come from the dashboard's own page.
-- Data from qBittorrent, Seerr and Tautulli is treated as untrusted: escaped, size-limited and time-limited.
+Version 1.0 was audited before release: four rounds of independent review (40 reviews by AI agents, covering
+sign-in, HTTP handling, browser attacks, outbound requests, the root collector, cryptography and fuzzing). They found
+2 high and about 50 medium issues, all fixed with regression tests; the last three rounds found no way in. It was not a
+paid third-party audit.
 
-Anyone with root or Docker access on the host can read the container's environment, as with any self-hosted app.
+- [TESTING.md](TESTING.md): what was tested and the results
+- [THREAT-MODEL.md](THREAT-MODEL.md): design and known limits
+- [SECURITY.md](SECURITY.md): report a vulnerability privately
 
-### The 1.0 security audit
+## Contributing
 
-Before 1.0, Fishbowl went through a four-round security audit (40 reviews by AI agents across ten areas):
-
-| Item | Result |
-|---|---|
-| Areas | Sign-in and sessions, HTTP handling, browser attacks, outbound requests, the root collector, cryptography, black-box testing, fuzzing, research, release hygiene |
-| Method | Throwaway copies only; the real Docker image; real proxies (NPM, nginx, Caddy, HAProxy, Traefik) and browsers (Chrome, Firefox); every round re-ran earlier rounds' attacks |
-| Fuzzing | Over 15 million executions |
-| Findings | 2 high and about 50 medium, all fixed, each with a test |
-| Last three rounds | No way in found |
-| Tests | 357 automated tests |
-
-Limits: this was not a paid third-party audit, and Safari, Podman, Cloudflare Tunnel and Tailscale were not tested.
-
-- Results and known limits: [TESTING.md](TESTING.md), [SECURITY-TESTING.md](SECURITY-TESTING.md)
-- Design and remaining risks: [THREAT-MODEL.md](THREAT-MODEL.md)
-- Report a problem privately: [SECURITY.md](SECURITY.md)
-
-## Demo, tests and other docs
-
-Try it without setup: `DEMO=1 python3 app/app.py`, then open http://localhost:8000.
-
-Host a public demo (fake data, nothing saved):
+Issues and pull requests are welcome. Run the tests before sending a change:
 
 ```sh
-docker compose -p fishbowl-demo -f docker-compose.demo.yml up -d
-docker network connect homelab_demo <your-proxy-container>
+python3 -m unittest discover -s tests
 ```
 
-Then point a proxy host at `homelab-demo:8000`, without SSO.
-
-Run the tests: `python3 -m unittest discover -s tests` (standard library only; page tests use Chrome if installed).
-
-Other docs: [docs/SETTINGS.md](docs/SETTINGS.md) (all settings), [ARCHITECTURE.md](ARCHITECTURE.md) (code layout),
-[PERF-BASELINE.md](PERF-BASELINE.md) (measured resource use).
+[ARCHITECTURE.md](ARCHITECTURE.md) describes the code layout. Please report security problems privately
+([SECURITY.md](SECURITY.md)), not as public issues.
 
 ## License
 
