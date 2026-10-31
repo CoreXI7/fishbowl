@@ -167,7 +167,8 @@ shipper) can read the code too: create the account right after the first start.
 **Already have SSO** (Authelia, Authentik, an access list)? Add `AUTH: proxy` to the `environment:` in
 docker-compose.yml so you sign in only once. It needs `TRUSTED_PROXY` too: without it anyone could go around your
 proxy's sign-in, so Fishbowl keeps its own on and says so in the log. The Setup checklist checks that a sign-in sits in
-front of the dashboard. Demo mode (`DEMO=1`) has no sign-in.
+front of the dashboard. Don't let your SSO wave any of the dashboard's paths through (an Authelia `bypass` rule for
+`^/api` that covers its host, say): with `AUTH: proxy`, whoever gets past the proxy can change everything. Demo mode (`DEMO=1`) has no sign-in.
 
 Every detail: [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). How it's built:
 [THREAT-MODEL.md](THREAT-MODEL.md#the-sign-in-authlogin). How it was tested: [SECURITY-TESTING.md](SECURITY-TESTING.md).
@@ -200,7 +201,8 @@ Most updates need nothing from you. To update: `git pull`, then `docker compose 
 `--force-recreate` the old code keeps running: the app folder is mounted, and Compose only restarts for a changed
 compose file; the Setup checklist says when that happened). If `git pull` refuses because you edited
 `docker-compose.yml`, run `git stash`, `git pull`, `git stash pop` and look over the merged file (if `git stash pop`
-reports a conflict, keep your own lines and the new ones, then `git stash drop`);
+reports a conflict, keep your own lines and the new ones, then `git add docker-compose.yml`, `git reset -q` and
+`git stash drop`, or the next update's `git pull` refuses);
 next time keep your changes in a `docker-compose.override.yml` next to it (Compose reads it on top, git leaves it
 alone). **The collector runs on the host and only updates when you run `sudo bash collector/install.sh` again**: the
 Setup checklist says when it's older than the dashboard. These updates might need more:
@@ -431,7 +433,7 @@ Details: [THREAT-MODEL.md](THREAT-MODEL.md). What was tested and what came out o
 access, no internet, a settings page that never saves, uploads off, and tight resource limits.
 
 ```sh
-docker compose -f docker-compose.demo.yml up -d
+docker compose -p fishbowl-demo -f docker-compose.demo.yml up -d
 docker network connect homelab_demo <your-proxy-container>   # e.g. nginx for Nginx Proxy Manager
 ```
 

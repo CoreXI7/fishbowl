@@ -1,5 +1,6 @@
 # Public live demo of Fishbowl: fake data only, safe to leave open to the internet.
-#   docker compose -f docker-compose.demo.yml up -d     then point your reverse proxy at homelab-demo:8000
+#   docker compose -p fishbowl-demo -f docker-compose.demo.yml up -d     then point your reverse proxy at homelab-demo:8000
+#   (-p: its own project; in the same folder as the dashboard, "--remove-orphans" on one would remove the other)
 # What a visitor can and can't do:
 #   - Everything is fake (DEMO=1). No secrets, no host folders, no Docker socket, no outbound connections.
 #   - The settings page checks what they type but never saves it; uploads are off. Nothing persists between visitors.
