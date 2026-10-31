@@ -1749,6 +1749,31 @@ class Audit(Base):
         self.assertEqual(st, 200, d)
         self.assertEqual(d.get("notice", {}).get("code"), 1, "the abandoned step is shown")
 
+    def test_a_password_step_ended_without_a_code_is_told(self):
+        # "Start over" (/api/logout) or five replays of a used code ended the step unseen: only a step left to run out
+        # was told (audit round 4)
+        _, secret, recovery, dev = self.two_step()                            # (its code used this step's code)
+        seen = self.auth.totp_code(secret, int(time.time() // 30) + 1)
+
+        def owner(code):
+            self.app.THROTTLE.ip_ok("127.0.0.1")
+            pre = cookie_of(self.login(cookie=dev)[1], "fishbowl-pre")
+            return call(self.url + "/api/login/code", "POST", {"code": code}, cookie=f"{pre}; {dev}")
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        pre = cookie_of(self.login(cookie=dev)[1], "fishbowl-pre")
+        call(self.url + "/api/logout", "POST", {}, cookie=f"{pre}; {dev}")     # the owner's own "Start over"...
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        pre = cookie_of(self.login()[1], "fishbowl-pre")
+        call(self.url + "/api/logout", "POST", {}, cookie=pre)                  # ...and someone else's
+        st, _, d = owner(seen)
+        self.assertEqual((st, d.get("notice", {}).get("code")), (200, 1), "a started-over step is shown (not the owner's own)")
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        pre = cookie_of(self.login()[1], "fishbowl-pre")
+        for _ in range(6):                                                       # the owner's code, seen and replayed
+            call(self.url + "/api/login/code", "POST", {"code": seen}, cookie=pre)
+        st, _, d = owner(recovery[0])
+        self.assertEqual((st, d.get("notice", {}).get("code")), (200, 1), "a step whose tries were used up is shown")
+
     def test_a_used_code_still_uses_up_a_try_of_its_step(self):
         # (a code the owner had just used, replayed on one step, gave the step's try back: unlimited tries on that step,
         # each still counted toward the lock with nothing recorded; audit round 3)

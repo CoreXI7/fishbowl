@@ -65,6 +65,13 @@ auth.configure(cfgstore.DATA_DIR)
 ACCOUNT, SESSIONS, THROTTLE = auth.Account(), auth.Sessions(), auth.Throttle()
 _pending = {}                 # sha256(pre-sign-in token) -> {"t", "keep", "tries", "wrong", "dev", "epoch", "tls", "from"}: the password was right, a code is due
 _ran_out = []                 # half-finished sign-ins that ran out, until they're noted as failures (tell_ran_out)
+
+
+def ended_unfinished(steps, why):
+    """Half-finished sign-ins ended without the right code ("Start over", tries used up, cleared): told to the owner
+    like one that ran out, unless a wrong code in them already was. Call with _pending_lock held."""
+    _ran_out.extend({**p, "ended": why} for p in steps if not p.get("wrong"))
+    del _ran_out[:-200]
 _test_lock = threading.Lock()  # one integration Test at a time
 _pending_totp = {}            # sha256(session token) -> {"t", "secret", "epoch"}: an authenticator being set up, not confirmed yet
 _recent_fails = {}            # trusted-device hash -> [(time, "password" | "code", address)]: typos in that browser, forgiven at its next sign-in
@@ -2082,8 +2089,8 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def tell_ran_out(self):
-        """Note the half-finished sign-ins that ran out (pending() collects them) as failures. Called where no lock is
-        held: noting takes the account's file lock."""
+        """Note the half-finished sign-ins that ran out or ended without the right code (pending() and ended_unfinished()
+        collect them) as failures. Called where no lock is held: noting takes the account's file lock."""
         with _pending_lock:
             gone = _ran_out[:]
             _ran_out.clear()
@@ -2220,6 +2227,7 @@ class Handler(BaseHTTPRequestHandler):
             return None
         SESSIONS.end_all()
         with _pending_lock:
+            ended_unfinished(_pending.values(), "every browser was signed out")
             _pending.clear()
             _pending_totp.clear()
         token, max_age = SESSIONS.create(bool(cur.get("keep")), ip, ua, new["epoch"], self.https())
@@ -2318,7 +2326,11 @@ class Handler(BaseHTTPRequestHandler):
             ended = [t for t in self.cookie_values("fishbowl") if SESSIONS.end(t)]   # (from any address: it's this browser's)
             if ended:
                 print(log_safe(f"sign-in: signed out from {ip}"), flush=True)
-            self.pending(consume=True)   # a half-finished sign-in in this browser ends too ("Start over")
+            with _pending_lock:          # a half-finished sign-in in this browser ends too ("Start over")
+                p = self.pending(consume=True)
+                if p:
+                    ended_unfinished([p], "the sign-in was started over")
+            self.tell_ran_out()
             # (not Clear-Site-Data "cookies": that wipes every cookie of the whole site, your SSO's included)
             return self.send(200, {"ok": True}, extra={"Clear-Site-Data": '"cache"'},
                              cookies=(self.make_cookie("fishbowl", "", clear=True), self.make_cookie("fishbowl-pre", "", clear=True)))
@@ -2389,6 +2401,7 @@ class Handler(BaseHTTPRequestHandler):
                 pre = secrets.token_urlsafe(32)
                 with _pending_lock:
                     if len(_pending) > 200:
+                        ended_unfinished(_pending.values(), "too many sign-ins at once")
                         _pending.clear()
                     _pending[hashlib.sha256(pre.encode()).hexdigest()] = {"t": time.time(), "keep": keep, "tries": 0, "dev": dev,
                                                                           "epoch": acct["epoch"], "tls": self.https(), "from": ip}
@@ -2405,6 +2418,7 @@ class Handler(BaseHTTPRequestHandler):
             with _pending_lock:   # the step's own 5 codes, reserved before checking: parallel tries can't all slip in
                 if p["tries"] >= 5:
                     self.pending(consume=True)
+                    ended_unfinished([p], "its tries were used up")
                     return self.send(401, {"error": "Wrong code 5 times: sign in with your password again.", "restart": True,
                                            "field": "code"})
                 p["tries"] += 1
