@@ -101,7 +101,9 @@ Every request the dashboard makes to another service, in one place. Code: `app/u
 | Service icons | not checked | only `User-Agent` and `Host` | at most 3, and only while they stay on the service's own scheme and host:port | PNG, JPEG, WebP, GIF or ICO only (never SVG or HTML); the page read is capped at 200 KB, an icon at 512 KB, at most 5 URLs and 20 s per lookup |
 
 For every request: an overall deadline (3× its timeout, connecting included), answer headers capped at 64 KB, chunk
-sizes must be plain hex, and failures are shared briefly as text so a failing service can't pile up requests.
+sizes must be plain hex, and failures are shared briefly as text so a failing service can't pile up requests. These
+live in the connection classes both clients are built from, so every caller gets them without repeating them
+(see [where to look in the code](#where-to-look-in-the-code)).
 
 Icons are served back with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none';
 sandbox`, so even bytes that aren't really an image can't run as a page on the dashboard's address.
@@ -117,7 +119,8 @@ a memory and task cap. On top of that, `install.sh` runs `collector/sandbox.sh`,
 sandbox levels the collector still works under on that machine (it runs `--selftest` twice under the plain unit and
 once under each level, and keeps the first that answers like the plain runs; the self-test reports facts only, uses
 `collector.toml` and approved settings but never the page's automatic ones, and the collector is restarted and checked
-afterwards, the level removed again if it stops updating): no IP traffic at all (`IPAddressDeny=any`), the whole filesystem read-only
+afterwards, the level removed again if it stops updating; if no level works on that machine, the plain unit
+stays and the Setup checklist says "The collector runs without the extra sandbox"): no IP traffic at all (`IPAddressDeny=any`), the whole filesystem read-only
 except the output folder (`ProtectSystem=strict`), kernel tunables/modules/logs/cgroups/clock protected, no new
 namespaces, SUID or realtime, and, at the strictest level, only the capabilities it uses (`CAP_DAC_READ_SEARCH`,
 `CAP_CHOWN`, `CAP_FOWNER`, `CAP_SYS_RAWIO`, `CAP_NET_ADMIN`, `CAP_NET_RAW`), `MemoryDenyWriteExecute` and the
@@ -314,6 +317,28 @@ Found by the reviewers of the fixes, also fixed and tested: poster art from a ho
 dash's origin; a crafted SSH user name could fake a login on the card (and "Add all" could then trust a whole /8);
 deeply nested JSON could exhaust memory under the byte caps; several ways a misbehaving journalctl could stall or
 bloat the collector.
+
+## Where to look in the code
+
+For reviewers: each boundary above and the code that enforces it. Function names, not line numbers, since those move.
+
+| Boundary | Where |
+|---|---|
+| Outbound deadline, connecting included | `app/upstream.py`: `_create_connection()`, `watch()` and `_reap()`, used by `DeadlineHTTPConnection` / `DeadlineHTTPSConnection` |
+| Answer limits (headers, chunk sizes, chunked bodies, JSON) | `app/upstream.py`: `_HeaderBudget`, `StrictResponse`, `read_capped()`, `read_json()` |
+| Which requests check certificates, and redirects | `app/upstream.py`: `NOFOLLOW` and `STRICT` (both with `_NoRedirect`), `fetch_same_host()`; qBittorrent's own client in `app/app.py` (`Qbit`) |
+| Icons (raster only, 20 s budget) | `app/app.py`: `favicon()`, `_favicon()`, `ICON_TYPES` |
+| Who may connect, and proxy headers | `app/app.py`: `allowed_ip()`, `Handler.allowed()`, `proxy_ips()`, `forwarded_alike()`, `real_ip()`, `proxy_gaps()`, `plain_http_ok()` |
+| Sign-in, sessions, the code step | `app/auth.py` (accounts, sessions, throttling, TOTP); `app/app.py`: `gate()`, `_auth_post()`, `pending()`, `ended_unfinished()` |
+| Settings and keys | `app/settings.py`: `validate()`, `apply_secret_changes()`, `save()` |
+| The dashboard's request to the collector | `collector/homelab-dash-collector.py`: `take_request()`, `page_round()`; what applies by itself is `SAFE_KEYS`, what waits for the host is `APPROVAL_KEYS` |
+| Approval on the host (`--apply`) | `collector/homelab-dash-collector.py`: `cli_apply()`, `approve()`, `approved_values()` |
+| Reading files others can write, without following links | `collector/homelab-dash-collector.py`: `_walk()`, `open_regular()`, `read_regular()`, `regular_stat()`, `page_path()` |
+| Files root writes | `collector/homelab-dash-collector.py`: `create_private()`, `unsafe_out_dir()` |
+| The sandbox | `collector/sandbox.sh`, `collector/install.sh` |
+
+Every finding the 1.0 audit fixed is listed with its commit and test in
+[SECURITY-TESTING.md](SECURITY-TESTING.md#every-finding-of-the-10-audit).
 
 ## Still open
 
