@@ -169,6 +169,7 @@ class CollectorSettings(unittest.TestCase):
         d = app.collector_view()["detected"]
         self.assertEqual((d["ifaces"], d["mounts"], d["authelia_db"], d["gpu"]), ([], ["/"], {"b": "/x"}, False))
 
+    @unittest.skipIf(os.geteuid() == 0, "needs a normal user: root ignores the folder's permissions")
     def test_a_failed_hand_over_keeps_the_dashboards_save(self):
         app = load()
         hw(app, BLOCK)

@@ -101,7 +101,9 @@ Every request the dashboard makes to another service, in one place. Code: `app/u
 | Service icons | not checked | only `User-Agent` and `Host` | at most 3, and only while they stay on the service's own scheme and host:port | PNG, JPEG, WebP, GIF or ICO only (never SVG or HTML); the page read is capped at 200 KB, an icon at 512 KB, at most 5 URLs and 20 s per lookup |
 
 For every request: an overall deadline (3× its timeout, connecting included), answer headers capped at 64 KB, chunk
-sizes must be plain hex, and failures are shared briefly as text so a failing service can't pile up requests. These
+sizes must be plain hex, and failures are shared briefly as text so a failing service can't pile up requests. The name lookup itself can't be interrupted:
+it's bounded by the system resolver's own timeout (5 s per try with the Docker image's Alpine resolver, more with
+several search domains), and its time counts against the connect deadline once it returns. These
 live in the connection classes both clients are built from, so every caller gets them without repeating them
 (see [where to look in the code](#where-to-look-in-the-code)).
 

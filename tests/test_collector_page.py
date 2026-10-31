@@ -469,7 +469,8 @@ class Display(unittest.TestCase):
         os.symlink("/etc", d + "/dirlink")
         ws = col.folder_warnings(d + "/dirlink/hostname")
         self.assertTrue(any("is a link to" in w for w in ws) and not any("anyone can write" in w for w in ws), ws)
-        self.assertTrue(col.folder_warnings(d + "/*/x.log"), "the folder a pattern lists is checked too")
+        self.assertTrue(col.folder_warnings(d + "/*/x.log") or os.getuid() == 0,   # (as root, the folder is root's: no warning)
+                        "the folder a pattern lists is checked too")
 
 
 class Mounts(unittest.TestCase):

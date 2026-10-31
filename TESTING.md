@@ -10,7 +10,9 @@ python3 -m unittest discover -s tests       # 357 tests, stdlib only, ~5 minutes
 ```
 
 Nothing real is contacted: fake qBittorrent, Seerr, Tautulli and web apps (`tests/helpers.py`) stand in for the real
-ones, and test servers bind `127.0.0.1` only. Result for 1.0: **357 tests, all passing**, on Python 3.12.
+ones, and test servers bind `127.0.0.1` only. Run them as a normal user, not root: root ignores file permissions, so
+the tests that simulate "can't write here" can't work as root (they skip themselves). The reference runtime is Python
+3.12 (the Docker image pins 3.12.16); the whole suite takes about 5 minutes. Result for 1.0: **357 tests, all passing**, on Python 3.12.
 
 ## What's tested, and how
 
