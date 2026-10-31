@@ -6,7 +6,10 @@ function wake() {   // in wall mode, show the cursor (and the button) while the 
   clearTimeout(idleTimer);
   if (isWall()) idleTimer = setTimeout(() => document.body.classList.add("idle"), 3000);
 }
-function setWall(on) {
+function setWall(on, byHand) {
+  // switched by hand from a page with a scrollbar: keep its room, so the buttons stay under the mouse
+  const root = document.documentElement;
+  if (on && !isWall()) root.classList.toggle("keep-gutter", !!byHand && innerWidth > root.clientWidth);
   document.body.classList.toggle("wall", on);
   $("wall-btn").title = on ? "Leave wall mode (W)" : "Wall mode for a TV or spare screen (W)";
   $("wall-btn").setAttribute("aria-pressed", on);
@@ -19,8 +22,8 @@ function setWall(on) {
   tick();
 }
 ["mousemove", "mousedown", "touchstart", "keydown"].forEach(e => addEventListener(e, wake, {passive: true}));
-$("wall-btn").addEventListener("click", () => setWall(!isWall()));
-addEventListener("keydown", e => { if (e.key.toLowerCase() === "w" && noTyping(e)) setWall(!isWall()); });
+$("wall-btn").addEventListener("click", () => setWall(!isWall(), true));
+addEventListener("keydown", e => { if (e.key.toLowerCase() === "w" && noTyping(e)) setWall(!isWall(), true); });
 if (/[?&#]wall\b/.test(location.search + location.hash)) setWall(true);
 
 // header clock (wall mode shows weekday + minutes only, so it only really changes once a minute there)

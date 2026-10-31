@@ -213,9 +213,10 @@ html[data-motion="still"] .mascot img{animation:none}
 
 /* ===== wall mode (?wall): fits 1920x1080 with no scrolling, glanceable from across the room ===== */
 body.wall{height:100vh;overflow:hidden;font-size:15px}
-body.wall #signout{display:none}
+html.keep-gutter:has(body.wall){scrollbar-gutter:stable}
+body.wall #signout{visibility:hidden}   /* no sign-out on a wall screen, but its place kept: the buttons don't move */
 body.wall.idle,body.wall.idle *{cursor:none!important}
-body.wall header{padding:8px 18px}
+body.wall header{padding:8px 16px}   /* (same sides as normal: the buttons stay put) */
 body.wall #p-time{font:600 26px Fredoka,sans-serif;border:0;background:none;box-shadow:none}
 body.wall .layout{max-width:none;height:calc(100vh - 64px);padding:12px 14px;gap:12px;
   grid-template-columns:350px minmax(0,1fr) 400px;grid-template-rows:auto minmax(0,1fr);grid-template-areas:"kpi kpi kpi" "left main right"}
@@ -314,7 +315,6 @@ body.wall .mascot img{max-height:150px;max-width:none;width:auto}
 [hidden]:not(#seed){display:none!important}   /* hidden must beat .pill/.kpi/section display rules (#seed: wall mode shows it) */
 .gear{text-decoration:none;color:inherit;font-size:16px;line-height:1}
 .gear:hover{background:color-mix(in srgb,var(--acc) 25%,var(--card))}
-body.wall .gear{display:none}
 #wall-btn{cursor:pointer;line-height:0;padding:6px 10px;color:var(--fg);transition:opacity .3s}
 #wall-btn[aria-pressed=true]{background:linear-gradient(135deg,var(--acc),var(--eye));border-color:transparent}
 body.wall.idle #wall-btn{opacity:0}
