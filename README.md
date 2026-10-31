@@ -203,18 +203,8 @@ Fishbowl has its own sign-in, on by default: one account, for you.
   read the code too: create the account right after the first start.
 - **Password:** 15 characters or more (a few random words work well, like `otter plinth marble cascade`), up to 1,024,
   checked against common passwords, stored with scrypt. No other rules; password managers and pasting are welcome.
-  <details><summary>Why at least 15?</summary>
-
-  Guessing at the sign-in page is already slow here (waits after 5 wrong tries, a lock after 100). The real risk is a
-  *copy* of the password's hash: `data/auth.json` ends up in backups, on old disks, or in a container someone broke
-  into, and against a copy there are no waits: an attacker can try billions of guesses on their own hardware. Hashing
-  slows each guess down, but only length makes a password hard to find. People don't pick short passwords at random
-  (`Summer2024!`, `P@ssw0rd`), and cracking tools try exactly those first, while every extra character multiplies the
-  work. That's why the US password guideline (NIST SP 800-63B-4) asks for at least 15 characters when the password is
-  the only thing protecting an account, and why it drops the old "must contain a symbol" and "change it every 90 days"
-  rules, which make people choose predictable passwords. Fishbowl follows it: long, no silly rules. (With two-step
-  sign-in the password isn't enough on its own, but two-step is optional, so the minimum doesn't change.)
-  </details>
+  *Why 15?* Length is what stops someone who gets a copy of the password's hash from guessing it offline; it's what
+  the US password guideline (NIST SP 800-63B-4) asks for when the password is the only thing protecting an account.
 - **Two-step sign-in** (recommended): ⚙ → **Account** → set up an authenticator app, and keep the 10 recovery codes it
   shows (each works once, for a lost phone).
 - **Keep me signed in:** 30 days (7 without a visit), so a wall screen stays up. Without it: 12 hours (1 hour without a
