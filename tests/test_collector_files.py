@@ -263,6 +263,35 @@ class Robust(unittest.TestCase):
         finally:
             self.col.GLOB_MAX = real
 
+    def test_a_backup_glob_looks_at_a_bounded_number_of_names(self):
+        # (glob listed a whole folder before matching, and followed folder links as it went: a container's folder of
+        # 700,000 names got the collector killed at its memory cap, 10,000 links to "." took 24 s; audit round 4)
+        import time
+        flood = os.path.join(self.tmp, "flood")
+        os.makedirs(flood)
+        for i in range(3000):
+            open(os.path.join(flood, f"x{i:05d}"), "w").close()
+        for i in range(300):
+            os.symlink(".", os.path.join(flood, f"loop{i:03d}"))
+        real = self.col.GLOB_LOOK
+        self.col.GLOB_LOOK = 1000
+        listed = []
+        scandir = self.col.os.scandir
+
+        def counting(p):
+            it = scandir(p)
+            listed.append(p)
+            return it
+        self.col.os.scandir = counting
+        try:
+            t0 = time.monotonic()
+            self.assertEqual(self.col.capped_glob(flood + "/*/*.gz"), [])
+            self.assertLess(time.monotonic() - t0, 1)
+            self.assertEqual(listed, [flood], "folder links aren't entered")
+        finally:
+            self.col.os.scandir, self.col.GLOB_LOOK = scandir, real
+        self.assertEqual(sorted(self.col.capped_glob(flood + "/x0000*")), [os.path.join(flood, f"x0000{i}") for i in range(10)])
+
     def test_a_state_folder_others_can_write_is_refused(self):
         open_dir = tempfile.mkdtemp(dir=self.tmp)
         os.chmod(open_dir, 0o777)

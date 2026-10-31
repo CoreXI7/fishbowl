@@ -23,7 +23,6 @@ import glob
 import hashlib
 import heapq
 import ipaddress
-import itertools
 import json
 import os
 import pwd
@@ -458,11 +457,47 @@ def save_approved(snap):
 
 
 GLOB_MAX = 20_000   # files one backup pattern may match: ~200,000 in a folder a container fills used up the 200M cap
+GLOB_LOOK = 50_000  # names one pattern may look at, all its folders together
+_MAGIC = re.compile(r"[*?[]")
 
 
 def capped_glob(pattern):
-    """At most GLOB_MAX matches of pattern, without holding more than that."""
-    return list(itertools.islice(glob.iglob(pattern), GLOB_MAX))
+    """At most GLOB_MAX matches of an absolute pattern, after looking at most GLOB_LOOK names. Not glob.glob: it lists
+    a whole folder before matching (700,000 names a container made got the collector killed at its 200M cap, matching
+    or not) and follows folder links as it goes (10,000 links to "." made one pattern take 24 s). A folder a wildcard
+    matches is entered only if it's a real folder; names starting with "." match only a part that does too."""
+    if not isinstance(pattern, str) or not pattern.startswith("/"):
+        return []
+    parts, out, left = [p for p in pattern.split("/") if p], [], [GLOB_LOOK]
+
+    def walk(base, i):
+        if i == len(parts):
+            out.append(base)
+            return
+        part, last = parts[i], i == len(parts) - 1
+        if not _MAGIC.search(part):
+            path = os.path.join(base, part)
+            if os.path.lexists(path) if last else os.path.isdir(path):
+                walk(path, i + 1)
+            return
+        try:
+            entries = os.scandir(base)
+        except OSError:
+            return
+        with entries:
+            for e in entries:
+                left[0] -= 1
+                if left[0] < 0 or len(out) >= GLOB_MAX:
+                    return
+                if (e.name.startswith(".") and not part.startswith(".")) or not fnmatch.fnmatchcase(e.name, part):
+                    continue
+                try:
+                    if last or e.is_dir(follow_symlinks=False):
+                        walk(e.path, i + 1)
+                except OSError:
+                    pass
+    walk("/", 0)
+    return out
 
 
 def backup_job_files(patterns, strict=False):
@@ -2851,7 +2886,7 @@ def selftest():
     if BAK.get("log"):
         t("backups.log", lambda: tail_lines(BAK["log"], 4096, "backup.log"), lambda v: "read" if v else "empty")
     for a in BAK.get("artifacts", []):
-        t(f"backups.files.{clip(a.get('label', ''), 30)}", lambda a=a: [f for f in glob.glob(a.get("glob", "")) if page_path("backup.artifacts", f)],
+        t(f"backups.files.{clip(a.get('label', ''), 30)}", lambda a=a: [f for f in capped_glob(a.get("glob", "")) if page_path("backup.artifacts", f)],
           lambda v: f"{len(v)} found")
     for key, v in security_detail().items():
         if key != "updated":
