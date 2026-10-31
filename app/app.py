@@ -226,15 +226,27 @@ def proxy_ips():
 
 
 def network_count():
-    """How many networks (interfaces with a route, loopback aside) the container is on; looked up once a minute."""
+    """How many networks (interfaces with an IPv4 or IPv6 route, loopback aside) the container is on; looked up once a
+    minute. IPv6 too: on an IPv6-only network a name's A lookup is empty and its AAAA answer comes from that network
+    alone, so a container there with the proxy's name was the proxy."""
     if time.monotonic() - _nets["t"] > 60:
-        _nets["t"], _nets["n"] = time.monotonic(), 1
-        try:
-            with open("/proc/net/route") as f:
-                _nets["n"] = len({line.split()[0] for line in f.read(65536).splitlines()[1:] if line.split() and line.split()[0] != "lo"})
-        except (OSError, IndexError):
-            pass
+        texts = []
+        for path in ("/proc/net/route", "/proc/net/ipv6_route"):
+            try:
+                with open(path) as f:
+                    texts.append(f.read(65536))
+            except OSError:
+                texts.append("")
+        _nets["t"], _nets["n"] = time.monotonic(), count_networks(*texts)
     return _nets["n"]
+
+
+def count_networks(v4_routes, v6_routes):
+    """The interfaces (loopback aside) in /proc/net/route (device first, after a header) and /proc/net/ipv6_route
+    (device last); at least 1."""
+    devs = {r.split()[0] for r in v4_routes.splitlines()[1:] if r.split()}
+    devs |= {r.split()[-1] for r in v6_routes.splitlines() if r.split()}
+    return max(1, len(devs - {"lo"}))
 
 
 _nets = {"t": float("-inf"), "n": 1}

@@ -168,6 +168,19 @@ class Listen(unittest.TestCase):
         app.network_count = lambda: 2
         self.assertEqual(app.proxy_ips(), {"10.0.0.5"}, "with LISTEN, only the proxy's own network reaches the dash")
 
+    def test_an_ipv6_only_network_counts(self):
+        # (only IPv4 routes were counted: on an IPv6-only network a name was still trusted, and Docker answered it from
+        # that network alone; audit round 4)
+        app = load_app()
+        v4 = "Iface\tDestination\tGateway\neth0\t0000FE0A\t00000000\n"
+        v6 = ("fd000000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 "
+              "00000100 00000001 00000000 00000001 eth1\n"
+              "00000000000000000000000000000001 80 00000000000000000000000000000000 00 00000000000000000000000000000000 "
+              "00000000 00000002 00000000 80200001 lo\n")
+        self.assertEqual(app.count_networks(v4, v6), 2)
+        self.assertEqual(app.count_networks(v4, ""), 1)
+        self.assertEqual(app.count_networks("", ""), 1)
+
     def test_an_odd_name_doesnt_crash(self):
         app = load_app(TRUSTED_PROXY="a..b " + "x" * 70)
         self.assertEqual(app.proxy_ips(), set())
