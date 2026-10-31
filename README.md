@@ -2,7 +2,9 @@
 
 Your whole home server in one glanceable page.
 
-![Fishbowl in wall mode](docs/screenshot-wall-dark.png)
+| Light | Dark |
+|---|---|
+| ![Fishbowl, light](docs/screenshot-wall-light.png) | ![Fishbowl, dark](docs/screenshot-wall-dark.png) |
 
 Fishbowl shows your services, Plex streams, media requests, torrents, temperatures, drives, security events and backups
 on one page. It is a single Python app with no dependencies, made to run in Docker behind a reverse proxy.
@@ -94,12 +96,16 @@ Keep your own compose changes in `docker-compose.override.yml` so `git pull` doe
 
 ## Screenshots
 
+All screenshots use demo mode (fake data).
+
 | | |
 |---|---|
-| ![Full page](docs/screenshot-full.png) | ![Setup checklist](docs/screenshot-setup.png) |
-| ![Sign-in](docs/screenshot-signin.png) | ![Account](docs/screenshot-account.png) |
-| ![SSH logins](docs/screenshot-security.png) | ![Backups](docs/screenshot-backups.png) |
-| ![Live view](docs/screenshot-live.png) | ![Gura theme](docs/screenshot-gura.png) |
+| ![Full page](docs/screenshot-full.png) Full page | ![Settings](docs/screenshot-settings.png) Settings |
+| ![Setup checklist](docs/screenshot-setup.png) Setup checklist | ![Sign-in](docs/screenshot-signin.png) Sign-in |
+| ![SSH logins](docs/screenshot-security.png) Security: SSH logins | ![Backups](docs/screenshot-backups.png) Security: backups |
+| ![Live view](docs/screenshot-live.png) Live view | ![Breakdown](docs/screenshot-breakdown.png) CPU and memory breakdown |
+| ![Gura theme](docs/screenshot-gura.png) Gura theme | ![Gura theme, dark](docs/screenshot-gura-dark.png) Gura theme, dark |
+| ![Miku theme](docs/screenshot-miku.png) Miku theme | ![Account](docs/screenshot-account.png) Account, with a password warning |
 
 ## Security
 
