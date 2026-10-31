@@ -2771,10 +2771,19 @@ def write_probe():
         if os.geteuid() == 0:
             os.chown(d, 0, DASH_UID)
         os.chmod(d, 0o770)
-        f = os.path.join(d, "request")
-        with open(f, "w") as fh:
-            fh.write("x")
-        os.remove(f)
+        # (the dash's group can write here now: a name it can't guess, made new and never through a link, or root
+        # would write through whatever that group planted; install runs this as root)
+        name = f"request-{os.urandom(8).hex()}"
+        dfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=dfd)
+            try:
+                os.write(fd, b"x")
+            finally:
+                os.close(fd)
+            os.unlink(name, dir_fd=dfd)
+        finally:
+            os.close(dfd)
         return "ok"
     finally:
         shutil.rmtree(d, ignore_errors=True)

@@ -539,6 +539,27 @@ class Toml(unittest.TestCase):
 
 
 class SelfTest(unittest.TestCase):
+    def test_the_write_probe_never_writes_through_a_planted_link(self):
+        # (its probe folder is opened to the dash's group, which could plant "request" as a link before root wrote
+        # it: root truncated the link's target; audit round 4)
+        col, tmp = load_collector(BASE)
+        victim = os.path.join(tmp, "victim")
+        with open(victim, "w") as f:
+            f.write("keep")
+        mkdtemp = col.tempfile.mkdtemp
+
+        def planted(**kw):
+            d = mkdtemp(**kw)
+            os.symlink(victim, os.path.join(d, "request"))
+            return d
+        col.tempfile.mkdtemp = planted
+        try:
+            self.assertEqual(col.write_probe(), "ok")
+        finally:
+            col.tempfile.mkdtemp = mkdtemp
+        with open(victim) as f:
+            self.assertEqual(f.read(), "keep")
+
     def test_facts_only(self):
         col, _ = load_collector(BASE)
         send(col, {"security.firewall": ch(None, False)})   # page values never steer the self-test
