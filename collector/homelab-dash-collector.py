@@ -561,15 +561,17 @@ def handle_cron_approval():
 # ---------- security checks (each one can be switched off in the config) ----------
 
 JOURNAL_MAX_LINES = 100_000   # newest lines of the 7-day SSH journal kept (a flood of log lines can't fill memory)
+JOURNAL_MAX_BYTES = 32_000_000  # and at most this much text: 100,000 of the longest lines anyone can make sshd log held
+                                # ~140 MB of the 200M cap (real lines are ~200 bytes: 100,000 of them fit)
 JOURNAL_LINE_MAX = 1100       # bytes; no real sshd line is longer (longer ones are skipped)
-_journal = {"at": float("-inf"), "lines": None, "lock": threading.Lock()}
+_journal = {"at": float("-inf"), "lines": None, "cut": False, "lock": threading.Lock()}
 LAST_SSH = [None]             # the card's last good SSH numbers: shown again when a read fails, not "all quiet"
 
 
 def _journal_lines(stream, line_max=JOURNAL_LINE_MAX):
     """Lines from journalctl's binary output: split on \\n only (a \\r can't start a fake line), at most
     line_max bytes read per line (the rest of a longer one is skipped without ever holding it), kept as
-    ASCII (sshd escapes 8-bit bytes anyway; anything else becomes "?"), so 100,000 lines stay under ~110 MB."""
+    ASCII (sshd escapes 8-bit bytes anyway; anything else becomes "?"): 1 byte a character for JOURNAL_MAX_BYTES."""
     while True:
         line = stream.readline(line_max + 1)
         if not line:
@@ -586,8 +588,8 @@ def ssh_journal(units, timeout=60, wait=None):
     """The SSH units' journal for the last 7 days (short-iso), shared by the card (main loop) and the detail views
     (their thread): read at most once every 50 s. No -n: with it journalctl walked the whole journal backwards
     (1.5 s of CPU per read on a 2 GB journal); without it, it seeks to --since. The newest JOURNAL_MAX_LINES are
-    kept while streaming, and lines over JOURNAL_LINE_MAX bytes (no real sshd line is) are skipped: at most ~110 MB,
-    and only one copy at a time. On timeout journalctl's whole process group is killed (a child holding the pipe
+    kept while streaming (at most JOURNAL_MAX_BYTES of text), and lines over JOURNAL_LINE_MAX bytes (no real sshd
+    line is) are skipped: at most ~40 MB, and only one copy at a time. On timeout journalctl's whole process group is killed (a child holding the pipe
     can't keep the read open). wait: seconds to wait for a read already running in the other thread; after that
     it raises CheckFailed("busy") (the old lines were let go for the re-read) and the card uses LAST_SSH.
     Raises CheckFailed like out()."""
@@ -615,7 +617,14 @@ def ssh_journal(units, timeout=60, wait=None):
         timer = threading.Timer(timeout, kill_group)
         try:
             timer.start()
-            lines = list(collections.deque(_journal_lines(p.stdout), maxlen=JOURNAL_MAX_LINES))
+            newest, size, cut = collections.deque(), 0, False
+            for line in _journal_lines(p.stdout):
+                newest.append(line)
+                size += len(line)
+                while len(newest) > JOURNAL_MAX_LINES or size > JOURNAL_MAX_BYTES:
+                    size, cut = size - len(newest.popleft()), True
+            lines = list(newest)
+            del newest
         finally:
             timer.cancel()
             if timer.ident is not None:                   # start() itself can fail (no thread left)
@@ -630,7 +639,7 @@ def ssh_journal(units, timeout=60, wait=None):
             raise CheckFailed(f"journalctl timed out after {timeout} s")
         if rc != 0:
             raise CheckFailed(f"journalctl failed ({'signal ' + str(-rc) if rc < 0 else 'exit code ' + str(rc)})")
-        _journal.update(at=time.monotonic(), lines=lines)
+        _journal.update(at=time.monotonic(), lines=lines, cut=cut)
         return lines
     finally:
         _journal["lock"].release()
@@ -1000,12 +1009,16 @@ def tail_lines(path, max_bytes=2_000_000, key=None):
         size = f.tell()
         f.seek(max(0, size - max_bytes))
         data = f.read(max_bytes)                            # (not to the end: a log that keeps growing has none)
-    lines = [l[:8192] for l in data.decode("utf-8", "replace").splitlines()]   # (no log line needs more; regexes stay quick)
-    lines = lines[1:] if size > max_bytes else lines        # the first line was cut in the middle
-    return lines[-TAIL_LINES_MAX:]                          # (4 MB of one-character lines would be 2 million of them)
+    # one line at a time into a bounded queue (splitting 4 MB of one-character lines at once held ~150 MB), each cut at
+    # 8 KB (no log line needs more; regexes stay quick)
+    newest = collections.deque((m.group(1)[:8192] for m in _LINE.finditer(data.decode("utf-8", "replace"))
+                                if m.group(1) or m.group(2)), maxlen=TAIL_LINES_MAX + 1)
+    lines = list(newest)
+    return lines[1:] if size > max_bytes else lines[-TAIL_LINES_MAX:]   # (the first line read was cut in the middle)
 
 
 TAIL_LINES_MAX = 50_000
+_LINE = re.compile("([^\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]*)(\r\n|[\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]|$)")   # = splitlines()
 
 
 def valid_ip(text):
@@ -1191,7 +1204,7 @@ def ssh_detail():
     return {"logins": logins[-30:][::-1], "login_count": len(logins), "sources": src[:100], "failed_ips": fails[:60],
             "failed_ip_count": len(fails), "attempts_7d": sum(g["attempts"] for g in fails),
             "attempts_24h": sum(g["attempts_24h"] for g in fails), "probes_7d": sum(g["probes"] for g in fails),
-            "truncated": len(lines) >= JOURNAL_MAX_LINES, "checked": int(time.time())}
+            "truncated": _journal["cut"], "checked": int(time.time())}
 
 
 AUTHELIA_TABLES = ("authentication_logs", "banned_user", "banned_ip")

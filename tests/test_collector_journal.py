@@ -115,6 +115,15 @@ class Journal(unittest.TestCase):
         sec = self.col.security()
         self.assertEqual([l["user"] for l in sec["ssh"]["logins"]], ["carol"])
 
+    def test_the_kept_journal_is_capped_in_bytes_too(self):
+        # (100,000 of the longest lines anyone can make sshd log held ~140 MB of the 200M cap; audit round 4)
+        lines = self.col.ssh_journal(["-u", "ssh"], 30)
+        self.assertFalse(self.col._journal["cut"])
+        self.col._journal["at"] = float("-inf")
+        self.col.JOURNAL_MAX_BYTES = len(lines[-1]) + len(lines[-2])
+        self.assertEqual(self.col.ssh_journal(["-u", "ssh"], 30), lines[-2:], "the newest that fit")
+        self.assertTrue(self.col._journal["cut"], "the details say the week was cut short")
+
 
 if __name__ == "__main__":
     unittest.main()

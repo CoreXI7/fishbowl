@@ -125,6 +125,27 @@ class Files(unittest.TestCase):
         self.assertLessEqual(len(lines), self.col.TAIL_LINES_MAX)
         self.assertGreater(len(lines), 1000)
 
+    def test_a_tail_never_holds_more_than_it_keeps(self):
+        # (it split the whole tail at once: 4 MB of "\xff\n" made 2 million separate strings, +150 MB of the 200M cap;
+        # audit round 4)
+        import tracemalloc
+        log = os.path.join(self.tmp, "ff.log")
+        with open(log, "wb") as f:
+            f.write(b"\xff\n" * 1_000_000)
+        tracemalloc.start()
+        try:
+            lines = self.col.tail_lines(log, 4_000_000)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 40_000_000, "the 50,000 kept lines and the text, not a string per line read")
+        self.assertEqual(len(lines), self.col.TAIL_LINES_MAX)
+        text = "first\na\r\nb\rc\x0bd\x85e\u2028f\n\nlast"
+        with open(log, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        self.assertEqual(self.col.tail_lines(log), text.splitlines(), "lines split as before")
+        self.assertEqual(self.col.tail_lines(log, len(text.encode()) - 2), text.splitlines()[1:], "a cut first line dropped")
+
     def test_a_long_line_is_redacted_quickly(self):
         import time
         t = time.monotonic()
