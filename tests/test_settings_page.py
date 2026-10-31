@@ -394,7 +394,7 @@ class IntegrationUrls(unittest.TestCase):
         # (the cleaning raised ValueError for these, which the old URL rule accepted: the container exited at every start)
         app = load_app()
         for old in ("http://admin:pa#ss@qbit:8080/", "http://admin:p?ss@qbit:8080/", "http://tautulli:8181x/?apikey=abc",
-                    "http://[fd00::5/?a"):
+                    "http://[fd00::5/?a", "http://seerr:5055/api@v1"):
             loaded = app.cfgstore.validate({**app.ED, "tautulli": {"url": old}}, None)
             self.assertEqual(loaded["tautulli"]["url"], "", old)
         loaded = app.cfgstore.validate({**app.ED, "tautulli": {"url": "http://[fd00::5]:8181/?apikey=abc"}}, None)

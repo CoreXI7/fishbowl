@@ -342,6 +342,8 @@ def _integration_url(v, name, loading):
             v = f"{u.scheme}://{u.netloc.rpartition('@')[2]}{u.path}" if u.scheme in ("http", "https") else ""
         except ValueError:
             v = ""
+        if not re.fullmatch(INTEGRATION_URL, v):   # (an @ in the path, say: still not a URL the rule takes)
+            v = ""
     return _s(v, 500, f"{name} URL", INTEGRATION_URL)
 
 
