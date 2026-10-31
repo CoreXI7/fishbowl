@@ -520,7 +520,7 @@ class Sessions:
             except (OSError, ValueError, UnicodeDecodeError, RecursionError):
                 d = {}   # a damaged file signs everyone out (never in)
             self._d = {k: v for k, v in (d.items() if isinstance(d, dict) else ())
-                       if _HEX64.fullmatch(k) and isinstance(v, dict) and all(isinstance(v.get(f), int) for f in ("until", "idle", "seen", "epoch"))
+                       if _HEX64.fullmatch(k) and isinstance(v, dict) and all(isinstance(v.get(f), int) for f in ("until", "idle", "seen", "epoch", "created"))
                        and isinstance(v.get("id"), str)}
             self._sig = sig
         return self._d
@@ -766,7 +766,8 @@ def _cli(argv):
             print("No account yet." + (" (A setup code exists: the newest in the container's log, or the one reset printed; "
                                        "make a new one with setup-code.)" if os.path.exists(SETUP_FILE) else ""))
             return 0
-        print(f"Account: {d['user']}\nLocked: {'yes' if d.get('failures', 0) >= LOCK_AT else 'no'} "
+        name = "".join(c if c.isprintable() else f"\\x{ord(c):02x}" if ord(c) < 256 else f"\\u{ord(c):04x}" for c in d["user"])
+        print(f"Account: {name}\nLocked: {'yes' if d.get('failures', 0) >= LOCK_AT else 'no'} "
               f"({d.get('failures', 0)} wrong tries in a row)\nAuthenticator app: {'on' if d['totp'].get('on') else 'off'}"
               f"\nRecovery codes left: {len(d.get('recovery', []))}\nSigned-in browsers: {len(sess.listing(epoch=d['epoch']))}")
         return 0

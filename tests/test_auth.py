@@ -384,11 +384,20 @@ class SignIn(Base):
         with open(self.auth.AUTH_FILE) as f:
             d = json.load(f)
         with open(self.auth.AUTH_FILE, "w") as f:
-            json.dump({**d, "user": "ad\udc80min"}, f)   # (escaped as \udc80 in the file; the app never writes one)
+            json.dump({**d, "user": "ad\udc80min\x1b]52;c;eA==\x07"}, f)   # (the app never writes these)
         out = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "app", "auth.py"), "status"], capture_output=True, text=True,
                              env={**os.environ, "DATA_DIR": self.auth.DATA_DIR})
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn("Account: ad\\udc80min", out.stdout)
+        self.assertIn("Account: ad\\udc80min\\x1b]52;c;eA==\\x07", out.stdout, "no terminal escapes reach the screen")
+        with open(self.auth.SESSIONS_FILE) as f:
+            s = json.load(f)
+        for v in s.values():
+            del v["created"]                          # (a damaged sessions.json: status and the Account page crashed)
+        with open(self.auth.SESSIONS_FILE, "w") as f:
+            json.dump(s, f)
+        out = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "app", "auth.py"), "status"], capture_output=True, text=True,
+                             env={**os.environ, "DATA_DIR": self.auth.DATA_DIR})
+        self.assertEqual(out.returncode, 0, out.stderr)
 
     def test_https_cookie(self):
         app = load_app(AUTH="login", ORIGIN="https://dash.example.com")
