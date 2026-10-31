@@ -6,11 +6,11 @@ How Fishbowl 1.0 was tested, what came out of it, and what wasn't covered. Every
 ## Run the tests yourself
 
 ```sh
-python3 -m unittest discover -s tests       # 356 tests, stdlib only, ~5 minutes; page tests use headless Chrome if installed
+python3 -m unittest discover -s tests       # 357 tests, stdlib only, ~5 minutes; page tests use headless Chrome if installed
 ```
 
 Nothing real is contacted: fake qBittorrent, Seerr, Tautulli and web apps (`tests/helpers.py`) stand in for the real
-ones, and test servers bind `127.0.0.1` only. Result for 1.0: **356 tests, all passing**, on Python 3.12.
+ones, and test servers bind `127.0.0.1` only. Result for 1.0: **357 tests, all passing**, on Python 3.12.
 
 ## What's tested, and how
 
@@ -57,6 +57,9 @@ collector, cryptography, a black-box red team, fuzzing, research, release hygien
   web apps on the same address receive the dashboard's cookies; a page user (a stolen session, or anyone past your SSO)
   can make the dashboard fetch addresses it chooses; an owner-approved backup pattern can be slow for root's
   collector.
+- **Very large qBittorrent libraries:** an answer is refused once its text would take more than twice its 32 MB cap in
+  memory, and one emoji anywhere makes every character count four times. So a library of roughly 7,500+ torrents with
+  an emoji in any name shows an error on the torrents panel (the rest of the dashboard is unaffected).
 - **Lows left open:** a few low-severity items (mostly wrong "all good" readings of unusual hand-written NPM configs,
   and long-standing robustness issues on inputs only root writes) are listed in the audit reports and don't let anyone
   in.

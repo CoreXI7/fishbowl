@@ -345,7 +345,7 @@ specialist roles, each round with fresh reviewers who hadn't seen the earlier ro
 | **How** | Every attack ran against throwaway copies (never a real install), on the host's Python **and** the exact pinned Docker image, behind real proxies (Nginx Proxy Manager, nginx, Caddy, HAProxy, Traefik) and in real browsers (Chrome and Firefox). Each round re-ran every earlier round's attack scripts. |
 | **Fuzzing** | More than 15 million executions across the HTTP API in every sign-in mode, hostile fake services, and the collector's parsers, plus 660,000 differential runs against real `nginx -t`. |
 | **Found** | 2 high and about 50 medium issues across the four rounds, every one of them **fixed before release**, each with a test that failed before the fix and passes after. The findings shrank every round: by round 4 no reviewer found a way in, only ways a hostile service could knock the dashboard over and rare setups (rootless Podman, IPv6-only networks) that weakened a rule. |
-| **Tests** | 356 automated tests, plus a browser sign-in test of 44 checks and before/after screenshots of every page in every theme. |
+| **Tests** | 357 automated tests, plus a browser sign-in test of 44 checks and before/after screenshots of every page in every theme. |
 
 **What it didn't cover, honestly:** this was a review by AI agents, not a paid third-party audit, and nothing is
 formally proven. Safari, Podman, Cloudflare Tunnel and Tailscale weren't run for real. The trade-offs that remain are

@@ -12,7 +12,7 @@ research, or usability. This is **not** a paid outside audit. If you find someth
 **What you can re-run.** Every finding below was fixed together with a test that failed before the fix:
 
 ```sh
-python3 -m unittest discover -s tests       # 356 tests, stdlib only; page tests use headless Chrome if installed
+python3 -m unittest discover -s tests       # 357 tests, stdlib only; page tests use headless Chrome if installed
 ```
 
 The attackers' own scripts aren't in the repo: they were written against throwaway copies (fixed ports, temporary
