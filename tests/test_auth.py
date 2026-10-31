@@ -1094,6 +1094,16 @@ class RoundTwo(Base):
         self.assertIn("gateway", state["gap_hint"])
         self.assertEqual(self.login()[0], 403)
 
+    def test_every_visitor_looking_like_the_container_itself_is_flagged(self):
+        # rootless Podman 4's port forwarder (slirp4netns) rewrites every visitor to the container's own address: only
+        # the gateway was spotted, so plain-HTTP sign-in was accepted from anyone (audit round 4)
+        self.app.default_gateway = lambda: "10.0.2.2"
+        self.assertTrue(self.app.forwarded_alike("10.0.2.100", "10.0.2.100"))
+        self.assertTrue(self.app.forwarded_alike("::ffff:10.0.2.100", "::ffff:10.0.2.100"))
+        self.assertTrue(self.app.forwarded_alike("10.0.2.2", "10.0.2.100"))
+        self.assertFalse(self.app.forwarded_alike("192.168.0.20", "10.0.2.100"), "a LAN browser")
+        self.assertFalse(self.app.forwarded_alike("127.0.0.1", "127.0.0.1"), "the dashboard's own check")
+
 
 class RoundThree(Base):
     """The third review round's findings, one test each."""

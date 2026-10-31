@@ -179,6 +179,24 @@ class Listen(unittest.TestCase):
         self.assertTrue(app.allowed_ip("::ffff:10.9.0.3"))
         self.assertTrue(app.is_proxy_address("::ffff:10.9.0.3"))
 
+    def test_its_own_address_gets_only_public_files_behind_a_proxy(self):
+        # rootless Podman 4's port forwarder makes every visitor the container's own address, which was let in as "the
+        # dashboard itself" with a proxy set: with AUTH=proxy, past the SSO (audit round 4)
+        import http.client
+        from helpers import serve
+        app = load_app(TRUSTED_PROXY="10.9.0.3", AUTH="proxy")
+        srv, _ = serve(app.Handler, "127.0.0.2")
+        try:
+            def get(path):
+                c = http.client.HTTPConnection("127.0.0.2", srv.server_address[1], timeout=10, source_address=("127.0.0.2", 0))
+                c.request("GET", path)
+                return c.getresponse().status
+            self.assertEqual(get("/api/settings"), 403, "not the dashboard's data")
+            self.assertEqual(get("/"), 403, "its own health check still counts as up (any answer under 500)")
+            self.assertEqual(get("/favicon.ico"), 200, "its own icon still loads")
+        finally:
+            srv.shutdown()
+
     def test_the_refusal_log_says_why_names_were_skipped(self):
         app = load_app(TRUSTED_PROXY="proxy.test")
         self.resolving(app, [["10.0.0.5"]])

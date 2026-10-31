@@ -118,8 +118,8 @@ def gap_hint(gaps):
             "X-Forwarded-Proto": "Your reverse proxy doesn't send X-Forwarded-Proto, so the dashboard can't tell whether "
                                  "you use https, and signing in from outside your network is refused."}
     if "gateway" in gaps:
-        return ("Every request reaches the dashboard from Docker's gateway (its userland proxy, or rootless Docker or "
-                "Podman), so it can't tell visitors apart, and signing in over plain HTTP is refused. Sign in through "
+        return ("Every request reaches the dashboard from Docker's gateway or its own address (Docker's userland proxy, "
+                "rootless Docker or Podman), so it can't tell visitors apart, and signing in over plain HTTP is refused. Sign in through "
                 "your reverse proxy's https address, or, without one, from another computer at the server's own LAN "
                 "address (a browser on the server itself, or an SSH tunnel to it, arrives from the gateway too).")
     heads = [g for g in gaps if g in PROXY_HEADERS]
@@ -270,6 +270,18 @@ def default_gateway():
         except (OSError, ValueError):
             pass
     return _gw["ip"]
+
+
+def forwarded_alike(client, local):
+    """Does a direct connection come from where every visitor would: the container's gateway (Docker's userland proxy,
+    rootless Docker) or the container's own address (rootless Podman 4's port forwarder, slirp4netns, rewrites every
+    visitor to it)? Loopback aside: that's the dashboard itself or someone on the host inside the container."""
+    client, local = (str(a).removeprefix("::ffff:") for a in (client, local))
+    try:
+        loopback = ipaddress.ip_address(client).is_loopback
+    except ValueError:
+        return False
+    return client == default_gateway() or (client == local and not loopback)
 
 
 def allowed_ip(ip, local=None):
@@ -1412,8 +1424,8 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
                  ("Or, with any other proxy: send X-Real-IP (the visitor's address) and X-Forwarded-Proto (http or https).", "")])
         if "gateway" in proxy_gaps:
             add("gateway", "warn", "Every visitor looks like the same address",
-                "This request came from the container's own gateway, as every request does with Docker's userland proxy or "
-                "rootless Docker/Podman. Then the dashboard can't tell visitors apart: they share one count of wrong tries, "
+                "This request came from the container's own gateway or its own address, as every request does with Docker's "
+                "userland proxy or rootless Docker/Podman. Then the dashboard can't tell visitors apart: they share one count of wrong tries, "
                 "and signing in over plain HTTP is refused (anyone, the host itself included, would look like you).",
                 [("Put your reverse proxy in front (same Docker network) and set TRUSTED_PROXY to its container name:",
                   "TRUSTED_PROXY: <your proxy's container name>")], compose=True)
@@ -1823,8 +1835,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send(502, {"error": error_text(e)})
 
     def allowed(self):
-        ip = self.client_address[0]
-        if allowed_ip(ip, self.connection.getsockname()[0]):
+        """allowed_ip(); and with a proxy set, a connection from the dashboard's own address (not 127.0.0.1) gets only
+        the public files: that's the dashboard checking its own proxy host (any answer counts as up; its icon still
+        loads), or, behind rootless Podman 4's port forwarder, every visitor, who must come through the proxy."""
+        ip, local = self.client_address[0], self.connection.getsockname()[0]
+        ok = allowed_ip(ip, local)
+        if ok and TRUSTED_PROXY and not DEMO and ip == local and ip != "127.0.0.1" and not is_proxy_address(ip):
+            p = urllib.parse.urlsplit(self.path).path
+            ok = self.command in ("GET", "HEAD") and (p in PUBLIC_GET or p.startswith("/static/") or
+                                                      bool(re.fullmatch(r"/js/[a-z-]+\.js", p)))
+        if ok:
             return True
         print(log_safe(f"blocked direct request from {ip} {self.command} {self.path[:80]}"), flush=True)
         self.send(403, {"error": "forbidden"})
@@ -1977,14 +1997,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def proxy_gaps(self):
         """What keeps the dashboard from seeing who's connecting, and how: headers the trusted proxy leaves out, a proxy
-        it wasn't told about ("untrusted"), or every request coming from the container's gateway ("gateway")."""
+        it wasn't told about ("untrusted"), or every request coming from the container's gateway or own address ("gateway")."""
         gaps = []
         if self.via_proxy():
             gaps += ["X-Real-IP"] if not self.real_ip() else []
             gaps += ["X-Forwarded-Proto"] if (self.one_header("X-Forwarded-Proto") or "").lower() not in ("http", "https") else []
         elif AUTH == "login" and any(self.headers.get_all(h) for h in FORWARD_HEADERS):
             gaps.append("untrusted")
-        elif AUTH == "login" and self.client_address[0] == default_gateway():
+        elif AUTH == "login" and forwarded_alike(self.client_address[0], self.connection.getsockname()[0]):
             gaps.append("gateway")
         return gaps
 
@@ -2055,7 +2075,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
         a = getattr(a, "ipv4_mapped", None) or a
-        if not self.via_proxy() and str(a) == default_gateway():   # Docker's userland proxy: every visitor looks alike
+        if not self.via_proxy() and forwarded_alike(a, self.connection.getsockname()[0]):   # every visitor looks alike
             return False
         return any(a in n for n in OWN_NETWORKS)
 
@@ -2095,7 +2115,8 @@ class Handler(BaseHTTPRequestHandler):
             gone = _ran_out[:]
             _ran_out.clear()
         for p in gone:
-            self.note_failure(p.get("from") or "?", "right password, no code (the step ran out)", "code", p.get("dev"))
+            self.note_failure(p.get("from") or "?", f"right password, no code ({p.get('ended', 'the step ran out')})", "code",
+                              p.get("dev"))
 
     def begin_try(self, ip, dev=None, account=True, session=None, waits=True):
         """Count a try BEFORE checking it, under one lock: parallel tries can't all slip in under a limit, and a crash

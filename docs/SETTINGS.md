@@ -179,8 +179,8 @@ open that file:
   site's cookies to every port of its address, so over plain HTTP every other web app on that address receives them;
   this keeps a hostile one from reusing them. A trusted browser stays trusted on a new address (so someone guessing
   can't keep a laptop that changed networks out), but its wrong tries from another address are never forgiven as your
-  typos. When every visitor reaches the dashboard from Docker's gateway (its userland proxy, rootless Docker or
-  Podman), they can't be told apart, and plain-HTTP sign-in is refused: use your proxy's https address.
+  typos. When every visitor reaches the dashboard from Docker's gateway or its own address (Docker's userland
+  proxy, rootless Docker, or rootless Podman 4's `podman run -p`), they can't be told apart, and plain-HTTP sign-in is refused: use your proxy's https address.
 - **Over HTTPS, give the dashboard its own host name**: `__Host-` and `Secure` cookies still go to every other HTTPS
   port of that name, so don't serve other apps on other ports of the same name (with a shared wildcard certificate).
 - **Wrong tries**: after 5 (per address, and for the account), each try waits twice as long as the last, up to 15

@@ -193,8 +193,8 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   half-finished sign-ins are bound the same way. Trusted-device tokens are bound to the kind of connection only (one
   bound to an address made a laptop that changed networks "new", so someone guessing could keep its owner out); a
   copied one gets only that device's own 10 tries, and its wrong tries from another address are never forgiven as the
-  owner's typos. When every visitor arrives from the container's gateway (Docker's userland proxy, rootless
-  Docker/Podman) nothing can be bound to a browser, so plain-HTTP sign-in is refused. (Browsers send cookies to every
+  owner's typos. When every visitor arrives from the container's gateway or its own address (Docker's userland
+  proxy, rootless Docker/Podman) nothing can be bound to a browser, so plain-HTTP sign-in is refused. (Browsers send cookies to every
   port of a host, so over plain HTTP every other web app on the dashboard's address receives them: a hostile one on your
   own network must not be able to replay them. Over HTTPS `__Host-` cookies go to every HTTPS port of the same host
   name too: the dashboard needs a host name of its own.) Sign-out ends the session whatever address it comes from. Sign-out ends it on the
@@ -229,7 +229,7 @@ Built to NIST SP 800-63B-4 and the OWASP Authentication, Password Storage and Se
   `TRUSTED_PROXY`). The proxy must set both headers itself (stock Nginx Proxy Manager believes a visitor's own X-Real-IP from private
   addresses and passes on their X-Forwarded-Proto: docs/SETTINGS.md has the tested line for each proxy, and the Setup
   checklist warns when the dashboard's NPM host lacks it). The Setup checklist says when the proxy leaves out either header, or when every request comes from
-  the container's gateway (Docker's userland proxy, rootless Docker/Podman: visitors can't be told apart). A repeated X-Real-IP or
+  the container's gateway or its own address (Docker's userland proxy, rootless Docker/Podman: visitors can't be told apart). A repeated X-Real-IP or
   X-Forwarded-Proto counts as missing. "Your own network" is spelled out: 10/8, 172.16/12, 192.168/16, 127/8,
   169.254/16, fc00::/7, fe80::/10, ::1. With `ORIGIN` unset, changes over plain
   HTTP are only accepted for a Host no website can own (an IP address, a name without dots, `.lan`, `.local`,
