@@ -1786,6 +1786,11 @@ class Audit(Base):
         call(self.url + "/api/logout", "POST", {}, cookie=pre)                  # ...and someone else's
         st, _, d = owner(seen)
         self.assertEqual((st, d.get("notice", {}).get("code")), (200, 1), "a started-over step is shown (not the owner's own)")
+        item = {i["id"]: i for i in self.app.setup_checks(host="x", https=True)}["password-out"]
+        self.assertIn("a wrong one, or none", item["detail"], "no code typed at all isn't called a wrong code")
+        for js in ("login.js", "settings.js"):
+            with open(os.path.join(ROOT, "app", "js", js)) as f:
+                self.assertIn("a wrong one, or none", f.read(), js)
         self.app.THROTTLE.ip_ok("127.0.0.1")
         pre = cookie_of(self.login()[1], "fishbowl-pre")
         for _ in range(6):                                                       # the owner's code, seen and replayed

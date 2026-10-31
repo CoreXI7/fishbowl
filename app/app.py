@@ -1409,8 +1409,9 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
                     [("When you're ready, unlock it on the host:", "docker exec -it <container> python /app/auth.py unlock")])
             if (acct.get("notice") or {}).get("code"):
                 add("password-out", "problem", "Someone may know your password",
-                    f"The right password was typed with a wrong code {acct['notice']['code']} time(s), and not just before one of "
-                    "your own sign-ins. If that wasn't you, change the password. If it was, choose \"That was me\" in Account.",
+                    f"The right password was typed without the right code (a wrong one, or none) {acct['notice']['code']} "
+                    "time(s), and not just before one of your own sign-ins. If that wasn't you, change the password. If it was, "
+                    "choose \"That was me\" in Account.",
                     link="#account")
             if not acct["totp"].get("on"):
                 add("totp", "warn", "Turn on two-step sign-in",

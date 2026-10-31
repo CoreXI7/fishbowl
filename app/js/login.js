@@ -96,7 +96,7 @@ function signedIn(d) {
   if (!n) return location.replace(NEXT);
   const times = k => k > 1 ? `${k} times` : "Once", acct = '<a href="/settings#account">Settings → Account</a>';
   const lines = [];   // (this browser's own typos just before aren't counted: the server leaves them out)
-  if (n.code) lines.push(`<p><b>${times(n.code)}, someone typed your password right but the code wrong.</b>
+  if (n.code) lines.push(`<p><b>${times(n.code)}, someone typed your password right but not the right code (a wrong one, or none).</b>
     If that wasn't you, your password is known: change it in ${acct}.</p>`);
   if (n.password) lines.push(`<p>${n.password} wrong name or password tr${n.password > 1 ? "ies" : "y"} since your last sign-in.</p>`);
   if (n.settings) lines.push(`<p>${n.settings} wrong password${n.settings > 1 ? "s or codes were" : " or code was"} typed in

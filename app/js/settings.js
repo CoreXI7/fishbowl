@@ -1041,7 +1041,7 @@ async function renderAccount(focusId, part = "all") {
         before (like this one) still can. Unlock it on the host when you're ready:</p>
       <div class="code"><pre><code>docker exec -it &lt;container&gt; python /app/auth.py unlock</code></pre></div></div></div>` : "")
     + (n.code ? `<div class="chk chk-problem"><span class="chk-ic" aria-hidden="true">!</span><div class="chk-b">
-      <p><b>Someone may know your password.</b> Someone typed it correctly but the code wrong (${esc(n.code)}
+      <p><b>Someone may know your password.</b> Someone typed it correctly but not the right code: a wrong one, or none (${esc(n.code)}
         time${n.code > 1 ? "s" : ""}, last at ${esc(when(n.t))}). If that wasn't you, change the password below. If it was,
         confirm it's you below, then press "That was me".</p>
       <div class="acct-btns"><button type="button" class="ibtn" id="acct-notice-ok">That was me</button></div></div></div>` : "");
