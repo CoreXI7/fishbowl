@@ -171,6 +171,7 @@ details summary{cursor:pointer;color:var(--mute);font-size:12px}
 @keyframes wiggle{25%{transform:rotate(-6deg)}75%{transform:rotate(6deg)}}
 html[data-motion="still"] .mascot img{animation:none}
 .mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+details[data-k="backup-log"] .mono{overflow-wrap:anywhere}   /* (long paths wrap inside the card instead of being cut off) */
 /* ===== layout v2: KPI strip on top (F-pattern), monitoring left, actions centre, security+storage right ===== */
 .layout{grid-template-areas:"kpi" "main" "left" "right"}
 @media (min-width:900px){.layout{grid-template-areas:"kpi kpi" "main main" "left right"}}
