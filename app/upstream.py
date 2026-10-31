@@ -5,6 +5,7 @@ import json
 import re
 import socket
 import ssl
+import sys
 import threading
 import time
 import urllib.error
@@ -104,11 +105,59 @@ class StrictResponse(http.client.HTTPResponse):
             raise ValueError("bad chunk size")   # (http.client turns it into IncompleteRead)
         return int(size, 16)
 
+    def _read_chunked(self, amt=None):
+        """http.client's, but into one buffer: it kept each chunk as its own bytes object until the end, so an answer
+        under every byte cap, sent in 4-byte chunks, took ~150 bytes of memory per 4 (7 MB of it got the container
+        OOM-killed)."""
+        value = bytearray()
+        try:
+            while (chunk_left := self._get_chunk_left()) is not None:
+                if amt is not None and amt <= chunk_left:
+                    value += self._safe_read(amt)
+                    self.chunk_left = chunk_left - amt
+                    break
+                value += self._safe_read(chunk_left)
+                if amt is not None:
+                    amt -= chunk_left
+                self.chunk_left = 0
+            return bytes(value)
+        except http.client.IncompleteRead as exc:
+            raise http.client.IncompleteRead(bytes(value)) from exc
+
+
+def _create_connection(address, timeout, source_address=None, *args, **kwargs):
+    """socket.create_connection, but trying the name's addresses for at most DEADLINE_FACTOR x timeout in all, the name
+    lookup included: it tried each address (up to 48) with the full timeout, so one health check of a name whose
+    addresses drop connections took 4 minutes, and enough of them held every connection place."""
+    if not isinstance(timeout, (int, float)):
+        return socket.create_connection(address, timeout, source_address)
+    end, err = time.monotonic() + DEADLINE_FACTOR * timeout, None
+    for family, kind, proto, _, addr in socket.getaddrinfo(address[0], address[1], 0, socket.SOCK_STREAM):
+        left = end - time.monotonic()
+        if left <= 0:
+            break
+        sock = socket.socket(family, kind, proto)
+        try:
+            sock.settimeout(min(timeout, left))
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(addr)
+            sock.settimeout(timeout)
+            return sock
+        except OSError as e:
+            err = e
+            sock.close()
+    raise err or TimeoutError(f"couldn't connect to {address[0]} in {DEADLINE_FACTOR * timeout} s")
+
 
 class DeadlineHTTPConnection(http.client.HTTPConnection):
     # (no unwatch on close(): http.client closes the connection object as soon as the headers of an answer that "will
     # close" are in, and its body is still being read; the entry just lapses at the deadline)
     response_class = StrictResponse
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _create_connection
 
     def connect(self):
         super().connect()
@@ -117,6 +166,10 @@ class DeadlineHTTPConnection(http.client.HTTPConnection):
 
 class DeadlineHTTPSConnection(http.client.HTTPSConnection):
     response_class = StrictResponse
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _create_connection
 
     def connect(self):
         super().connect()
@@ -194,11 +247,19 @@ def read_capped(r, limit):
 def read_json(r, limit):
     """Parsed JSON from a response, read with read_capped(). The byte cap alone doesn't bound memory (8 MB of "[],"
     parses into ~180 MB of objects), so an answer with more values than JSON_MAX_VALUES is refused before parsing
-    (a cheap upper bound: every value but the first follows a comma, opens a bracket or is a key)."""
+    (a cheap upper bound: every value but the first follows a comma, opens a bracket or is a key). Nor does it bound
+    the decoded text: one character above U+FFFF makes every character take 4 bytes (128 MB for qBittorrent's 32 MB),
+    so the text may take at most twice the cap."""
     data = read_capped(r, limit)
+    if not data:
+        return {}
     if data.count(b",") + data.count(b"[") + data.count(b"{") > JSON_MAX_VALUES:
         raise ValueError("answer has too many values")
-    return json.loads(data) if data else {}
+    decoded = data.decode(json.detect_encoding(data), "surrogatepass")   # (what json.loads does with bytes)
+    del data
+    if sys.getsizeof(decoded) > 2 * limit:
+        raise ValueError(f"answer bigger than {limit // MB} MB once decoded")
+    return json.loads(decoded)
 
 
 _INVISIBLE = re.compile("[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")

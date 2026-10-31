@@ -196,5 +196,77 @@ class CachedFailure(unittest.TestCase):
         self.assertEqual(len(refs), 1, "still shared")
 
 
+class AnswerMemoryAndConnect(unittest.TestCase):
+    """Byte caps that didn't bound memory, and a connect() outside the deadline (audit round 4)."""
+    @classmethod
+    def setUpClass(cls):
+        body = b'{"a": "' + b"x" * 2_000_000 + b'"}'
+        answer = (b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+                  + b"".join(b"%x\r\n%s\r\n" % (len(body[i:i + 4]), body[i:i + 4]) for i in range(0, len(body), 4)) + b"0\r\n\r\n")
+
+        def tiny_chunks(h):
+            h.wfile.write(answer)
+            h.close_connection = True
+        cls.up = Upstream({"/chunks": tiny_chunks})
+        load_app()
+        import upstream
+        cls.upstream = upstream
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.up.close()
+
+    def test_an_answer_in_tiny_chunks_takes_about_its_size(self):
+        # (each chunk was kept as its own bytes object: 7 MB in 4-byte chunks got the 256 MB container OOM-killed)
+        import tracemalloc
+        tracemalloc.start()
+        try:
+            with self.upstream.NOFOLLOW.open(self.up.url + "/chunks", timeout=10) as r:
+                d = self.upstream.read_json(r, self.upstream.API_MAX)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(len(d["a"]), 2_000_000)
+        self.assertLess(peak, 12_000_000, "about the answer's size a few times, not 40 bytes per chunk")
+
+    def test_wide_characters_count_against_the_cap(self):
+        # (one character above U+FFFF made qBittorrent's 32 MB answer 128 MB of text: OOM-killed)
+        import io
+        u = self.upstream
+        with self.assertRaises(ValueError) as e:
+            u.read_json(io.BytesIO('{"a": "\U0001f41f'.encode() + b"A" * (u.MB - 20) + b'"}'), u.MB)
+        self.assertIn("once decoded", str(e.exception))
+        self.assertEqual(len(u.read_json(io.BytesIO(b'{"a": "' + b"A" * (u.MB - 20) + b'"}'), u.MB)["a"]), u.MB - 20)
+
+    def test_connecting_has_an_overall_deadline(self):
+        # (each of a name's addresses got the full timeout: 48 addresses that drop connections held a check 4 minutes)
+        import socket
+        listener = socket.socket()
+        listener.bind(("127.0.0.3", 0))
+        listener.listen(0)
+        port = listener.getsockname()[1]
+        held = []
+        for _ in range(3):                                  # a full accept queue: further connections hang
+            c = socket.socket()
+            c.setblocking(False)
+            try:
+                c.connect(("127.0.0.3", port))
+            except BlockingIOError:
+                pass
+            held.append(c)
+        time.sleep(0.2)
+        real = self.upstream.socket.getaddrinfo
+        self.upstream.socket.getaddrinfo = lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.3", port))] * 20
+        try:
+            t0 = time.monotonic()
+            with self.assertRaises(OSError):
+                self.upstream.NOFOLLOW.open(f"http://many.test:{port}/", timeout=0.5)
+            self.assertLess(time.monotonic() - t0, 3, "3 x the timeout in all, not 20 x")
+        finally:
+            self.upstream.socket.getaddrinfo = real
+            for c in held + [listener]:
+                c.close()
+
+
 if __name__ == "__main__":
     unittest.main()
