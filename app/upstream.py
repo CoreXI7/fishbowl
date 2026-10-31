@@ -201,7 +201,7 @@ def read_json(r, limit):
     return json.loads(data) if data else {}
 
 
-_INVISIBLE = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+_INVISIBLE = re.compile("[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 
 
 def text(v, limit=300):

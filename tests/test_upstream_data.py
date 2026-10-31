@@ -89,7 +89,7 @@ class UpstreamTextCharacters(unittest.TestCase):
         # (torrent names and request titles kept RLO, ESC and NUL: a name could pass for another on the page; audit round 3)
         load_app()
         import upstream
-        self.assertEqual(upstream.text("good\u202etxt.exe\x1b[31m\x00end"), "goodtxt.exe[31mend")
+        self.assertEqual(upstream.text("good\u202etxt.exe\x1b[31m\x00\u061cend"), "goodtxt.exe[31mend")
 
 
 if __name__ == "__main__":
