@@ -209,7 +209,8 @@ A dashboard like this sees a lot about your server, so it was built to be hard t
   time-limited, so a compromised app can't take over the page or crash the dashboard.
 - Connections that carry an API key or password (qBittorrent, Seerr, Tautulli) check HTTPS certificates normally.
   The up/down checks and icon downloads accept self-signed certificates, since most home services use them; they
-  send no keys or passwords.
+  send no keys or passwords, don't follow redirects to other hosts, and only keep plain images. Details:
+  [THREAT-MODEL.md](THREAT-MODEL.md#outbound-requests-certificates-redirects-and-whats-sent).
 - The container runs as a normal user, with a read-only file system and no extra permissions, and is limited to
   256 MB of memory.
 

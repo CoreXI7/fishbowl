@@ -88,6 +88,28 @@ proxy's SSO), but the reasoning applies to any install.
 | Authelia's log (failed sign-ins anyone can cause, user names they choose) | root collector | streamed line by line, lines over 2,000 bytes skipped without being held, only the count and the newest 6 kept; docker's process group killed after 30 s |
 | Shell | none | every command is an argument list, never a shell string |
 
+## Outbound requests: certificates, redirects and what's sent
+
+Every request the dashboard makes to another service, in one place. Code: `app/upstream.py` (the two clients
+`NOFOLLOW` and `STRICT`) and the callers in `app/app.py`.
+
+| Request | HTTPS certificate | Sends | Redirects | What's kept from the answer |
+|---|---|---|---|---|
+| qBittorrent, Seerr, Tautulli (the integrations), and Plex poster art through Tautulli | checked (normal verification) | the integration's key or login | never followed | JSON within size and value limits (8 MB, 32 MB for qBittorrent), typed field by field; posters: raster images only, 2 MB |
+| Up/down check of each service | not checked (self-signed is the norm on a LAN) | only `User-Agent` and `Host`; no cookies, keys or passwords | never followed: a redirect counts as "up" | the status code only |
+| Up/down check "through the proxy" | not checked | only `User-Agent` and `Host` | never followed | the status code only |
+| Service icons | not checked | only `User-Agent` and `Host` | at most 3, and only while they stay on the service's own scheme and host:port | PNG, JPEG, WebP, GIF or ICO only (never SVG or HTML); the page read is capped at 200 KB, an icon at 512 KB, at most 5 URLs and 20 s per lookup |
+
+For every request: an overall deadline (3× its timeout, connecting included), answer headers capped at 64 KB, chunk
+sizes must be plain hex, and failures are shared briefly as text so a failing service can't pile up requests.
+
+Icons are served back with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none';
+sandbox`, so even bytes that aren't really an image can't run as a page on the dashboard's address.
+
+So someone who can intercept traffic between the dashboard and a service, on a connection that isn't certificate
+checked, can at most show a wrong up/down status or a wrong icon. They get no key or password, can't send the
+dashboard elsewhere, and can't run anything in the page.
+
 ## What runs as root
 
 The collector, as `python3 -I`, with `ProtectSystem=full`, `ProtectHome=read-only`, `PrivateTmp`, `NoNewPrivileges`,
