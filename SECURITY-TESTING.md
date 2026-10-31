@@ -31,6 +31,7 @@ review round found the problem it checks.
 - [The sign-in: five review rounds](#the-sign-in-five-review-rounds-2026-10-30)
 - [What was attacked, and the result](#what-was-attacked-and-the-result)
 - [The 1.0 pre-release audit](#the-10-pre-release-audit-2026-10-30)
+- [Every finding of the 1.0 audit](#every-finding-of-the-10-audit)
 - [The rest of the app](#the-rest-of-the-app-2026-10-29)
 - [Where the tests are](#where-the-tests-are)
 - [Limits of this testing](#limits-of-this-testing)
@@ -182,6 +183,87 @@ executions plus 660,000 differential runs against real `nginx -t`.
 **Result:** every finding of medium or above fixed, each with a test that failed before the fix. No way in was found
 in rounds 2 to 4. What remains is listed in [THREAT-MODEL.md](THREAT-MODEL.md#still-open); the summary for users is in
 [TESTING.md](TESTING.md).
+
+## Every finding of the 1.0 audit
+
+Each finding of medium or above, what happened to it, the commit that fixed it and the test that checks it. The ID's
+letter is the reviewer's area (A sign-in, B HTTP layer, C browser, D outbound requests, E root collector, F
+cryptography, G black-box red team, H fuzzing, I research, J release hygiene) and its digit the round. To check a
+fix yourself, read its commit and run its test, for example:
+
+```sh
+python3 -m unittest discover -s tests -p test_upstream_slow.py -k test_connecting_has_an_overall_deadline
+```
+
+| ID | Severity | What it was | Status | Fix | Test |
+|---|---|---|---|---|---|
+| I1-1 | High | Over plain HTTP by IP, other web apps on the host received the session cookie and could replay it | Fixed | [`5b95736`](https://github.com/CoreXI7/fishbowl/commit/5b95736) | `test_auth.py`: `test_a_plain_http_session_counts_only_from_the_address_it_was_made_on` |
+| A1-1 | Medium | The code step's try limits didn't hold under parallel requests | Fixed | [`eb743ce`](https://github.com/CoreXI7/fishbowl/commit/eb743ce) | `test_auth.py`: `test_parallel_codes_on_one_step_are_five_at_most` |
+| A1-2 | Medium | Plain HTTP: other apps on the host receive the dashboard's cookies (same as I1-1) | Fixed; cookies reaching other ports documented | [`5b95736`](https://github.com/CoreXI7/fishbowl/commit/5b95736) | `test_auth.py`: `test_a_plain_http_session_counts_only_from_the_address_it_was_made_on` |
+| C1-1 | Medium | Plain-HTTP sessions usable by other apps on the host (same as I1-1) | Fixed | [`5b95736`](https://github.com/CoreXI7/fishbowl/commit/5b95736) | `test_auth.py`: `test_a_plain_http_session_counts_only_from_the_address_it_was_made_on` |
+| C1-2 | Medium | A hostile service's icon could be an SVG page on the dashboard's origin | Fixed | [`90f3184`](https://github.com/CoreXI7/fishbowl/commit/90f3184), [`95af9ce`](https://github.com/CoreXI7/fishbowl/commit/95af9ce) | `test_icons.py`: `test_an_svg_never_gets_through` |
+| B1-1 | Medium | Real proxies' defaults let visitors choose X-Real-IP / X-Forwarded-Proto | Fixed (tested proxy lines, Setup warning) | [`0e963fd`](https://github.com/CoreXI7/fishbowl/commit/0e963fd) | `test_auth.py`: `test_npm_that_lets_visitors_choose_their_address_is_a_setup_item` |
+| J1-1 | Medium | With Nginx Proxy Manager as documented, visitors choose the address the dashboard sees | Fixed (same as B1-1) | [`0e963fd`](https://github.com/CoreXI7/fishbowl/commit/0e963fd) | `test_auth.py`: `test_npm_that_lets_visitors_choose_their_address_is_a_setup_item` |
+| B1-2 | Medium | TRUSTED_PROXY by name trusted every container Docker's DNS returned for it | Fixed | [`ac73241`](https://github.com/CoreXI7/fishbowl/commit/ac73241) | `test_listen.py`: `test_a_name_two_containers_answer_to_is_trusted_for_neither` |
+| B1-3 | Medium | ~32 slow requests from one client kept the public demo down | Fixed | [`8b970b1`](https://github.com/CoreXI7/fishbowl/commit/8b970b1) | `test_auth.py`: `test_connection_caps_and_deadline` |
+| G1-1 | Medium | An outsider's guessing can make new browsers wait or lock them out | Accepted and documented (browsers used before still get in) | [`0132a29`](https://github.com/CoreXI7/fishbowl/commit/0132a29) | `test_auth.py`: `test_a_new_browser_kept_waiting_is_told_why` |
+| I1-2 | Medium | An upstream that trickles its answer held request threads forever | Fixed | [`00b460f`](https://github.com/CoreXI7/fishbowl/commit/00b460f) | `test_upstream_slow.py`: `test_a_health_check_ends_on_a_trickling_header` |
+| D1-1 | Medium | One slow upstream filled every connection place (same as I1-2) | Fixed | [`00b460f`](https://github.com/CoreXI7/fishbowl/commit/00b460f) | `test_upstream_slow.py`: `test_an_icon_ends_on_a_trickling_body` |
+| D1-2 | Medium | A hostile qBittorrent grew the dashboard's memory without bound | Fixed | [`38cb0ca`](https://github.com/CoreXI7/fishbowl/commit/38cb0ca) | `test_upstream_memory.py`: `test_torrent_ids_stay_short` |
+| D1-3 | Medium | A hostile Tautulli or Seerr crashed the dashboard with one small answer (uncapped lists) | Fixed | [`38cb0ca`](https://github.com/CoreXI7/fishbowl/commit/38cb0ca) | `test_upstream_memory.py`: `test_cookie_jar_stays_small` |
+| D1-4 | Medium | A signed-in user could use extra services to fetch LAN addresses and read image bodies back | Fixed (icons from the service's own origin only); status-only checks documented | [`90f3184`](https://github.com/CoreXI7/fishbowl/commit/90f3184) | `test_icons.py`: `test_only_the_services_own_origin` |
+| E1-1 | Medium | Root's unredacted crontab snapshot was readable while being written | Fixed | [`d4751a1`](https://github.com/CoreXI7/fishbowl/commit/d4751a1) | `test_collector_files.py`: `test_files_are_private_while_written` |
+| E1-2 | Medium | Root opened device nodes planted in container-writable folders | Fixed | [`cbf17d5`](https://github.com/CoreXI7/fishbowl/commit/cbf17d5) | `test_collector_files.py`: `test_a_device_or_fifo_is_never_opened_for_reading` |
+| E1-3 | Medium | Anyone could OOM-kill the collector through Authelia's log | Fixed | [`0ae64e0`](https://github.com/CoreXI7/fishbowl/commit/0ae64e0) | `test_collector_files.py`: `test_a_huge_log_is_streamed` |
+| E1-4 | Medium | Configured paths were read through links planted by a container | Fixed | [`cbf17d5`](https://github.com/CoreXI7/fishbowl/commit/cbf17d5) | `test_collector_files.py`: `test_a_link_in_a_folder_others_can_write_is_not_followed` |
+| F1-1 | Medium | redact() let common password forms through to the browser | Fixed; plain-argument passwords documented | [`4b8447c`](https://github.com/CoreXI7/fishbowl/commit/4b8447c), [`d1783ab`](https://github.com/CoreXI7/fishbowl/commit/d1783ab) | `test_collector_redact.py`: `test_common_passwords_on_command_lines_are_hidden` |
+| H1-1 | Medium | One long crontab line froze the collector (redact() was cubic) | Fixed | [`7043360`](https://github.com/CoreXI7/fishbowl/commit/7043360), [`cf14d5e`](https://github.com/CoreXI7/fishbowl/commit/cf14d5e) | `test_collector_redact.py`: `test_hostile_lines_stay_quick` |
+| H1-2 | Medium | A lone surrogate in settings text gave a 502 and left a temp file | Fixed | [`c90976b`](https://github.com/CoreXI7/fishbowl/commit/c90976b) | `test_settings_page.py`: `test_a_lone_surrogate_is_refused` |
+| I1-3 | Medium | The collector ran SQL from Authelia's database file (generated columns, virtual tables) | Fixed | [`6dd3b70`](https://github.com/CoreXI7/fishbowl/commit/6dd3b70) | `test_collector_files.py`: `test_authelia_tables_must_be_plain_tables` |
+| D2-0 | High | The deadline was dropped for answers that close the connection | Fixed | [`ee8f499`](https://github.com/CoreXI7/fishbowl/commit/ee8f499) | `test_upstream_slow.py`: `test_a_closing_answer_ends_too` |
+| A2-1 | Medium | The owner's own sign-in hid an attacker's wrong code | Fixed | [`9f23c85`](https://github.com/CoreXI7/fishbowl/commit/9f23c85) | `test_auth.py`: `test_the_owners_right_code_forgives_nobody_elses_wrong_one` |
+| A2-2 | Medium | A trusted browser became "new" when its address changed, so a guesser could lock it out | Fixed | [`8d37152`](https://github.com/CoreXI7/fishbowl/commit/8d37152) | `test_auth.py`: `test_a_plain_http_trusted_device_survives_a_new_address_but_its_tries_there_are_no_typos` |
+| F2-1 | Medium | Plain-HTTP binding covered a whole IPv6 /64 | Fixed (exact address) | [`8d37152`](https://github.com/CoreXI7/fishbowl/commit/8d37152) | `test_auth.py`: `test_a_plain_http_session_counts_only_from_the_address_it_was_made_on` |
+| F2-2 | Medium | The half-finished sign-in cookie wasn't tied to an address | Fixed | [`8d37152`](https://github.com/CoreXI7/fishbowl/commit/8d37152) | `test_auth.py`: `test_a_half_finished_sign_in_counts_only_where_it_started` |
+| C2-2 | Medium | Plain HTTP: an app on the same host could end the owner's session | Fixed in part; the rest documented | [`8d37152`](https://github.com/CoreXI7/fishbowl/commit/8d37152) | `test_auth.py`: `test_signing_out_from_a_new_address_ends_the_session` |
+| I2-3 | Medium | The address binding meant nothing when every visitor came from Docker's gateway | Fixed (plain-HTTP sign-in refused there, Setup warns) | [`8d37152`](https://github.com/CoreXI7/fishbowl/commit/8d37152), [`717e83d`](https://github.com/CoreXI7/fishbowl/commit/717e83d) | `test_auth.py`: `test_every_visitor_looking_like_the_gateway_is_flagged` |
+| E2-1 | Medium | Links in container-written folders were still followed | Fixed | [`246ace4`](https://github.com/CoreXI7/fishbowl/commit/246ace4) | `test_collector_files.py`: `test_a_link_in_a_root_owned_container_folder_is_not_followed` |
+| E2-2 | Medium | A carriage return could hide a cron line from the watch | Fixed | [`ca47c72`](https://github.com/CoreXI7/fishbowl/commit/ca47c72) | `test_collector_files.py`: `test_a_carriage_return_cant_hide_a_cron_line` |
+| E2-3 | Medium | redact() was quadratic: one backup-log line froze the collector | Fixed | [`7043360`](https://github.com/CoreXI7/fishbowl/commit/7043360), [`cf14d5e`](https://github.com/CoreXI7/fishbowl/commit/cf14d5e) | `test_collector_files.py`: `test_a_long_line_is_redacted_quickly` |
+| H2-1 | Medium | An empty forwarding header sent first lifted the sign-in refusal | Fixed | [`89f1fef`](https://github.com/CoreXI7/fishbowl/commit/89f1fef) | `test_auth.py`: `test_an_empty_forwarding_header_first_hides_nothing` |
+| B2-1 | Medium | A proxy-named container on another network became the trusted proxy | Fixed | [`779c0b6`](https://github.com/CoreXI7/fishbowl/commit/779c0b6) | `test_listen.py`: `test_a_name_isnt_trusted_on_more_than_one_network` |
+| J2-1 | Medium | Fixes didn't reach existing installs, and collector updates were never prompted | Fixed | [`f1103be`](https://github.com/CoreXI7/fishbowl/commit/f1103be) | `test_collector_build.py`: `test_an_old_collector_is_a_setup_item` |
+| G2-1 | Medium | LISTEN (lock the dashboard to the proxy) was off by default | Setup warning with AUTH: proxy; documented | [`fc4e3fa`](https://github.com/CoreXI7/fishbowl/commit/fc4e3fa) | `test_listen.py`: `test_sso_mode_without_listen_is_a_warning` |
+| G2-2 | Medium | Guessing temporarily locks the owner's new browsers (same as G1-1) | Accepted and documented | [`0132a29`](https://github.com/CoreXI7/fishbowl/commit/0132a29) | `test_auth.py`: `test_a_new_browser_kept_waiting_is_told_why` |
+| I2-1 | Medium | One icon lookup had no overall time limit | Fixed | [`0d2bff1`](https://github.com/CoreXI7/fishbowl/commit/0d2bff1) | `test_upstream_slow.py`: `test_an_icon_lookup_has_an_overall_budget` |
+| I2-2 | Medium | An HTTPS session reaches other HTTPS apps on the same host name | Documented (give the dashboard its own host name) | – | (documentation) |
+| D2-1 | Medium | Failures weren't shared, so waiting requests repeated a slow failing fetch | Fixed | [`2c37a14`](https://github.com/CoreXI7/fishbowl/commit/2c37a14) | `test_upstream_slow.py`: `test_waiters_share_a_failure_instead_of_queueing_to_repeat_it` |
+| D2-2 | Medium | A signed-in user could read back what the dashboard fetched (URL parts, banners) | Fixed; DNS rebinding of icon lookups documented | [`dac3e33`](https://github.com/CoreXI7/fishbowl/commit/dac3e33) | `test_settings_page.py`: `test_integration_urls_have_no_query_fragment_or_user` |
+| D2-3 | Medium | /api/icon kept every name it was asked about (memory) | Fixed | [`b7ef03e`](https://github.com/CoreXI7/fishbowl/commit/b7ef03e) | `test_icons.py`: `test_unknown_names_leave_nothing_behind` |
+| C2-1 | Medium | /api/icon kept a lock for every host name ever asked for | Fixed | [`b7ef03e`](https://github.com/CoreXI7/fishbowl/commit/b7ef03e) | `test_icons.py`: `test_unknown_names_leave_nothing_behind` |
+| E3-1 | Medium | lsattr could be made to open a device node between its check and its open | Fixed (flags read through the safe walk) | [`4c781c2`](https://github.com/CoreXI7/fishbowl/commit/4c781c2) | `test_collector_files.py`: `test_a_device_or_fifo_is_never_opened` |
+| E3-2 | Medium | A log tail read to the end of a still-growing file | Fixed | [`da6057c`](https://github.com/CoreXI7/fishbowl/commit/da6057c) | `test_collector_files.py`: `test_a_tail_reads_a_bounded_amount` |
+| E3-3 | Medium | A log of tiny lines took ~370 MB | Fixed | [`da6057c`](https://github.com/CoreXI7/fishbowl/commit/da6057c), [`2c1477c`](https://github.com/CoreXI7/fishbowl/commit/2c1477c) | `test_collector_files.py`: `test_a_tail_reads_a_bounded_amount` |
+| H3-1 | Medium | A cached failure kept a hostile service's parsed answer in memory | Fixed | [`6c4a6f8`](https://github.com/CoreXI7/fishbowl/commit/6c4a6f8) | `test_upstream_slow.py`: `test_a_shared_failure_holds_nothing_of_the_failed_fetch` |
+| B3-1 | Medium | Hostile answer headers were kept for 30 s per fetch | Fixed | [`4f879c6`](https://github.com/CoreXI7/fishbowl/commit/4f879c6) | `test_upstream_size.py`: `test_huge_headers_are_refused_and_nothing_big_is_kept` |
+| D3-1 | Medium | Every hostile answer stayed in memory until its deadline | Fixed | [`4f879c6`](https://github.com/CoreXI7/fishbowl/commit/4f879c6) | `test_upstream_size.py`: `test_huge_headers_are_refused_and_nothing_big_is_kept` |
+| D3-2 | Medium | A shared failure's traceback grew with every request | Fixed | [`ad2ac12`](https://github.com/CoreXI7/fishbowl/commit/ad2ac12), [`6c4a6f8`](https://github.com/CoreXI7/fishbowl/commit/6c4a6f8) | `test_upstream_slow.py`: `test_a_shared_failure_doesnt_grow` |
+| D3-3 | Medium | A burst of integration Tests filled the connection table | Fixed | [`c6d3ef4`](https://github.com/CoreXI7/fishbowl/commit/c6d3ef4) | `test_settings_page.py`: `test_one_integration_test_at_a_time` |
+| I3-1 | Medium | Chunk size "-1" got past every byte cap (CVE-2026-103995) | Fixed | [`99d41f5`](https://github.com/CoreXI7/fishbowl/commit/99d41f5) | `test_upstream_size.py`: `test_a_negative_chunk_size_is_refused` |
+| J3-1 | Medium | "git pull, then docker compose up -d" left the old code running | Fixed (docs + Setup check) | [`80a217c`](https://github.com/CoreXI7/fishbowl/commit/80a217c) | `test_settings_page.py`: `test_code_changed_on_disk_asks_for_a_restart` |
+| C3-1 | Medium | A sibling subdomain can flood out the trusted-browser cookie | Documented (give the dashboard a host name whose siblings you trust) | [`9f401df`](https://github.com/CoreXI7/fishbowl/commit/9f401df) | (documentation) |
+| A4-1 | Medium | A password step could be abandoned ("Start over") without the owner being told | Fixed | [`c4ea3c1`](https://github.com/CoreXI7/fishbowl/commit/c4ea3c1), [`47d22c4`](https://github.com/CoreXI7/fishbowl/commit/47d22c4) | `test_auth.py`: `test_a_password_step_ended_without_a_code_is_told` |
+| F4-1 | Medium | Same as A4-1 | Fixed | [`c4ea3c1`](https://github.com/CoreXI7/fishbowl/commit/c4ea3c1) | `test_auth.py`: `test_a_password_step_ended_without_a_code_is_told` |
+| A4-2 | Medium | Rootless Podman 4 made every visitor look like the container itself | Fixed | [`48d8b6b`](https://github.com/CoreXI7/fishbowl/commit/48d8b6b) | `test_auth.py`: `test_every_visitor_looking_like_the_container_itself_is_flagged` |
+| B4-1 | Medium | An IPv6-only network wasn't counted, so a proxy name stayed trusted | Fixed | [`aa81de9`](https://github.com/CoreXI7/fishbowl/commit/aa81de9) | `test_listen.py`: `test_an_ipv6_only_network_counts` |
+| D4-1 | Medium | One answer in tiny chunks used up the memory | Fixed | [`a20ce66`](https://github.com/CoreXI7/fishbowl/commit/a20ce66) | `test_upstream_slow.py`: `test_an_answer_in_tiny_chunks_takes_about_its_size` |
+| D4-2 | Medium | One wide character in a large JSON answer used up the memory | Fixed | [`a20ce66`](https://github.com/CoreXI7/fishbowl/commit/a20ce66) | `test_upstream_slow.py`: `test_wide_characters_count_against_the_cap` |
+| D4-3 | Medium | Connecting wasn't covered by the deadline (a name with many addresses) | Fixed | [`a20ce66`](https://github.com/CoreXI7/fishbowl/commit/a20ce66) | `test_upstream_slow.py`: `test_connecting_has_an_overall_deadline` |
+| E4-1 | Medium | A folder full of names made the collector's backup check use up its memory | Fixed | [`48aca56`](https://github.com/CoreXI7/fishbowl/commit/48aca56) | `test_collector_files.py`: `test_a_backup_glob_looks_at_a_bounded_number_of_names` |
+| E4-2 | Medium | A hostile log plus a flooded SSH journal got the collector killed every round | Fixed | [`2c1477c`](https://github.com/CoreXI7/fishbowl/commit/2c1477c) | `test_collector_files.py`: `test_a_tail_never_holds_more_than_it_keeps` |
+| E4-3 | Medium | The installer's self-test could be tricked into writing through a link as root | Fixed | [`13fee7c`](https://github.com/CoreXI7/fishbowl/commit/13fee7c) | `test_collector_page.py`: `test_the_write_probe_never_writes_through_a_planted_link` |
+
+Low and info findings aren't listed here; many were fixed alongside these, and the rest are in [THREAT-MODEL.md](THREAT-MODEL.md#still-open) where they matter.
 
 ## The rest of the app (2026-10-29)
 

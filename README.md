@@ -235,6 +235,8 @@ This was an AI-assisted review, not an audit by an outside security company. The
 The reviewers' attack scripts aren't in this repository: they were written for throwaway test copies and most no
 longer run against the current code. Instead, every problem they found has an automated test in `tests/` that failed
 before the fix and passes now, so you can check the fixes yourself with `python3 -m unittest discover -s tests`.
+[SECURITY-TESTING.md](SECURITY-TESTING.md#every-finding-of-the-10-audit) lists every finding with the commit that
+fixed it and the test that checks it.
 
 Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 
