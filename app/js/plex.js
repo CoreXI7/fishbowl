@@ -34,8 +34,8 @@ async function loadPlex() {
   }
 }
 
-// More streams than fit (wall mode)? "+N more" gives Now Playing the whole row and moves Requests aside;
-// clicking it again (or the Plex tile, in wall mode) brings Requests back. Remembered per browser.
+// The button gives Now Playing the whole row and moves Requests aside ("+N more" when streams don't fit, else
+// "hide requests"); clicking it again (or the Plex tile, in wall mode) brings Requests back. Remembered per browser.
 let plexWide = false;
 try { plexWide = localStorage.getItem("plexWide") === "1"; } catch (e) {}
 function setPlexWide(on) {
@@ -47,8 +47,9 @@ function setPlexWide(on) {
 function plexHint() {
   const bottom = $("plex").getBoundingClientRect().bottom;   // the list's own box (it scrolls on the wall)
   const cut = [...$("plex").querySelectorAll(".stream")].filter(el => el.getBoundingClientRect().bottom > bottom + 1).length;
-  $("plex-more").hidden = !cut && !plexWide;
-  setText("plex-more", plexWide ? `${cut ? `+${cut} more · ` : ""}show requests` : `+${cut} more ▸`);
+  const reqOn = CFG.features.seerr && !document.documentElement.classList.contains("no-requests");
+  $("plex-more").hidden = !reqOn && !plexWide;   // (nothing to move aside without a Requests panel)
+  setText("plex-more", plexWide ? `${cut ? `+${cut} more · ` : ""}show requests` : cut ? `+${cut} more ▸` : "hide requests ▸");
 }
 setPlexWide(plexWide);
 $("plex-more").addEventListener("click", () => setPlexWide(!plexWide));
