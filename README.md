@@ -207,6 +207,9 @@ A dashboard like this sees a lot about your server, so it was built to be hard t
   key again, so nobody can send your saved key somewhere else.
 - Everything that comes from qBittorrent, Seerr or Tautulli is treated as untrusted: checked, size-limited and
   time-limited, so a compromised app can't take over the page or crash the dashboard.
+- Connections that carry an API key or password (qBittorrent, Seerr, Tautulli) check HTTPS certificates normally.
+  The up/down checks and icon downloads accept self-signed certificates, since most home services use them; they
+  send no keys or passwords.
 - The container runs as a normal user, with a read-only file system and no extra permissions, and is limited to
   256 MB of memory.
 
@@ -228,6 +231,10 @@ more) tried to break it, and every problem they found was fixed before the next 
 
 This was an AI-assisted review, not an audit by an outside security company. The full results are in
 [TESTING.md](TESTING.md), and [THREAT-MODEL.md](THREAT-MODEL.md) lists the known limits.
+
+The reviewers' attack scripts aren't in this repository: they were written for throwaway test copies and most no
+longer run against the current code. Instead, every problem they found has an automated test in `tests/` that failed
+before the fix and passes now, so you can check the fixes yourself with `python3 -m unittest discover -s tests`.
 
 Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 

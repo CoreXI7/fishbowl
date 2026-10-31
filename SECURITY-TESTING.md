@@ -15,8 +15,15 @@ research, or usability. This is **not** a paid outside audit. If you find someth
 python3 -m unittest discover -s tests       # 357 tests, stdlib only; page tests use headless Chrome if installed
 ```
 
-The attackers' own scripts aren't in the repo: they were written against throwaway copies (fixed ports, temporary
-folders) and many target code that has since changed. What each one found is pinned by a test instead.
+**Why the attack scripts aren't in the repo.** The reviewers wrote about 1,500 scripts. They aren't published because:
+
+- They were written for throwaway copies (fixed ports, temporary folders, the reviewer's own machine) and most no
+  longer run against the current code, so they couldn't be re-run as they are.
+- Several are working attacks against versions before 1.0; there's no reason to hand those out.
+
+What each one found is pinned by a regression test instead: the test reproduces the problem, failed before the fix
+and passes after. Those tests are the reproducible part, and anyone can run them (above). A test's comment says which
+review round found the problem it checks.
 
 ## Contents
 
