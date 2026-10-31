@@ -1797,6 +1797,18 @@ class Audit(Base):
             call(self.url + "/api/login/code", "POST", {"code": seen}, cookie=pre)
         st, _, d = owner(recovery[0])
         self.assertEqual((st, d.get("notice", {}).get("code")), (200, 1), "a step whose tries were used up is shown")
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        self.app.ACCOUNT.update(lambda x: x.update(last_fail=0))   # (new browsers wait out the count of wrong tries)
+        pre = cookie_of(self.login()[1], "fishbowl-pre")                       # someone with the password, mid-step...
+        out = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "app", "auth.py"), "signout"], capture_output=True,
+                             text=True, env={**os.environ, "DATA_DIR": self.auth.DATA_DIR})   # ...when the owner signs all out
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertTrue(call(self.url + "/api/login/code", "POST", {"code": "123456"}, cookie=pre)[2].get("restart"))
+        self.app.THROTTLE.ip_ok("127.0.0.1")
+        self.app.ACCOUNT.update(lambda x: x.update(last_fail=0))
+        pre = cookie_of(self.login()[1], "fishbowl-pre")
+        st, _, d = call(self.url + "/api/login/code", "POST", {"code": recovery[1]}, cookie=pre)
+        self.assertEqual((st, d.get("notice", {}).get("code")), (200, 1), "a step the owner's sign-out ended is shown")
 
     def test_a_used_code_still_uses_up_a_try_of_its_step(self):
         # (a code the owner had just used, replayed on one step, gave the step's try back: unlimited tries on that step,

@@ -2471,6 +2471,8 @@ class Handler(BaseHTTPRequestHandler):
                     over = result == "stale" or p["tries"] >= 5
                     if over:
                         self.pending(consume=True)
+                        if result == "stale":   # (the owner signed everyone out, or changed the password, meanwhile)
+                            ended_unfinished([p], "the account changed meanwhile")
                 if result == "stale":
                     return self.send(401, {"error": "The password or two-step sign-in just changed: sign in again.", "restart": True})
                 self.note_failure(ip, "right password, wrong code", "code", p.get("dev"))
