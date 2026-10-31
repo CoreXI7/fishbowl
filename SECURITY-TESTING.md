@@ -12,7 +12,7 @@ research, or usability. This is **not** a paid outside audit. If you find someth
 **What you can re-run.** Every finding below was fixed together with a test that failed before the fix:
 
 ```sh
-python3 -m unittest discover -s tests       # 253 tests, stdlib only; page tests use headless Chrome if installed
+python3 -m unittest discover -s tests       # 356 tests, stdlib only; page tests use headless Chrome if installed
 ```
 
 The attackers' own scripts aren't in the repo: they were written against throwaway copies (fixed ports, temporary
@@ -23,6 +23,7 @@ folders) and many target code that has since changed. What each one found is pin
 - [How the testing was done](#how-the-testing-was-done)
 - [The sign-in: five review rounds](#the-sign-in-five-review-rounds-2026-10-30)
 - [What was attacked, and the result](#what-was-attacked-and-the-result)
+- [The 1.0 pre-release audit](#the-10-pre-release-audit-2026-10-30)
 - [The rest of the app](#the-rest-of-the-app-2026-10-29)
 - [Where the tests are](#where-the-tests-are)
 - [Limits of this testing](#limits-of-this-testing)
@@ -153,6 +154,28 @@ Everything of medium or above was fixed, and so were most low findings. Each fix
 | 37 hostile JSON values in every field of 9 sign-in endpoints, plus 17 odd bodies (UTF-16, BOM, broken UTF-8, duplicate keys, 33 levels deep, 5,000-digit numbers, NaN) | **Held**: 0 server errors; a malformed `Origin` returned 502 at first, **fixed** in round 2 |
 | Damaged or planted files: `auth.json` as a symlink or FIFO, garbage or 5 MB `sessions.json`, a dangling lock file | **Held**: fails closed (nobody gets in, never "anyone"), never hangs |
 
+## The 1.0 pre-release audit (2026-10-30)
+
+Before 1.0, the whole app (the sign-in, the HTTP layer, the browser side, outbound requests, the root collector)
+was audited again, in four rounds of fresh reviewers: 40 reviews by ten roles (sign-in and sessions, HTTP layer,
+browser and web, SSRF and upstreams, root collector, cryptography, a black-box red team with only the README, fuzzing,
+research, release hygiene). Every round re-ran all earlier rounds' attack scripts.
+
+| Round | Medium or above found | Examples |
+|---|---|---|
+| 1 | 1 high, 18 medium | **High:** over plain HTTP by IP, every other web app on the host received the session cookie and could replay it (sessions are now bound to the exact address). Medium: slow answers bypassing the outbound deadline, a ReDoS in the collector's redaction, the collector following links in folders others can write. |
+| 2 | 1 high, 11 medium | **High:** the outbound deadline was dropped for answers that "will close" (fixed in the deadline watcher). Medium: several bugs in round-1 fixes (an off-by-one in the code step's tries, device binding locking the owner out, IPv6 /64 binding). |
+| 3 | 11 medium | A hostile service's failed answer kept ~50 MB alive per request (OOM), a password step left to run out unseen, a forwarding header sent twice slipping past the check for an unnamed proxy, the collector's log tail reading unbounded. |
+| 4 | 9 medium | A password step ended without a code ("Start over") unseen; rootless Podman 4 making every visitor the container itself; an IPv6-only network not counted; a chunked or wide-character answer using up memory; connecting outside the deadline; three ways to exhaust the root collector's memory or make it write through a link. |
+
+**How:** throwaway copies only, on the host's Python and the exact pinned image (3.12.16); real Nginx Proxy Manager,
+nginx, Caddy, HAProxy and Traefik in front; Chrome and Firefox for the browser attacks; more than 15 million fuzzing
+executions plus 660,000 differential runs against real `nginx -t`.
+
+**Result:** every finding of medium or above fixed, each with a test that failed before the fix. No way in was found
+in rounds 2 to 4. What remains is listed in [THREAT-MODEL.md](THREAT-MODEL.md#still-open); the summary for users is in
+[TESTING.md](TESTING.md).
+
 ## The rest of the app (2026-10-29)
 
 Before the sign-in existed, the whole app had a security audit and hardening pass: a threat model, then reviews by
@@ -180,8 +203,8 @@ same way. Each fix has a test in `tests/`.
 
 - **Not a third-party audit**, and nothing is formally proven. Reviewers can miss things; that's why every round
   re-ran the earlier attacks, and why reports are welcome.
-- **Proxies were played by the tester.** The buffering and streaming proxy behaviours were tested; specific proxy
-  products and versions weren't.
+- **Proxies:** the sign-in rounds played the proxy themselves; the 1.0 audit ran real Nginx Proxy Manager, nginx,
+  Caddy, HAProxy and Traefik in front. Cloudflare Tunnel and Tailscale weren't run.
 - **Choices that differ from the standards** (longer "keep me signed in" sessions for wall screens, optional
   two-step, CSRF without a token, and others) are deliberate and listed in
   [THREAT-MODEL.md](THREAT-MODEL.md#the-sign-in-authlogin) under "Deliberate deviations".

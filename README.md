@@ -3,26 +3,18 @@
 *Your whole server in a fishbowl.*
 
 **One page that tells you if your home server is OK.** Services up or down, who's watching Plex, pending requests,
-torrents (with a VPN-leak alarm), temperatures, drives, security and backups, all at a glance.
+torrents with a VPN-leak alarm, temperatures, drives, security and backups, all at a glance, on any screen.
 
-- Small: one stdlib-Python app. No pip, no Node, no database. About 25–40 MB of RAM.
-- Easy: set it up from a settings page in your browser. Its **Setup checklist** tells you what's missing and how to
-  fix it. Services from Nginx Proxy Manager show up on their own.
-- Safe: your API keys stay on the server, and the part that runs as root never talks to the network (the installer also
-  locks it into the strictest sandbox it works under).
+- **Small.** One Python app, standard library only: no pip, no Node, no database. About 25–40 MB of RAM.
+- **Easy.** After `docker compose up -d`, everything is set up from a settings page, and its **Setup checklist** tells
+  you what's missing and how to fix it. Services from Nginx Proxy Manager show up on their own.
+- **Safe.** Its own sign-in with an optional authenticator app, your API keys never reach the browser, and the part
+  that runs as root never touches the network. Version 1.0 went through a four-round security audit before release:
+  [the results](#security).
 
-> **🔑 It has its own sign-in, on by default:** one account, an optional authenticator app (two-step sign-in) and
-> recovery codes. Already have SSO in front of it (Authelia, Authentik, an access list)? `AUTH: proxy` turns Fishbowl's
-> own off, so you sign in once. How it's built to be safe, and how to report a problem: [SECURITY.md](SECURITY.md).
-> Everything it was tested against, and the results: [SECURITY-TESTING.md](SECURITY-TESTING.md).
-
-**▶ [Try the live demo](https://demo.vicy.us)** (fake data, nothing you do there is saved)
+**▶ [Try the live demo](https://demo.vicy.us)** (fake data; nothing you do there is saved)
 
 ![Wall mode, dark](docs/screenshot-wall-dark.png)
-
-| Light | Full page |
-|---|---|
-| ![](docs/screenshot-wall-light.png) | ![](docs/screenshot-full.png) |
 
 *Screenshots use demo mode: fake data, Blender open-movie titles.*
 
@@ -30,34 +22,110 @@ torrents (with a VPN-leak alarm), temperatures, drives, security and backups, al
 
 ## Contents
 
-- [What you get](#what-you-get)
-- [Quick start](#quick-start) · [**Signing in**](#signing-in)
-- [Tips: keys, clicks and links](#tips-keys-clicks-and-links)
-- [What's new](#whats-new-october-2026), including [**what to check when you update**](#updating-what-to-check)
+- [Highlights](#highlights)
+- [Everything it shows](#everything-it-shows)
+- [Quick start](#quick-start)
+- [Signing in](#signing-in)
+- [Using it: keys, clicks and links](#using-it-keys-clicks-and-links)
 - [Settings](#settings)
-- [Security in short](#security-in-short)
-- [Host a public demo](#host-a-public-demo) · [Tests](#tests) · [More docs](#more-docs)
+- [Updating](#updating)
+- [Security](#security), including [the 1.0 security audit](#the-10-security-audit)
+- [Host a public demo](#host-a-public-demo) · [Tests](#tests) · [More docs](#more-docs) · [License](#license)
 
 ---
 
-## What you get
+## Highlights
+
+### 📺 Made for a screen that's always on
+
+**Wall mode** (press **W**) fits a 1920×1080 screen with no scrolling and hides the cursor. Healthy things stay quiet;
+what needs you stands out: a down service gets a red **!**, a VPN leak gets a big red banner.
+
+| Light | The full page |
+|---|---|
+| ![Wall mode, light](docs/screenshot-wall-light.png) | ![The full page](docs/screenshot-full.png) |
+
+### ✅ A Setup checklist that fixes your install for you
+
+![The Setup checklist on a fresh install](docs/screenshot-setup.png)
+
+The settings page checks your whole setup: the reverse proxy and its headers, the dashboard's address, whether
+settings can be saved, the Nginx Proxy Manager folder, whether a sign-in protects the dashboard, the collector, the
+integrations. Each problem says what happens if you ignore it and gives the exact fix, with a **Copy** button.
+
+### 🔑 Its own sign-in, with two-step and a "someone knows your password" alarm
+
+| Sign in | Two-step code | Settings → Account |
+|---|---|---|
+| ![The sign-in page](docs/screenshot-signin.png) | ![The two-step code step](docs/screenshot-code-step.png) | ![Account, with the alarm](docs/screenshot-account.png) |
+
+One account, a long password (no silly rules), an optional authenticator app with 10 one-time recovery codes, and
+"keep me signed in" for wall screens. If someone types your **right password without the right code**, Fishbowl tells
+you at your next sign-in, and the Setup checklist keeps saying so until you change the password or press "That was
+me". Already have SSO (Authelia, Authentik)? `AUTH: proxy` turns Fishbowl's own sign-in off.
+
+### 🛡 Security & backups, with the full story one click away
+
+![Security details: SSH logins](docs/screenshot-security.png)
+
+fail2ban bans, SSH logins from places you don't know (grouped by user, place and key, so one odd login can't hide among
+thousands), Authelia failures, a crypto-miner watch, changed cron jobs, locked files, and whether last night's backup
+ran. Click any box's title for every detail behind it.
+
+![Security details: backups](docs/screenshot-backups.png)
+
+### 🌡 A live window and a live breakdown
+
+| Live window | Breakdown |
+|---|---|
+| ![The live window](docs/screenshot-live.png) | ![The breakdown](docs/screenshot-breakdown.png) |
+
+**🌡 live** shows temperatures, package power, clocks, memory, the GPU, disk I/O and every CPU thread, every second
+(and costs nothing when closed). **⚡ breakdown** is a live map of what's using your CPU or memory, one tile per container
+or program.
+
+### 🔒 A VPN-leak alarm for your torrents
+
+qBittorrent's downloads and speeds, plus a big red banner the moment your torrent client shows your real home IP.
+
+### 🎨 Three themes, light and dark
+
+| Gura (light) | Gura (dark) |
+|---|---|
+| ![Gura theme](docs/screenshot-gura.png) | ![Gura theme, dark](docs/screenshot-gura-dark.png) |
+
+![Miku theme](docs/screenshot-miku.png)
+
+**Bubbles** (the default), **Miku** and **Gura**, each with its own colours, motion, greetings and quotes, light and
+dark with your system. Press **T** to switch. Mascots are your own uploads (themes ship no character art).
+
+### ⚡ Light on your server
+
+![Before and after: network, collector CPU, API traffic, wall-view CPU](docs/efficiency-2026-10-29.png)
+
+qBittorrent sends only what changed, everything is compressed, the animations run on the GPU, and the root collector
+uses under a second of CPU a minute. Measured numbers: [PERF-BASELINE.md](PERF-BASELINE.md).
+
+---
+
+## Everything it shows
 
 | Panel | What it shows |
 |---|---|
-| **Services** | Every proxy host in Nginx Proxy Manager, with an icon, checked every 30 s. Healthy tiles stay quiet; a down one gets a red **!** badge. Not using NPM? Add them on the settings page. |
+| **Services** | Every proxy host in Nginx Proxy Manager, with an icon, checked every 30 s, on compact shelves by group. Not using NPM? Add services on the settings page. |
 | **Plex Now Playing** | Who's watching what, direct play or transcode, home or remote (via Tautulli). |
 | **Requests** | Seerr / Overseerr / Jellyseerr requests, with **Approve** and **Decline** buttons. |
-| **Torrents** | qBittorrent downloads and speeds, plus a **big red banner if your real home IP shows** (VPN leak). |
+| **Torrents** | qBittorrent downloads and speeds, and the VPN-leak alarm. |
 | **System** | CPU per thread, RAM, network, temperatures, NVIDIA GPU incl. NVENC/NVDEC. |
-| **⚡ Breakdown** | A live, animated map of what's using your CPU or memory, one tile per container or program. |
-| **🌡 Live window** | Temps, power, clocks, memory and disk I/O every second, with one-minute trends. |
-| **Drives** | Space used plus SMART health and temperature, without waking sleeping disks. |
-| **Security & backups** | fail2ban, SSH logins from unknown places, Authelia failures, a crypto-miner watch, cron changes, locked files, and whether last night's backup ran. Click any box for the full details. |
+| **⚡ Breakdown** | What's using your CPU or memory, live. |
+| **🌡 Live window** | Every-second temps, power, clocks, memory and disk I/O. |
+| **Drives** | Space used, SMART health and temperature, without waking sleeping disks. |
+| **Security & backups** | Firewall, fail2ban, SSH logins, Authelia, miner watch, cron changes, locked files, backups, each with a details view. |
 
-Plus three themes (Bubbles, Miku, Gura), automatic light/dark, and a **wall mode** made for a screen that's always on.
 Every panel is optional: unconfigured ones hide themselves, and you can hide any panel on the settings page.
 
-> Drives, GPU, power and the Security & backups panel need the optional **root collector** (step 2 below).
+> Drives, the GPU, package power and the Security & backups panel come from the optional **root collector**
+> ([step 2 below](#2-the-collector-optional)). CPU and board temperatures work without it.
 
 ---
 
@@ -70,11 +138,10 @@ git clone https://github.com/CoreXI7/fishbowl && cd fishbowl
 DEMO=1 python3 app/app.py          # Python 3.11+, then open http://localhost:8000
 ```
 
-### Install for real
-
-**1. The dashboard** (Docker)
+### 1. The dashboard (Docker)
 
 ```sh
+git clone https://github.com/CoreXI7/fishbowl && cd fishbowl
 mkdir data && sudo chown 1000:1000 data     # your settings, saved keys and uploads live here
 cp .env.example .env && chmod 600 .env      # needed, but can stay empty: keys can be typed on the settings page
 ```
@@ -86,20 +153,29 @@ container name), the path to your NPM `proxy_host` folder, and your proxy's Dock
 docker compose up -d
 ```
 
-In NPM, add a proxy host that forwards to `dash:8000` (with HTTPS), and in it add `set_real_ip_from 127.0.0.2/32;`
-under **Advanced** and turn on **Force SSL** (otherwise a visitor can choose the address the dashboard sees; other
-proxies: [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default)). Open the dashboard: the first time, it asks you to
-create your account, with a one-time **setup code** from the container's log
-(`docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1`).
-Already have SSO (Authelia, Authentik, …)? Put the proxy host behind it and set `AUTH: proxy` instead.
-Then click **⚙**: the **Setup** checklist checks the rest and gives the exact fix for anything missing.
+In your reverse proxy, add a host that forwards to `dash:8000` over HTTPS. With **Nginx Proxy Manager**, put
+`set_real_ip_from 127.0.0.2/32;` under **Advanced** and turn on **Force SSL** (otherwise a visitor can choose the address
+the dashboard sees). Caddy, HAProxy and Traefik: [the lines they need](docs/SETTINGS.md#signing-in-auth-login-the-default).
 
-> **Forgot the password or locked out?** See [Signing in](#signing-in).
+Open the dashboard. The first time, it asks you to create your account with a one-time **setup code** from the
+container's log:
 
-> **Empty page or 502?** Run `docker logs dash`. A `TRUSTED_PROXY` name that doesn't resolve refuses everyone, and the log says so.
-> Not sure of your proxy's network name? `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <proxy>`
+```sh
+docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1
+```
 
-**2. The collector** (optional, runs on the host as root)
+Then click **⚙**: the **Setup** checklist checks the rest.
+
+> **Empty page or 502?** Run `docker logs dash`: a `TRUSTED_PROXY` name that doesn't resolve refuses everyone, and the
+> log says so. Not sure of your proxy's network? `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <proxy>`
+
+> **Recommended:** set `LISTEN` so the dashboard answers only on a network your proxy alone shares with it, and no
+> other container can reach it: [how](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen).
+
+### 2. The collector (optional)
+
+The collector reads drives, the GPU, power and the security checks on the host, as root, and writes them to a file the
+dashboard reads. It never talks to the network.
 
 ```sh
 sudo bash collector/install.sh
@@ -107,10 +183,14 @@ sudo nano /etc/homelab-dash/collector.toml   # your drives, fail2ban jail, backu
 sudo systemctl restart homelab-dash-collector
 ```
 
-It needs Python 3.11+ and `smartctl`; it also uses `nvidia-smi`, `fail2ban-client` and `docker` if they're there.
-It costs under a second of CPU a minute. Remove it with `sudo bash collector/install.sh --uninstall`.
-The collector keeps Fishbowl's old name, homelab-dash, in its service and folders, so existing installs update in place.
-Its config is a file on purpose: it runs as root, so no web page should be able to change what it does.
+It needs Python 3.11+ and `smartctl`; it also uses `nvidia-smi`, `fail2ban-client` and `docker` if they're there. The
+installer tries it under three systemd sandboxes and keeps the strictest one under which it still sees everything.
+Remove it with `sudo bash collector/install.sh --uninstall`. (It keeps Fishbowl's old name, homelab-dash, in its
+service and folders.)
+
+Most of its settings can also be changed on the settings page. Switches apply by themselves; anything that makes root
+read a file or run a search (log files, backup jobs, patterns) waits until you approve it on the host with
+`sudo homelab-dash-collector --apply`, which shows exactly what changes.
 
 ---
 
@@ -118,41 +198,23 @@ Its config is a file on purpose: it runs as root, so no web page should be able 
 
 Fishbowl has its own sign-in, on by default: one account, for you.
 
-**The first time**, the dashboard asks for a **setup code**, a name and a password. The code is in the container's log:
-
-```sh
-docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1
-```
-
-Only the newest code works (a new one appears at every start until the account exists), so nobody who finds a fresh
-install before you can claim it. Anyone who can read the container's log (a log viewer like Dozzle or Portainer, a log
-shipper) can read the code too: create the account right after the first start.
-
-- **Password**: 15 characters or more (a few random words work well), checked against common passwords. No other rules;
-  password managers and pasting are welcome.
-- **Two-step sign-in** (recommended): ⚙ → **Account** → set up an authenticator app. Scan the QR code with any
-  authenticator app, type a code, and keep the 10 **recovery codes** it shows somewhere safe: each works once, in place of
-  a code from the app (for a lost phone).
-- **Keep me signed in**: 30 days (7 without a visit), so a wall screen stays up. Without it: 12 hours (1 hour without a
-  visit). The sign-out button sits in the header.
-- **⚙ → Account**: confirm it's you (the password, plus a code when two-step is on), then change the password, turn
-  two-step on or off, make new recovery codes, see which browsers are signed in and sign any of them out, and see recent
-  sign-ins and failed tries. A new password signs every other browser out.
-- **If someone guesses**: after 5 wrong tries the waits double (up to 15 minutes), for everyone. After 100 in a row,
-  browsers that never signed in are locked out until you unlock it on the host; browsers you've signed in with before
-  still get in. So someone who keeps guessing (it needs no password) can make a *new* browser of yours wait, or lock it
-  out after about a day: sign in from a browser you've used before, or run `auth.py unlock` on the host. Your next
-  sign-in tells you what failed since the last one. The right password with a wrong code stays on the Setup checklist
-  until you change the password or press "That was me".
-- **Plain HTTP** (no HTTPS): passwords are only accepted from your own network, and that sign-in only works from the
-  same address. Your browser also sends the dashboard's cookies to every other web app on that address (any port),
-  so over plain HTTP only run apps you trust next to it, or put it behind HTTPS on a host name of its own (over HTTPS
-  the cookies still go to other HTTPS ports of the same name).
-- **Your reverse proxy** must set `X-Real-IP` and `X-Forwarded-Proto` itself, never pass on what the visitor sent.
-  Nginx Proxy Manager, Caddy and HAProxy need a line or two for that (NPM: `set_real_ip_from 127.0.0.2/32;` under
-  Advanced, and Force SSL); Traefik is fine as it is: see
-  [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). The Setup checklist tells you when a header
-  is missing (it can't tell when the proxy lets a visitor choose it).
+- **First run:** the account can only be created with the newest setup code from the container's log, so nobody who
+  finds a fresh install before you can claim it. Anyone who can read that log (Dozzle, Portainer, a log shipper) can
+  read the code too: create the account right after the first start.
+- **Password:** 15 characters or more (a few random words work well), checked against common passwords, stored with
+  scrypt. No other rules; password managers and pasting are welcome.
+- **Two-step sign-in** (recommended): ⚙ → **Account** → set up an authenticator app, and keep the 10 recovery codes it
+  shows (each works once, for a lost phone).
+- **Keep me signed in:** 30 days (7 without a visit), so a wall screen stays up. Without it: 12 hours (1 hour without a
+  visit).
+- **⚙ → Account:** confirm it's you, then change the password (which signs every other browser out), turn two-step on
+  or off, make new recovery codes, see and sign out the signed-in browsers, and see recent sign-ins and failed tries.
+- **Guessing:** after 5 wrong tries the waits double, up to 15 minutes. After 100 in a row, browsers that never signed
+  in are locked out until you run `auth.py unlock` on the host; browsers you've signed in with before still get in.
+  Your next sign-in tells you what failed since the last one.
+- **Plain HTTP:** passwords are only accepted from your own network, and that sign-in only works from the same address.
+  Your browser sends the dashboard's cookies to every other web app on that address (any port), so over plain HTTP only
+  run apps you trust next to it, or use HTTPS on a host name of its own.
 
 **Forgot the password, locked out, or lost a device?** On the host:
 
@@ -160,32 +222,30 @@ shipper) can read the code too: create the account right after the first start.
 |---|---|
 | `status` | The account, the lock, two-step, recovery codes left, signed-in browsers |
 | `unlock` | Ends the lock after 100 wrong tries |
-| `signout` | Signs every browser out and forgets trusted browsers; the account stays (a lost phone or laptop) |
+| `signout` | Signs every browser out and forgets trusted browsers; the account stays |
 | `reset` | Deletes the account and every session (settings and keys stay) and prints a new setup code |
 | `setup-code` | A new setup code, while there's no account yet |
 
 **Already have SSO** (Authelia, Authentik, an access list)? Add `AUTH: proxy` to the `environment:` in
 docker-compose.yml so you sign in only once. It needs `TRUSTED_PROXY` too: without it anyone could go around your
-proxy's sign-in, so Fishbowl keeps its own on and says so in the log. The Setup checklist checks that a sign-in sits in
-front of the dashboard. Don't let your SSO wave any of the dashboard's paths through (an Authelia `bypass` rule for
-`^/api` that covers its host, say): with `AUTH: proxy`, whoever gets past the proxy can change everything. Demo mode (`DEMO=1`) has no sign-in.
+proxy's sign-in, so Fishbowl keeps its own on and says so. Don't let your SSO wave any of the dashboard's paths through
+(an Authelia `bypass` rule for `^/api` that covers its host, say): with `AUTH: proxy`, whoever gets past the proxy can
+change everything.
 
-Every detail: [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). How it's built:
-[THREAT-MODEL.md](THREAT-MODEL.md#the-sign-in-authlogin). How it was tested: [SECURITY-TESTING.md](SECURITY-TESTING.md).
+Every detail: [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default).
 
 ---
 
-## Tips: keys, clicks and links
+## Using it: keys, clicks and links
 
 | Do this | To get |
 |---|---|
 | **T** or 🎨 | Switch theme (remembered per browser, so a wall screen keeps its own) |
-| **M** or 🫧 | Background bubbles on or off in this browser. By default they follow your device's reduce-motion setting; set `motion` in `settings.json` to `on` to show them everywhere |
-| **W** or the monitor button | Wall mode: fits 1920×1080 with no scrolling, hides the cursor |
-| Click **⚡ breakdown** or the CPU tile | What's using the machine, live. Click a tile for its busiest processes |
+| **M** or 🫧 | Background motion on or off in this browser (by default it follows your device's reduce-motion setting) |
+| **W** or the monitor button | Wall mode |
+| Click **⚡ breakdown** or the CPU tile | What's using the machine; click a tile for its busiest processes |
 | Click **🌡 live** on Temperatures | The every-second live window |
 | Click a **box title** on Security & backups | The full details behind that box |
-| Click the Plex tile in wall mode | Expand or collapse Now Playing |
 | **Esc** | Close any of these windows |
 
 Every window has its own link, handy for bookmarks or a second screen:
@@ -193,205 +253,59 @@ Every window has its own link, handy for bookmarks or a second screen:
 
 ---
 
-## What's new (October 2026)
-
-### Updating? What to check
-
-Most updates need nothing from you. To update: `git pull`, then `docker compose up -d --force-recreate` (without
-`--force-recreate` the old code keeps running: the app folder is mounted, and Compose only restarts for a changed
-compose file; the Setup checklist says when that happened). If `git pull` refuses because you edited
-`docker-compose.yml`, run `git stash`, `git pull`, `git stash pop` and look over the merged file (if `git stash pop`
-reports a conflict, keep your own lines and the new ones, then `git add docker-compose.yml`, `git reset -q` and
-`git stash drop`, or the next update's `git pull` refuses);
-next time keep your changes in a `docker-compose.override.yml` next to it (Compose reads it on top, git leaves it
-alone). **The collector runs on the host and only updates when you run `sudo bash collector/install.sh` again**: the
-Setup checklist says when it's older than the dashboard. These updates might need more:
-
-| Change | What to do |
-|---|---|
-| **Security fixes from a pre-release audit (Oct 30)**, the root collector's included. | Update as above, and run `sudo bash collector/install.sh` again. Over plain HTTP everyone signs in once more (sign-ins are now tied to the exact address). |
-| **Fishbowl has its own sign-in now, on by default.** | If your reverse proxy's sign-in (Authelia, Authentik, an access list) already protects it, add `AUTH: proxy` to the `environment:` of docker-compose.yml. Otherwise, after updating, open the dashboard and create your account with the setup code from `docker logs <container> 2>&1 \| grep "^SETUP CODE" \| tail -n 1`. |
-| **homelab-dash is now called Fishbowl.** GitHub forwards the old address. | Nothing required. Optionally run `git remote set-url origin https://github.com/CoreXI7/fishbowl`. The collector keeps its `homelab-dash` names. |
-| **The collector's settings are on the settings page now, and it runs in a sandbox.** | Run `sudo bash collector/install.sh` again. Until then the page's Drives & hardware, Security and Backups sections say the collector is too old, and its settings stay in `/etc/homelab-dash/collector.toml`. |
-| **The collector gained new checks** (security details, CPU power, safer reading of logs). | Run `sudo bash collector/install.sh` again and restart it. Without that, the new detail views and the live window's power reading stay empty. |
-| **Redirects are no longer followed** when the dash talks to other services. A service that answers with a redirect still counts as **up**. | If qBittorrent, Seerr or Tautulli sits behind a redirect, point its URL straight at the real address. The settings page's **Test** button tells you if one redirects. |
-| **Clients that aren't your proxy are dropped** right away. | Make sure `TRUSTED_PROXY` names your proxy. It can now list several names or IPs, space-separated. |
-| **New `LISTEN` setting** (optional, recommended). | Lets the dash answer only on a network that your proxy alone shares with it, so no other container can reach it. [How to set it up](docs/SETTINGS.md#lock-the-dash-to-the-proxy-listen). |
-| **Upload limits**: images only (PNG, JPEG, GIF, WebP), 2 MB each, 200 files / 100 MB in all. SVG is refused. | Nothing, unless you upload a lot of icons. |
-| **Fonts are now part of the app** instead of coming from Google. | Nothing. The page no longer loads fonts from outside (service icons from a CDN and posters from TMDB still come from there when set up). |
-| **"Check through the proxy" moved onto the settings page** (Services → Advanced), and an entry can carry a path (`vault.example.com/alive`). | Nothing: if `CHECK_VIA_PROXY` is set in the compose file it still wins, and the page shows it locked. You can remove it from the compose file and manage the list on the page instead. |
-| **`.env` must exist** (the compose file loads it). | `cp .env.example .env`, even if you leave it empty. |
-
-### The big changes
-
-#### ⚙ A new settings page: set everything up in one place (Oct 29)
-
-![The Setup checklist on a fresh install](docs/screenshot-setup.png)
-
-The settings page was rebuilt around a new install: after `docker compose up -d`, everything else is set on the page,
-and for what can't be, the Setup checklist gives the exact fix.
-
-- **Setup checklist.** Checks the proxy lock, the dashboard's address, whether settings can be saved, the Nginx Proxy
-  Manager folder, **whether a sign-in sits in front of the dashboard**, the collector and the integrations. Each
-  problem says what happens if you ignore it and gives the exact fix, with a **Copy** button.
-- **Side menu with search** (a bar on phones), a dot on every section with unsaved changes, one Save bar
-  (**Ctrl+S**), and an error summary that takes you straight to the field.
-- **Clearer Test results**: "can't find 'overseerr'" (wrong Docker network), timeouts, refused connections.
-- **Every theme edited the same way** (the Default theme picker moved into Themes), and services not in NPM get their own tile link.
-- **Accessible**: readable contrast in every theme, a visible focus ring, labels on every field, works with the
-  keyboard alone and on a phone.
-
-#### 🔑 Its own sign-in (Oct 30)
-
-Fishbowl used to rely entirely on your reverse proxy's sign-in. Now it has its own, on by default, for everyone who
-doesn't run SSO:
-
-- **First run**: the account can only be created with a one-time setup code printed in the container's log, so
-  nobody who finds a fresh install first can claim it.
-- **Passwords**: at least 15 characters (a few random words work well), checked against common passwords, stored with
-  scrypt. No "must contain a digit" rules; password managers and pasting welcome.
-- **Two-step sign-in** (optional): an authenticator app (scan a QR code), with 10 one-time recovery codes.
-- **Guessing**: after 5 wrong tries the waits double (up to 15 minutes); 100 wrong tries in a row lock the account
-  for new browsers until you unlock it on the host. Browsers you signed in with before still get in.
-- **Sessions**: "keep me signed in" lasts 30 days at most (wall screens included); changing the password signs every
-  other browser out; Settings → Account lists the signed-in browsers and signs any of them out.
-- **Already have SSO?** `AUTH: proxy` in docker-compose.yml turns it off.
-
-#### 🧰 The collector's settings on the page, and a sandbox for it (Oct 29)
-
-![Backups on the settings page: a changed log file will need an OK on the host](docs/screenshot-collector.png)
-
-Drives, what the security card watches, and your backups are set on the settings page too. The collector runs as root,
-so it decides what it accepts:
-
-- **Switches and choices apply within a minute**: which drives to show and their names, the update interval, the
-  network interface, the fail2ban jail, the SSH service, the Authelia container, process names to flag. The collector
-  only accepts what it found on the machine itself.
-- **Files and patterns wait for your OK on the host** (log files, Authelia's database, locked files, backup jobs,
-  counted checks, file patterns, your own watch script), because they make root read a file or run a search.
-  `sudo homelab-dash-collector --apply` shows exactly what changes (`+` added, `-` removed, `~` changed) and asks.
-  `--apply --undo` drops everything the page set. A later edit of `collector.toml` by hand always wins.
-- **A sandbox for the collector.** The installer tries the collector under three systemd sandboxes, keeps the
-  strictest one under which it still sees everything (no network at all, a read-only system except its own folder,
-  only the root powers it needs), and checks that it keeps updating afterwards.
-
-How it's kept safe, step by step: [SECURITY.md](SECURITY.md) and [THREAT-MODEL.md](THREAT-MODEL.md).
-
-#### 🔒 Security audit and hardening (Oct 29)
-
-A full audit of the dashboard and the root collector. Every problem found got a working proof, a fix, and a test that
-failed before the fix (68 tests). Five separate reviewers then checked the fixes.
-
-![Security audit: every problem found, its severity, all fixed](docs/security-audit-2026-10-29.png)
-
-What was fixed, in plain words:
-
-- **A hacked qBittorrent or Seerr could run code in your dashboard.** Every value from them is now checked and
-  escaped, and the page only runs its own scripts.
-- **A service could send the dashboard to internal addresses** (and the integrations could carry an API key along).
-  Redirects to other hosts are no longer followed.
-- **Other containers can be shut out completely** with the new `LISTEN` setting.
-- **Poster art, crafted SSH user names and huge or deeply nested answers** can no longer be used to trick or overload it.
-- **Nothing the dashboard does can stall or steer the root collector.**
-
-The full list, with severities, is in the [threat model](THREAT-MODEL.md).
-
-#### ⚡ Much lighter on the network and CPU (Oct 29)
-
-![Before and after: network, collector CPU, API traffic, wall-view CPU](docs/efficiency-2026-10-29.png)
-
-- **Network into the dash: 37.6 MB → 1.8 MB a minute.** qBittorrent now sends only what changed, not the whole list every 4 seconds.
-- **Collector: 4.5 → under 1 CPU-second a minute.** It reads the SSH log once a minute, far more cheaply.
-- **Everything is compressed**, and a reload re-downloads only files that changed.
-- **The Miku and "service down" animations run on the GPU**, so the wall view costs the same in every theme.
-
-#### 🛡 Security & backups: details for every box (Oct 29)
-
-![Security details: SSH logins](docs/screenshot-security.png)
-
-Click any box's title on the Security & backups card for the full story behind its one-line status:
-
-- **Firewall & fail2ban**: every rule, every jail and its banned IPs, the week's bans.
-- **SSH logins**: grouped by user, place **and the key used**, so one odd login can't hide among thousands of routine
-  ones. Failed attempts and scans by IP.
-  **New:** click a yellow **"not on your list"** tag (or **Add all**) to trust that place. Only IPs that really
-  logged in can be added.
-- **Authelia**: sign-ins and lockouts.
-- **Process watch**, **Cron jobs** (each line approved or not) and **Locked files**.
-- **Backups**: each job's last success, how long it took, its size and the free space left.
-
-![Security details: backups](docs/screenshot-backups.png)
-
-These views only read: the dashboard runs no commands.
-
-#### 🎨 Three themes (Oct 18, Gura added Oct 28)
-
-| Gura (light) | Gura (dark) |
-|---|---|
-| ![Gura theme](docs/screenshot-gura.png) | ![Gura theme, dark](docs/screenshot-gura-dark.png) |
-
-![Miku theme](docs/screenshot-miku.png)
-
-- **Bubbles** (default): soft bubbles drifting behind the cards.
-- **Miku**: teal twin-tails, VU-meter bars, floating notes and an equalizer by the clock.
-- **Gura**: a sunny lagoon (light) or the deep sea (dark), a shark-hood header with teeth, and a little shark swimming behind the title.
-
-Each theme has its own mascot, greeting, quotes and tab icon; anything you set for a theme on the settings page wins.
-Themes ship no character artwork: mascots are your own uploads.
-
-#### 🌡 Live window (Oct 23)
-
-![Live window](docs/screenshot-live.png)
-
-A browser version of a terminal temps dashboard: CPU temps, package power, clocks, memory, the GPU, disk I/O with the
-busiest drives, and every CPU thread's load, all updated every second while it's open (and not at all when it's closed).
-
-#### 🧱 Services: compact and quiet (Oct 28)
-
-With 50+ services the panel had become the biggest thing on the page. Groups now sit on compact "shelves", healthy
-tiles have no dot, and a down service gets a red **!**, a tinted tile and "· down" after its name (not colour alone).
-The panel is about a third shorter, and the wall view fits any number of groups.
-
-### Smaller changes
-
-- **Hide panels** you don't use, on the settings page. Their summary tile at the top stays (a VPN leak still shows).
-- **Plex**: "+N more" gives Now Playing the whole row when many people watch; on the wall the list scrolls in its box.
-- **SSH alert**: "Looks fine ✓" clears an unknown-login alert; a new unfamiliar login raises it again.
-- **Breakdown** shows containers' real memory (what `docker stats` shows), not the sum of their processes.
-- **Wall view** uses about a fifth of the CPU it used to (~110% → ~19% of a core) with the same look.
-- The header stays on top while you scroll; the System card says "N running · M stopped".
-- Settings that used to crash on broken input now get a clear error message.
-
----
-
 ## Settings
 
 ![Settings page](docs/screenshot-settings.png)
 
-Click **⚙** (or open `/settings`). Use the side menu or the search box; changes apply right away, no restart.
+Click **⚙** (or open `/settings`). Use the side menu or search; changes apply right away, no restart. **Ctrl+S** saves.
 
 | Section | What's there |
 |---|---|
 | **Setup** | What's working and what isn't, each with its fix |
 | **Look & feel** | Title, and which panels to show |
-| **Themes** | The default theme and background motion; per theme its mascot (upload an image), tab icon, taglines, click emoji and lines |
-| **Services** | Everything found in NPM: groups (create, rename, reorder), labels, icons (any [dashboard-icons](https://dashboard-icons.homarr.dev) name), hiding. Services not in NPM (NAS, router, …). Advanced: services to check through the proxy |
+| **Themes** | The default theme and background motion; per theme its mascot, tab icon, taglines and lines |
+| **Services** | Everything found in NPM: groups, labels, icons (any [dashboard-icons](https://dashboard-icons.homarr.dev) name), hiding. Services not in NPM. Advanced: services to check through the proxy |
 | **Integrations** | qBittorrent, Seerr / Overseerr / Jellyseerr, Tautulli, each with a **Test** button that says what's wrong |
-| **Drives & hardware** | Which drives to show and their names, the network interface, the GPU, the update interval (the collector applies them) |
-| **Security** | **Your own IPs** (was "Trusted IPs"): logins from them aren't flagged (or add them from the SSH details). What the collector watches: fail2ban, SSH, Authelia, miners, crontabs, locked files, the firewall, your own watch script |
-| **Backups** | Your backup log, what counts as OK or failed, backup jobs, counted checks and file patterns (files and patterns wait for your OK on the host) |
-| **Account** | With Fishbowl's own sign-in: change the password, turn the authenticator app on or off, recovery codes, signed-in browsers (sign them out), recent sign-ins |
+| **Drives & hardware** | Which drives to show and their names, the network interface, the GPU, the update interval |
+| **Security** | Your own IPs (their logins aren't flagged), and what the collector watches |
+| **Backups** | Your backup log, what counts as OK or failed, backup jobs, counted checks and file patterns |
+| **Account** | With Fishbowl's own sign-in: password, authenticator app, recovery codes, signed-in browsers, recent sign-ins |
 | **About** | What's set in `docker-compose.yml`, and why it can't be changed here |
 
 Everything is saved in `data/` (`settings.json`, keys in `secrets.json`, both `chmod 600`). Prefer a file? Put a
 `config.toml` in `data/` (see [`config.example.toml`](config.example.toml)); it's used until the first save.
-
-Security-related settings (`ORIGIN`, `TRUSTED_PROXY`, `LISTEN`, `SETTINGS_UI`, …) live in `docker-compose.yml`, never
-on the settings page. **Every setting is listed in [docs/SETTINGS.md](docs/SETTINGS.md).**
+Security settings (`ORIGIN`, `TRUSTED_PROXY`, `LISTEN`, `AUTH`, `SETTINGS_UI`, …) live in `docker-compose.yml`,
+never on the page. **Every setting: [docs/SETTINGS.md](docs/SETTINGS.md).**
 
 ---
 
-## Security in short
+## Updating
+
+```sh
+git pull
+docker compose up -d --force-recreate     # without --force-recreate the old code keeps running
+sudo bash collector/install.sh            # only if you use the collector: it runs on the host and updates separately
+```
+
+The Setup checklist says when the dashboard needs a restart for new code, and when the collector is older than the
+dashboard. If `git pull` refuses because you edited `docker-compose.yml`: `git stash`, `git pull`, `git stash pop`, and
+look over the merged file. If `git stash pop` reports a conflict, keep your lines and the new ones, then
+`git add docker-compose.yml`, `git reset -q` and `git stash drop`. Next time, keep your changes in a
+`docker-compose.override.yml` next to it (Compose reads it on top; git leaves it alone).
+
+**Coming from a version before 1.0** (homelab-dash):
+
+| What changed | What to do |
+|---|---|
+| **Fishbowl has its own sign-in, on by default.** | If your reverse proxy's sign-in already protects it, add `AUTH: proxy` to the `environment:`. Otherwise create your account with the setup code after updating. |
+| **The security fixes from the 1.0 audit** include the root collector. | Run `sudo bash collector/install.sh` again. Over plain HTTP, everyone signs in once more. |
+| **Clients that aren't your proxy are dropped**, and redirects from services are no longer followed. | Make sure `TRUSTED_PROXY` names your proxy (several names or IPs, space-separated, are fine). If an integration sits behind a redirect, point it at the real address: its **Test** button says so. |
+| **The project is called Fishbowl now.** GitHub forwards the old address. | Optionally: `git remote set-url origin https://github.com/CoreXI7/fishbowl`. |
+| **`.env` must exist.** | `cp .env.example .env`, even if it stays empty. |
+
+---
+
+## Security
 
 ```
 browser ──► reverse proxy ──► dash container: its own sign-in (or your SSO) ── no root, read-only, no capabilities
@@ -403,27 +317,43 @@ browser ──► reverse proxy ──► dash container: its own sign-in (or yo
 
 **The part on the network has no power, and the part with root never talks to the network.**
 
-- **Nothing without signing in.** Its own sign-in (on by default) or your SSO (`AUTH: proxy`). Passwords of 15+
-  characters checked against common ones, stored with scrypt; sessions in HttpOnly, SameSite, `__Host-` cookies; growing
-  waits after wrong tries and a lock after 100; an optional authenticator app with one-time recovery codes. The first
-  account can only be created with a setup code from the container's log. Set `SETTINGS_UI=0` to make the settings
-  page read-only.
-- **Keys never reach the browser.** The settings page can save a key but never shows it. Changing an integration's
-  address means typing its key again, so nobody can redirect your saved key to their own server.
-- **Only your proxy can talk to it** (`TRUSTED_PROXY`, and optionally `LISTEN`), and every change must come from the
-  dashboard's own page (blocks other websites acting for you).
-- **Everything from outside is treated as untrusted**: escaped, size-capped and checked. The page only runs its own scripts.
+- **Nothing without signing in.** Fishbowl's own sign-in (on by default) or your SSO. Sessions in HttpOnly, SameSite,
+  `__Host-` cookies; growing waits after wrong tries; an alarm when someone has your password but not your code.
+- **Keys never reach the browser.** The settings page can save a key but never shows it, and changing an integration's
+  address means typing its key again, so nobody can send your saved key to their own server.
+- **Only your proxy can talk to it** (`TRUSTED_PROXY`, and `LISTEN`), and every change must come from the dashboard's
+  own page, so other websites can't act for you.
+- **Everything from outside is untrusted:** a hacked qBittorrent, Seerr or Tautulli can't run script in your page, send
+  the dashboard to internal addresses, or use up its memory. Every answer is escaped, size-capped, time-limited and
+  checked.
 - **The container** runs as uid 1000, read-only, all capabilities dropped, capped at 256 MB and 128 processes.
-- **The collector** tries to hide passwords and tokens in the log and cron lines it reports (common forms: `-p`,
-  `--password`, `user:pass@`, `PASSWORD=`, bearer tokens, push-service URLs). A password passed as a plain argument
-  (`backup.sh hunter2`) looks like any other word: keep secrets in files or the environment, not on cron lines. The
-  dash can ask it to "approve the cron jobs as they are now" (checked by hash) and pass on collector settings changed
-  on the settings page: safe ones apply by themselves, paths and patterns only after `sudo homelab-dash-collector --apply`.
+- **The collector** runs as root in a systemd sandbox, never on the network. It reads files the dashboard or other
+  containers can write without following their links, and nothing the dashboard sends can make it read a file or run a
+  pattern until you approve it on the host.
 
-The limit: anyone with Docker or root access on the host can read the container's environment, as with any
-self-hosted app. Keep `.env` at `chmod 600` and out of git (`.gitignore` covers it).
-Details: [THREAT-MODEL.md](THREAT-MODEL.md). What was tested and what came out of it:
-[SECURITY-TESTING.md](SECURITY-TESTING.md).
+The limit, as with any self-hosted app: anyone with Docker or root access on the host can read the container's
+environment. Keep `.env` at `chmod 600` and out of git (`.gitignore` covers it).
+
+### The 1.0 security audit
+
+Before 1.0 was released, Fishbowl went through a **four-round security audit**: 40 independent reviews by ten
+specialist roles, each round with fresh reviewers who hadn't seen the earlier rounds' reasoning.
+
+| | |
+|---|---|
+| **Who reviewed** | Ten roles, fresh in every round: the sign-in and sessions, the HTTP layer, the browser side, outbound requests (SSRF), the root collector, cryptography, a black-box red team that only had the README, fuzzing, research into new attack classes and past advisories, and release hygiene. |
+| **How** | Every attack ran against throwaway copies (never a real install), on the host's Python **and** the exact pinned Docker image, behind real proxies (Nginx Proxy Manager, nginx, Caddy, HAProxy, Traefik) and in real browsers (Chrome and Firefox). Each round re-ran every earlier round's attack scripts. |
+| **Fuzzing** | More than 15 million executions across the HTTP API in every sign-in mode, hostile fake services, and the collector's parsers, plus 660,000 differential runs against real `nginx -t`. |
+| **Found** | 2 high and about 50 medium issues across the four rounds, every one of them **fixed before release**, each with a test that failed before the fix and passes after. The findings shrank every round: by round 4 no reviewer found a way in, only ways a hostile service could knock the dashboard over and rare setups (rootless Podman, IPv6-only networks) that weakened a rule. |
+| **Tests** | 356 automated tests, plus a browser sign-in test of 44 checks and before/after screenshots of every page in every theme. |
+
+**What it didn't cover, honestly:** this was a review by AI agents, not a paid third-party audit, and nothing is
+formally proven. Safari, Podman, Cloudflare Tunnel and Tailscale weren't run for real. The trade-offs that remain are
+written down in [THREAT-MODEL.md](THREAT-MODEL.md#still-open).
+
+- **What was tested and every result:** [SECURITY-TESTING.md](SECURITY-TESTING.md) and [TESTING.md](TESTING.md)
+- **How it's built to be safe:** [THREAT-MODEL.md](THREAT-MODEL.md)
+- **Found something?** Please report it privately: [SECURITY.md](SECURITY.md)
 
 ---
 
@@ -445,16 +375,18 @@ Then add a proxy host that forwards to `homelab-demo:8000`, with no SSO.
 python3 -m unittest discover -s tests       # stdlib only; page tests use headless Chrome if installed
 ```
 
-Fake qBittorrent, Seerr, Tautulli and web apps (`tests/helpers.py`) stand in for the real ones, so nothing real is contacted.
+Fake qBittorrent, Seerr, Tautulli and web apps stand in for the real ones, so nothing real is contacted. What's
+covered and how: [TESTING.md](TESTING.md).
 
 ## More docs
 
 - [docs/SETTINGS.md](docs/SETTINGS.md): every setting, its limits and defaults
 - [ARCHITECTURE.md](ARCHITECTURE.md): which file does what
 - [THREAT-MODEL.md](THREAT-MODEL.md): what it defends against, and what it doesn't
-- [SECURITY-TESTING.md](SECURITY-TESTING.md): every attack it was tested against, and the result
+- [SECURITY-TESTING.md](SECURITY-TESTING.md) · [TESTING.md](TESTING.md): how it was tested, and the results
 - [PERF-BASELINE.md](PERF-BASELINE.md): measured CPU, memory and network numbers
-- Adding a theme: add its id and defaults to `THEMES` in `app/settings.py` and its styles to `app/themes.css` under `html[data-theme="<id>"]`
+- Adding a theme: add its id and defaults to `THEMES` in `app/settings.py` and its styles to `app/themes.css` under
+  `html[data-theme="<id>"]`
 
 ## License
 
