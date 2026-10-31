@@ -22,7 +22,7 @@ It's written in plain Python with no extra packages, and runs in Docker.
 - [Using it](#using-it)
 - [Updating](#updating)
 - [Screenshots](#screenshots)
-- [Security](#security)
+- [Security](#security) and [how it was tested](#how-it-was-tested)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -124,6 +124,30 @@ sudo systemctl restart homelab-dash-collector
 In `collector.toml`, list your drives and, if you use them, your fail2ban jail and backup log. To remove the
 collector: `sudo bash collector/install.sh --uninstall`.
 
+#### How the collector works
+
+Some of what Fishbowl shows can only be read as root: SMART data from your drives, the firewall and fail2ban, the
+SSH login log, scheduled jobs, and backup logs. Instead of giving the dashboard those powers, a separate program
+does that part:
+
+1. **It runs on the host as a systemd service,** as root, once every few seconds.
+2. **It writes what it found to files** in `/var/lib/homelab-dash/`.
+3. **The dashboard only reads those files.** They're mounted into its container read-only.
+
+The collector never connects to the network. The installer tests it under three systemd sandboxes and keeps the
+strictest one it still works under: no network at all, a read-only system apart from its own folder, and only the
+root permissions it needs.
+
+You can change most of its settings on the dashboard's settings page. Simple switches, like which drives to show,
+apply by themselves. Anything that would make root read a file or run a search pattern, like a new log file to
+watch, waits until you approve it on the server:
+
+```sh
+sudo homelab-dash-collector --apply
+```
+
+It shows exactly what will change and asks first.
+
 ## Using it
 
 - **Settings:** click ⚙ (or go to `/settings`). Everything from your services to themes to your account is set there,
@@ -163,16 +187,47 @@ All screenshots use the demo's made-up data.
 
 ## Security
 
-- **Sign-in required.** Nobody can see or change anything without signing in, either with Fishbowl's own sign-in or
-  your existing login page.
-- **Your API keys stay on the server.** They are never sent to the browser.
-- **Only your reverse proxy can connect** to the dashboard, set with `TRUSTED_PROXY`.
-- **The parts are kept apart.** The dashboard, which is reachable from the network, runs with no special permissions.
-  The collector, which runs as root, can't be reached from the network at all. So someone who breaks into the
-  dashboard still can't control the server.
+A dashboard like this sees a lot about your server, so it was built to be hard to misuse.
 
-More detail: [THREAT-MODEL.md](THREAT-MODEL.md) explains the design and its known limits, and
-[TESTING.md](TESTING.md) describes how it was tested.
+**Signing in**
+
+- Nobody can see or change anything without signing in, either with Fishbowl's own sign-in or your existing login
+  page (`AUTH: proxy`).
+- Passwords must be at least 15 characters and are checked against a list of common passwords. Length is what
+  protects a password if a copy of its stored form ever leaks.
+- Two-step sign-in with an authenticator app is built in, with one-time recovery codes.
+- Repeated wrong guesses make everyone wait longer between tries. If someone types your correct password but not
+  your two-step code, you're warned the next time you sign in.
+
+**The dashboard**
+
+- Only your reverse proxy can connect to it (`TRUSTED_PROXY`), and changes are only accepted from the dashboard's own
+  page, so other websites can't act on your behalf.
+- Your API keys stay on the server and are never sent to the browser. Changing an app's address means entering its
+  key again, so nobody can send your saved key somewhere else.
+- Everything that comes from qBittorrent, Seerr or Tautulli is treated as untrusted: checked, size-limited and
+  time-limited, so a compromised app can't take over the page or crash the dashboard.
+- The container runs as a normal user, with a read-only file system and no extra permissions, and is limited to
+  256 MB of memory.
+
+**Kept apart:** the dashboard, which is reachable from the network, has no special permissions. The collector, which
+runs as root, can't be reached from the network at all. So someone who breaks into the dashboard still can't control
+your server.
+
+### How it was tested
+
+Before version 1.0, Fishbowl went through a security review in four rounds. Each round, a fresh set of reviewers (AI
+agents, each focused on one area: sign-in, web requests, browser attacks, the collector, encryption, fuzzing, and
+more) tried to break it, and every problem they found was fixed before the next round.
+
+- **40 reviews** in total, run against test copies only, with real reverse proxies (Nginx Proxy Manager, Caddy,
+  HAProxy, Traefik) and real browsers (Chrome, Firefox).
+- **Over 15 million automated attack attempts** (fuzzing).
+- **2 high and about 50 medium issues found, all fixed.** Each fix has an automated test, so the problem can't quietly
+  come back. The last three rounds found no way to get in.
+
+This was an AI-assisted review, not an audit by an outside security company. The full results are in
+[TESTING.md](TESTING.md), and [THREAT-MODEL.md](THREAT-MODEL.md) lists the known limits.
 
 Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 
