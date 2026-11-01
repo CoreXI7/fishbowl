@@ -9,16 +9,12 @@
 services:
   homelab-demo:
     container_name: homelab-demo
-    image: python:3.12-alpine@sha256:e6dae589c1c05976188fd3bd019afd091445fc533ed2ea29001beddc7368a9c8
-    command: ["python", "-u", "/app/app.py"]
+    image: ghcr.io/corexi7/fishbowl:1        # or build it from this folder: build: .
     restart: unless-stopped
     environment:
       DEMO: "1"
       DATA_DIR: /tmp/demo
       # REPO_URL: https://github.com/CoreXI7/fishbowl   # the "demo · fake data" label links here
-    volumes:
-      - ./app:/app:ro
-      - ./config.example.toml:/config.example.toml:ro
     tmpfs:
       - /tmp:size=4m,mode=1777
     runtime: runc
@@ -35,10 +31,6 @@ services:
       driver: json-file
       options: {max-size: "1m", max-file: "2"}
     networks: [demo]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3)"]
-      interval: 60s
-      timeout: 5s
 
 networks:
   demo:

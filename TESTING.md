@@ -6,8 +6,11 @@ How Fishbowl 1.0 was tested, what came out of it, and what wasn't covered. Every
 ## Run the tests yourself
 
 ```sh
-python3 -m unittest discover -s tests       # 357 tests, stdlib only, ~5 minutes; page tests use headless Chrome if installed
+python3 -m unittest discover -s tests       # stdlib only, ~5 minutes; page tests use headless Chrome if installed
 ```
+
+GitHub runs the same suite on every push and pull request ([CI](.github/workflows/ci.yml)), and also builds the image
+and starts it hardened to check it answers. A version tag publishes the image only after that passes.
 
 Nothing real is contacted: fake qBittorrent, Seerr, Tautulli and web apps (`tests/helpers.py`) stand in for the real
 ones, and test servers bind `127.0.0.1` only. Run them as a normal user, not root: root ignores file permissions, so

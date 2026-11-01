@@ -4,9 +4,9 @@
 services:
   dash:
     container_name: dash
-    # Pinned by digest so `docker compose up` never silently upgrades. To update: docker pull python:3.12-alpine, swap the digest.
-    image: python:3.12-alpine@sha256:e6dae589c1c05976188fd3bd019afd091445fc533ed2ea29001beddc7368a9c8
-    command: ["python", "-u", "/app/app.py"]
+    # The ready-made image, built from this repository by GitHub Actions. Update: docker compose pull && docker compose up -d
+    # To build it yourself from this folder instead, replace this line with:  build: .
+    image: ghcr.io/corexi7/fishbowl:1
     restart: unless-stopped
     mem_limit: 256m                 # a bug can never eat the host's RAM (it restarts instead)
     pids_limit: 128
@@ -29,7 +29,6 @@ services:
       # LISTEN: "127.0.0.1 10.89.250.2"  # answer only on these addresses: see "Lock the dash to the proxy" in docs/SETTINGS.md
       # CHECK_VIA_PROXY: demo.example.com vault.example.com/alive # hosts on networks the dash can't reach: health-check them through the proxy (optional path instead of /). Also on the settings page (Services → Advanced); set here, it wins and locks that field
     volumes:
-      - ./app:/app:ro
       - ./data:/data                  # settings + saved keys + uploads (must be writable by uid 1000)
       # Nginx Proxy Manager's proxy host configs (adjust the left side to your NPM data folder):
       - ../nginx/data/nginx/proxy_host:/npm:ro
@@ -40,10 +39,6 @@ services:
     # ports: ["192.168.1.10:8000:8000"]   # your host's LAN address: a bare "8000:8000" also listens on every other interface, past ufw
     networks:
       - reverse_proxy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3)"]
-      interval: 60s
-      timeout: 5s
 
 networks:
   reverse_proxy:

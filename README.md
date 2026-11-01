@@ -1,5 +1,7 @@
 # Fishbowl
 
+[![CI](https://github.com/CoreXI7/fishbowl/actions/workflows/ci.yml/badge.svg)](https://github.com/CoreXI7/fishbowl/actions/workflows/ci.yml)
+
 Your whole home server in one glanceable page.
 
 | Light | Dark |
@@ -10,7 +12,8 @@ Fishbowl is a dashboard for a home server. Open it in a browser (or leave it on 
 glance whether everything is running: your services, who is watching Plex, new media requests, downloads, temperatures,
 drives, and recent security events.
 
-It's written in plain Python with no extra packages, and runs in Docker.
+It's written in plain Python with no extra packages, and runs in Docker from a ready-made image
+(`ghcr.io/corexi7/fishbowl`, for amd64 and arm64).
 
 **Try it first:** there's a [live demo](https://demo.vicy.us) with made-up data.
 
@@ -55,6 +58,8 @@ It also has a wall mode for an always-on screen, three themes in light and dark,
 git clone https://github.com/CoreXI7/fishbowl
 cd fishbowl
 ```
+
+This gets the compose file and the optional collector. The dashboard itself runs from the image.
 
 ### 2. Create the data folder and the `.env` file
 
@@ -164,7 +169,8 @@ Every setting is explained in [docs/SETTINGS.md](docs/SETTINGS.md).
 ```sh
 cd fishbowl
 git pull
-docker compose up -d --force-recreate
+docker compose pull
+docker compose up -d
 ```
 
 If you use the collector, update it too: `sudo bash collector/install.sh`.
