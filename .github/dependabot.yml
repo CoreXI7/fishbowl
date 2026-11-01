@@ -1,0 +1,11 @@
+# Proposes updates as pull requests (CI runs on each): the pinned Actions monthly, the image's Python base weekly.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
