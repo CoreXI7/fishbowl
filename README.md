@@ -158,11 +158,32 @@ It shows exactly what will change and asks first.
 - **Settings:** click ⚙ (or go to `/settings`). Everything from your services to themes to your account is set there,
   and changes apply right away.
 - **Two-step sign-in:** go to ⚙ → **Account** to add an authenticator app. Keep the recovery codes it gives you.
-- **Wall mode:** press `W` for a full-screen view made for a TV or spare monitor. `T` changes the theme.
 - **Locked out or forgot your password:** run `docker exec -it dash python /app/auth.py reset` on the server. It
   removes the account (your settings stay) and prints a new setup code.
 
 Every setting is explained in [docs/SETTINGS.md](docs/SETTINGS.md).
+
+### Wall mode and buttons
+
+![Wall mode, dark](docs/screenshot-wall-dark.png)
+
+Wall mode is made for a TV or spare monitor that stays on: everything fits one 1920×1080 screen, it stays calm while all
+is well and stands out when something needs you. Turn it on with `W`, the 🖥 button, or `?wall` at the end of the address
+(for a screen that opens the dashboard at startup). The cursor and buttons hide after 3 seconds without movement, and
+the page reloads itself every 6 hours to keep the browser light.
+
+| Key | Button | What it does |
+|---|---|---|
+| `W` | 🖥 (top right) | Wall mode on or off |
+| `T` | 🎨 | Next theme, remembered by this browser |
+| `M` | 🫧 | Background animation on or off, remembered by this browser |
+| | ⚙ | Settings (`Ctrl+S` saves there) |
+| | **live** on Temperatures | Live view: temperatures, power, clocks, disks and every CPU thread, updated every second |
+| | **⚡ breakdown** on System | What's using the CPU and memory, by container and program |
+| | A title in Security & backups | The details behind that check |
+| | The Plex tile | Gives Now Playing the whole row |
+| | **Downloading** / **Seeding** | Switches the torrent list |
+| `Esc` | ✕ | Closes the live view, the breakdown or a details view |
 
 ## Updating
 
