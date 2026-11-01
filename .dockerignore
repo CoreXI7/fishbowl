@@ -1,0 +1,10 @@
+# Only the app and the example config go into the image: never your .env, data/ or local files
+*
+!app/
+!config.example.toml
+**/__pycache__
+app/static/*
+!app/static/favicon.svg
+!app/static/favicon-miku.svg
+!app/static/favicon-gura.svg
+!app/static/fonts/
