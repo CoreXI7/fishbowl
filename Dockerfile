@@ -1,7 +1,7 @@
 # Fishbowl's dashboard as a ready-made image (ghcr.io/corexi7/fishbowl). The optional collector isn't in it: it runs
 # as root on the host (sudo bash collector/install.sh). Run it with the hardening in docker-compose.yml.
 # Same base as before, pinned by digest so a rebuild never changes it silently (Dependabot proposes updates).
-FROM python:3.12-alpine@sha256:e6dae589c1c05976188fd3bd019afd091445fc533ed2ea29001beddc7368a9c8
+FROM python:3.15-alpine@sha256:20a82dbc2783112ddb91d1534603f802d222a3e63e593cd002eb2ac534e70211
 ENV PYTHONDONTWRITEBYTECODE=1
 # Owned by root, so the app (uid 1000) can't change its own code
 COPY app/ /app/
