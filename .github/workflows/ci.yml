@@ -1,0 +1,52 @@
+# Runs the tests and checks that the image builds and starts, on every push to main and every pull request.
+# release.yml runs this too before it publishes an image.
+# Actions are pinned to full commit hashes (the comment says which release); Dependabot proposes updates.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Run the tests (stdlib only; page tests use the runner's Chrome)
+        run: python3 -m unittest discover -s tests
+
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build -t fishbowl:ci .
+      - name: Start it hardened, in demo mode and with a real data folder, and wait for /healthz
+        run: |
+          mkdir data && sudo chown 1000:1000 data
+          hardening="--network none --read-only --cap-drop ALL --security-opt no-new-privileges:true"
+          docker run -d --name demo $hardening --user 65534:65534 --tmpfs /tmp:size=4m,mode=1777 -e DEMO=1 -e DATA_DIR=/tmp/demo fishbowl:ci
+          docker run -d --name real $hardening -e TRUSTED_PROXY= -v "$PWD/data:/data" fishbowl:ci
+          for c in demo real; do
+            for i in $(seq 30); do
+              docker exec $c python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3)" 2>/dev/null && break
+              [ "$i" = 30 ] && { echo "$c never answered /healthz"; docker logs $c; exit 1; }
+              sleep 1
+            done
+            echo "$c: healthy"
+          done
+          docker logs real 2>&1 | grep -q '^SETUP CODE' || { echo "no setup code in the log"; docker logs real; exit 1; }
