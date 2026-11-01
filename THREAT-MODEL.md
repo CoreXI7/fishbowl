@@ -4,6 +4,28 @@ What Fishbowl protects, who might attack it, where the trust boundaries are, and
 Written for the reference setup (a home server behind a reverse proxy, signed in with Fishbowl's own sign-in or the
 proxy's SSO), but the reasoning applies to any install.
 
+## In short
+
+Fishbowl has two parts. The **dashboard** is a web app with no special permissions: it sits behind your reverse proxy
+and its own sign-in (or the proxy's SSO), and answers only the proxy. The **collector** runs as root, reads the system
+and writes JSON files for the dashboard; it has no network access at all.
+
+The main risks, and what stops each one:
+
+- **Someone on the internet tries to sign in.** A password plus an authenticator code, with waits after wrong guesses
+  (or your proxy's SSO, with `AUTH=proxy`).
+- **A hacked service feeds the dashboard bad text** (torrent names, titles, log lines). Everything shown is escaped,
+  and the page runs no script except its own files.
+- **A hacked service answers with a trap** (a redirect, a huge reply). Redirects to another host are never followed,
+  and every reply has a size cap.
+- **Someone takes over the dashboard.** They see what it shows and can change its settings, but can't control the
+  server: the dashboard can only ask the collector for a few safe things, and anything risky (paths, patterns) waits
+  until you approve it with `sudo`.
+- **Something on the server sets a trap for the collector** (a link, a device file, a huge log line). The collector
+  checks each file before opening it, follows links only in system folders, and caps what it reads.
+
+Known gaps are under [Still open](#still-open). The rest of this file is the detailed reference.
+
 ## What's worth protecting
 
 | Asset | Where it lives | Why it matters |
