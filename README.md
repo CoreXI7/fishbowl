@@ -220,24 +220,14 @@ your server.
 
 ### How it was tested
 
-Before version 1.0, Fishbowl went through a security review in four rounds. Each round, a fresh set of reviewers (AI
-agents, each focused on one area: sign-in, web requests, browser attacks, the collector, encryption, fuzzing, and
-more) tried to break it, and every problem they found was fixed before the next round.
+Before 1.0, AI agents reviewed Fishbowl in four rounds, each focused on one area (sign-in, web requests, browser
+attacks, the collector), against test copies behind real reverse proxies, and fuzzed its HTTP API. Every problem they
+found was fixed, and each fix has a test in `tests/` that failed before the fix and passes now (how to run them:
+[TESTING.md](TESTING.md)).
 
-- **40 reviews** in total, run against test copies only, with real reverse proxies (Nginx Proxy Manager, Caddy,
-  HAProxy, Traefik) and real browsers (Chrome, Firefox).
-- **Over 15 million automated attack attempts** (fuzzing).
-- **2 high and about 50 medium issues found, all fixed.** Each fix has an automated test, so the problem can't quietly
-  come back. The last three rounds found no way to get in.
-
-This was an AI-assisted review, not an audit by an outside security company. The full results are in
-[TESTING.md](TESTING.md), and [THREAT-MODEL.md](THREAT-MODEL.md) lists the known limits.
-
-The reviewers' attack scripts aren't in this repository: they were written for throwaway test copies and most no
-longer run against the current code. Instead, every problem they found has an automated test in `tests/` that failed
-before the fix and passes now, so you can check the fixes yourself with `python3 -m unittest discover -s tests`.
-[SECURITY-TESTING.md](SECURITY-TESTING.md#every-finding-of-the-10-audit) lists every finding with the commit that
-fixed it and the test that checks it.
+This was an AI review, not a professional security audit, and AI reviewers can share blind spots with the AI that
+helped write the code. [SECURITY-TESTING.md](SECURITY-TESTING.md#every-finding-of-the-10-audit) lists every finding
+with its fix and test, and [THREAT-MODEL.md](THREAT-MODEL.md) lists the known limits.
 
 Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 
