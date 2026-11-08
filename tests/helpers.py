@@ -3,6 +3,7 @@
 
 Run all tests from the repo root:  python3 -m unittest discover -s tests
 Temporary files go to $TMPDIR (set it to somewhere that isn't /tmp if your host watches /tmp)."""
+import dataclasses
 import importlib.util
 import json
 import os
@@ -29,8 +30,9 @@ def load_app(**env):
               "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER", "LISTEN", "AUTH"):
         os.environ.pop(k, None)
     os.environ.update({**base, **env})
-    for m in ("settings", "demo", "auth"):
-        sys.modules.pop(m, None)
+    for m in ("settings", "demo", "auth", "signin_core", "signin_core.web", "signin_core.auth", "signin_core.verify",
+              "signin_core.qrcodegen", "signin_conf"):
+        sys.modules.pop(m, None)   # (the shared sign-in keeps its state in its own modules: fresh for every app)
     if APP_DIR not in sys.path:
         sys.path.insert(0, APP_DIR)
     _n[0] += 1
@@ -41,6 +43,7 @@ def load_app(**env):
     mod.network_count = lambda: 1   # (a container on one network; the host running the tests may have many)
     if "AUTH" not in env and not mod.DEMO:
         mod.AUTH = "proxy"   # tests of other things skip the sign-in (it has its own: test_auth.py, with AUTH set)
+        mod.web.setup(dataclasses.replace(mod.CONFIG, auth="proxy"))
     return mod
 
 
