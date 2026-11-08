@@ -1322,9 +1322,12 @@ class RoundFour(Base):
             self.app.THROTTLE.ip_ok("127.0.0.1")
             self.app._session_tries.update({k: (v[0], 0) for k, v in self.app._session_tries.items()})   # (skip the waits)
             out.append(call(self.url + "/api/account/password", "POST", {"password": f"wrong-password-{i:02d}", "new": PW + "-2"}, cookie=c)[0])
-        self.assertEqual(out[:10], [403] * 10)
-        self.assertEqual(out[10], 401, "then the browser is signed out")
-        self.assertEqual(call(self.url + "/api/settings", cookie=c)[0], 401)
+            if i == 9:
+                self.assertEqual(call(self.url + "/api/settings", cookie=c)[0], 401, "nothing else works for it either")
+        self.assertEqual(out[:9], [403] * 9)
+        self.assertEqual(out[9], 401, "the 10th wrong try signs the browser out at once")
+        self.assertEqual(out[10:], [401, 401])
+        self.assertEqual(self.app.ACCOUNT.get().get("since", {}).get("settings"), 10, "the warning counts 10 wrong tries, not 11")
         self.assertEqual(self.app.ACCOUNT.get()["failures"], 0, "none of it counts toward the account lock")
 
     def test_a_trusted_device_counts_only_on_its_kind_of_connection(self):
