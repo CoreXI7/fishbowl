@@ -1,13 +1,12 @@
 """The root collector reads approval requests from a folder the dash container (uid 1000) can write to.
 Whatever the dash puts there (a FIFO, a symlink, a huge file) must not stall the collector or make root
 open a file the dash chose."""
-import importlib.machinery
 import os
 import tempfile
 import threading
 import unittest
 
-from helpers import ROOT
+from helpers import ROOT, load_source
 
 COLLECTOR = os.path.join(ROOT, "collector", "homelab-dash-collector.py")
 
@@ -18,7 +17,7 @@ def load_collector():
     with open(conf, "w") as f:
         f.write(f'out_dir = "{tmp}/out"\ndash_uid = {os.getuid()}\n[security]\ncron_watch = true\n')
     os.environ["HOMELAB_DASH_COLLECTOR_CONFIG"] = conf
-    col = importlib.machinery.SourceFileLoader("collector_under_test", COLLECTOR).load_module()
+    col = load_source("collector_under_test", COLLECTOR)
     os.makedirs(col.REQ_DIR, exist_ok=True)
     return col, tmp
 

@@ -96,3 +96,16 @@ class Upstream:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+def load_source(name, path):
+    """Import a .py file as module `name` (what SourceFileLoader.load_module() did; Python 3.15 removed that)."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
