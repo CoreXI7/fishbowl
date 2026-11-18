@@ -61,27 +61,81 @@ function renderGpu(g) {
   ].join(""));
 }
 
+function zfsBlock(p, smart) {
+  const n = v => Number.isFinite(+v) ? +v : 0;   // counters come from zpool output: only ever numbers in the HTML
+  const scls = s => !s || s === "ONLINE" || s === "AVAIL" ? "" : s === "DEGRADED" ? "warn-t" : "crit-t";
+  const pct = p.size ? 100 * (p.alloc || 0) / p.size : 0;
+  const members = (p.vdevs || []).map(v => {
+    const x = v.dev ? smart[v.dev] : null;
+    const temp = x ? `<span class="chip ${tcls(x.temp, ...(/nvme/.test(v.dev) ? [65, 75] : [45, 50]))}">${x.temp != null ? x.temp + "°C" : "–"}</span>` : "";
+    const rwc = n(v.read) > 0 || n(v.write) > 0 || n(v.cksum) > 0
+      ? `<span class="chip warn-t" title="read / write / cksum errors">R ${n(v.read)} · W ${n(v.write)} · C ${n(v.cksum)}</span>` : "";
+    // healthy members stay quiet (just a temperature); only a problem state gets a badge
+    const st = v.state && scls(v.state) ? `<span class="chip ${scls(v.state)}">${esc(v.state)}</span>` : "";
+    const pad = 12 * Math.min(4, Math.max(0, n(v.depth)));
+    const label = v.kind === "class" ? `<span class="md">${esc(v.name || "")}</span>` : esc(v.name || "");
+    return `<div class="s" style="padding-left:${pad}px"${v.note ? ` title="${esc(v.note)}"` : ""}><span>${label}</span><span>${rwc} ${st} ${temp}</span></div>`;
+  }).join("");
+  const vd = p.vdevs || [], top = vd.find(v => v.kind === "group" && n(v.depth) === 0);
+  const ndisk = vd.filter(v => v.kind === "disk" && !vd.slice(0, vd.indexOf(v)).some(c => c.kind === "class" && n(c.depth) === 0)).length;
+  const extra = vd.filter(v => v.kind === "class").map(v => esc(v.name || "")).join(" + ");
+  const kind = ["ZFS pool", top ? esc(String(top.name || "").replace(/-\d+$/, "")) : "", ndisk ? `${ndisk} disk${ndisk > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") + (extra ? ` + ${extra}` : "");
+  const stateChip = p.state ? `<span class="chip ${scls(p.state) || "ok-t"}">${p.state === "ONLINE" ? "✓ " : ""}${esc(p.state)}</span>` : "";
+  return `<div class="drv"><div class="h"><b>${esc(p.name || "")}</b>${stateChip}</div><div class="md">${kind}</div>`
+    + (p.size ? `${meter(pct, 90, 95)}<div class="s"><span>${size(p.alloc || 0)} / ${size(p.size)}</span><span>${p.frag != null ? `frag ${n(p.frag)}%` : ""}</span></div>` : "")
+    + (p.scan ? `<div class="md" style="white-space:normal">${esc(p.scan)}</div>` : "")
+    + (p.stuck ? `<div class="s crit-t">zpool status not responding (pool suspended?)</div>`
+       : p.failed ? `<div class="s warn-t">zpool status failed: state from the kernel only</div>` : "")
+    + (n(p.data_errors) > 0 ? `<div class="s crit-t">${n(p.data_errors)} data errors (zpool status -v)</div>` : "")
+    + members + `</div>`;
+}
+
 function renderDrives(hw) {
-  if (!(hw && hw.disks && hw.disks.length)) {
+  const anyPool = !!(hw && hw.zfs && Array.isArray(hw.zfs.pools) && hw.zfs.pools.length);
+  if (!(hw && hw.disks && hw.disks.length) && !anyPool) {
     setHTML("drv", `<div class="empty">Drive stats need the collector service.</div>`);
     kpi("k-disk", "", "–", "needs the collector");
     return;
   }
-  const smart = hw.smart || {};
+  const smart = hw.smart || {}, disks = hw.disks || [];
   // the totals count data drives only (the system disk would skew "free space"), unless that's all there is
-  const data = hw.disks.filter(d => !d.system && d.total);
-  const pool = data.length ? data : hw.disks.filter(d => d.total);
-  const tot = pool.reduce((a, d) => a + d.total, 0), used = pool.reduce((a, d) => a + d.used, 0);
+  const data = disks.filter(d => !d.system && d.total);
+  const pool = data.length ? data : disks.filter(d => d.total);
+  const isZfs = d => d.zfs && !d.dev;
+  let tot, used;
+  if (pool.some(isZfs)) {
+    // datasets of one pool share its free space: count that once (largest free), each dataset's used once
+    const shared = {};
+    pool.filter(isZfs).forEach(d => { const k = d.pool || d.zfs; shared[k] = Math.max(shared[k] || 0, d.free); });
+    used = pool.reduce((a, d) => a + d.used, 0);
+    tot = used + pool.reduce((a, d) => a + (isZfs(d) ? 0 : d.free), 0) + Object.values(shared).reduce((a, v) => a + v, 0);
+  } else {
+    tot = pool.reduce((a, d) => a + d.total, 0);
+    used = pool.reduce((a, d) => a + d.used, 0);
+  }
   setText("drv-n", `${size(used)} / ${size(tot)}`);
 
-  const smartBad = hw.disks.some(d => d.missing || (smart[d.dev] || {}).passed === false);
-  const full = hw.disks.some(d => d.total && d.used / (d.used + d.free) > .95);
-  const sectors = hw.disks.filter(d => { const x = smart[d.dev] || {}; return x.realloc > 0 || x.pending > 0; }).length;
-  kpi("k-disk", smartBad ? "bad" : full || sectors ? "warn" : "ok", `${size(tot - used)} free`,
-      `${(100 * used / tot).toFixed(0)}% of ${size(tot)}${smartBad ? " · <b>drive problem!</b>" : sectors ? ` · ${sectors} drive${sectors > 1 ? "s" : ""} with bad sectors` : ""}`);
+  const z = hw.zfs && !hw.zfs.error && hw.zfs.pools ? hw.zfs.pools : [];
+  const zerr = hw.zfs && hw.zfs.error ? `<div class="empty">ZFS: could not read pools</div>` : "";
+  const smartBad = disks.some(d => d.missing || (smart[d.dev] || {}).passed === false);
+  const full = disks.some(d => d.total && d.used / (d.used + d.free) > .95);
+  const sectors = disks.filter(d => { const x = smart[d.dev] || {}; return x.realloc > 0 || x.pending > 0; }).length;
+  const stuck = !!(hw.zfs && hw.zfs.stuck);
+  const poolBad = stuck || z.some(p => p.stuck || (p.state !== "ONLINE" && p.state !== "DEGRADED") || p.data_errors > 0);
+  const poolWarn = z.some(p => p.state === "DEGRADED" || (p.vdevs || []).some(v => v.read > 0 || v.write > 0 || v.cksum > 0));
+  const znote = (stuck ? ["<b>ZFS not responding</b>"] : []).concat(
+    z.filter(p => p.state && p.state !== "ONLINE").map(p => `<b>pool ${esc(p.name || "")} ${esc(p.state)}</b>`)).join(" · ");
+  kpi("k-disk", smartBad || poolBad ? "bad" : full || sectors || poolWarn ? "warn" : "ok", `${size(tot - used)} free`,
+      `${znote ? znote + " · " : ""}${(tot ? 100 * used / tot : 0).toFixed(0)}% of ${size(tot)}${smartBad ? " · <b>drive problem!</b>" : sectors ? ` · ${sectors} drive${sectors > 1 ? "s" : ""} with bad sectors` : ""}`);
 
   const drive = d => {
     if (d.missing) return `<div class="drv"><div class="h"><b class="crit-t">${esc(d.name)}</b><span class="chip crit-t">NOT MOUNTED</span></div></div>`;
+    if (isZfs(d)) {
+      const pct = 100 * d.used / (d.used + d.free);   // same % as df
+      return `<div class="drv" title="${esc(d.mount || d.zfs)}"><div class="h"><b>${esc(d.name)}</b></div>
+      <div class="md">ZFS · ${esc(d.zfs)}</div>${meter(pct, 90, 95)}
+      <div class="s"><span>${size(d.used)} / ${size(d.total)}</span><span>${pct.toFixed(0)}% · ${size(d.free)} free</span></div></div>`;
+    }
     const x = smart[d.dev] || {}, pct = 100 * d.used / (d.used + d.free);   // same % as df
     const bad = x.passed === false || x.realloc > 0 || x.pending > 0 || x.uncorrect > 0;
     const health = x.standby ? `<span class="chip">asleep</span>`
@@ -96,6 +150,7 @@ function renderDrives(hw) {
       <div class="md">${esc(x.model || d.model)} · ${esc(d.dev)}</div>${meter(pct, 90, 95)}
       <div class="s"><span>${size(d.used)} / ${size(d.total)}</span><span>${pct.toFixed(0)}% · ${size(d.free)} free</span></div></div>`;
   };
-  setHTML("drv", kvRow(data.length ? "All data drives" : "Total", `${size(tot - used)} free`) + meter(100 * used / tot, 90, 95) + hw.disks.map(drive).join(""));
+  setHTML("drv", kvRow(data.length ? "All data drives" : "Total", `${size(tot - used)} free`) + meter(tot ? 100 * used / tot : 0, 90, 95)
+    + disks.map(drive).join("") + z.map(p => zfsBlock(p, smart)).join("") + zerr);
 }
 

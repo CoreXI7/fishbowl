@@ -128,14 +128,41 @@ def system():
                                              (12, 11.6, "ST12000VN0008"), (20, 6.1, "ST20000NM007D")], 1):
         disks.append({"mount": f"/mnt/disk{i}", "name": f"disk{i}", "dev": f"/dev/sd{'abcd'[i - 1]}", "model": model,
                       "total": size * TB, "used": used * TB, "free": (size - used) * TB})
+    disks.append({"mount": "/tank/media", "name": "media", "zfs": "tank/media", "pool": "tank", "system": False,
+                  "total": 21.8 * TB, "used": 8 * TB, "free": 13.8 * TB})
     smart = {"/dev/nvme0n1": {"temp": 41, "passed": True, "hours": 9100, "realloc": 0, "wear": 3},
              "/dev/sda": {"temp": 36, "passed": True, "hours": 21000, "realloc": 0, "pending": 0},
              "/dev/sdb": {"temp": 37, "passed": True, "hours": 21000, "realloc": 0, "pending": 0},
              "/dev/sdc": {"temp": 39, "passed": True, "hours": 33000, "realloc": 8, "pending": 0},
-             "/dev/sdd": {"standby": True}}
+             "/dev/sdd": {"standby": True},
+             "/dev/sde": {"temp": 34, "passed": True, "hours": 27000, "realloc": 0, "pending": 0},
+             "/dev/sdf": {"temp": 35, "passed": True, "hours": 27000, "realloc": 0, "pending": 0},
+             "/dev/sdg": {"temp": 36, "passed": True, "hours": 27000, "realloc": 0, "pending": 0},
+             "/dev/sdh": {"temp": 35, "passed": True, "hours": 27000, "realloc": 0, "pending": 0}}
+    zfs = {"pools": [{
+        "name": "tank", "state": "ONLINE",
+        "size": 21.8 * TB, "alloc": 8 * TB, "free": 13.8 * TB, "frag": 3, "cap": 37,
+        "scan": "scrub repaired 0B in 08:12:43 with 0 errors on Sun Nov  9 08:36:44 2026",
+        "errors": "No known data errors", "data_errors": 0,
+        "vdevs": [
+            {"name": "raidz1-0", "depth": 0, "state": "ONLINE", "read": 0, "write": 0, "cksum": 0,
+             "kind": "group", "dev": None, "note": None},
+            {"name": "sde", "depth": 1, "state": "ONLINE", "read": 0, "write": 0, "cksum": 0,
+             "kind": "disk", "dev": "/dev/sde", "note": None},
+            {"name": "sdf", "depth": 1, "state": "ONLINE", "read": 0, "write": 0, "cksum": 0,
+             "kind": "disk", "dev": "/dev/sdf", "note": None},
+            {"name": "sdg", "depth": 1, "state": "ONLINE", "read": 0, "write": 0, "cksum": 0,
+             "kind": "disk", "dev": "/dev/sdg", "note": None},
+            {"name": "sdh", "depth": 1, "state": "ONLINE", "read": 0, "write": 0, "cksum": 0,
+             "kind": "disk", "dev": "/dev/sdh", "note": None},
+            {"name": "cache", "depth": 0, "state": None, "read": None, "write": None, "cksum": None,
+             "kind": "class", "dev": None, "note": None},
+            {"name": "nvme1n1p1", "depth": 1, "state": "ONLINE", "read": 0, "write": 0, "cksum": 0,
+             "kind": "disk", "dev": "/dev/nvme1n1", "note": None},
+        ]}]}
     now = int(time.time())
     hw = {
-        "updated": now, "stale": False, "disks": disks, "smart": smart,
+        "updated": now, "stale": False, "disks": disks, "smart": smart, "zfs": zfs,
         "gpu": {"name": "NVIDIA GeForce GTX 1660", "temp": 52, "util": round(wobble(18, 8)), "enc": round(wobble(14, 6)),
                 "dec": round(wobble(10, 5)), "mem_used": 640, "mem_total": 6144, "power": 38, "fan": 35, "sessions": 1},
         "containers": {"running": 31, "total": 33},

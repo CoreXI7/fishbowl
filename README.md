@@ -2,202 +2,121 @@
 
 [![CI](https://github.com/CoreXI7/fishbowl/actions/workflows/ci.yml/badge.svg)](https://github.com/CoreXI7/fishbowl/actions/workflows/ci.yml)
 
-Your whole home server in one glanceable page.
+Your whole home server on one page: services, Plex, downloads, drives and security at a glance.
 
 | Light | Dark |
 |---|---|
 | ![Fishbowl, light](docs/screenshot-wall-light.png) | ![Fishbowl, dark](docs/screenshot-wall-dark.png) |
 
-Fishbowl is a dashboard for a home server. Open it in a browser (or leave it on a spare screen) and you can see at a
-glance whether everything is running: your services, who is watching Plex, new media requests, downloads, temperatures,
-drives, and recent security events.
-
-It's written in plain Python with no extra packages, and runs in Docker from a ready-made image
-(`ghcr.io/corexi7/fishbowl`, for amd64 and arm64).
+Plain Python, no extra packages, one Docker image (`ghcr.io/corexi7/fishbowl`, amd64 and arm64).
 
 **Try it first:** there's a [live demo](https://demo.vicy.us) with made-up data.
 
-## Contents
+## Features
 
-- [What it shows](#what-it-shows)
-- [What you need](#what-you-need)
-- [Install](#install)
-- [Using it](#using-it)
-- [Updating](#updating)
-- [Screenshots](#screenshots)
-- [Security](#security) and [how it was tested](#how-it-was-tested)
-- [Contributing](#contributing)
-- [License](#license)
+- **Services:** up or down, found on their own from Nginx Proxy Manager or added by hand
+- **Plex:** who is watching what (via Tautulli)
+- **Requests:** new Seerr requests, with Approve and Decline
+- **Downloads:** qBittorrent progress and speeds, and a warning if your real IP shows instead of your VPN's
+- **System:** CPU, memory, network, temperatures and NVIDIA GPU, with a live view that updates every second
+- **Drives:** space, SMART health and temperatures, and ZFS pools (state, per-disk errors, scrub)
+- **Security:** blocked logins, SSH logins from new places, changed cron jobs, last backup
+- **Wall mode** for an always-on screen, four themes with light and dark modes, built-in sign-in with two-step codes
 
-## What it shows
+Drives, GPU and security need the optional [collector](#the-collector).
 
-- **Services:** whether each of your web services is up. If you use Nginx Proxy Manager, Fishbowl finds them on its
-  own; otherwise you add them on the settings page.
-- **Plex:** who is watching what right now (needs Tautulli).
-- **Requests:** new movie and TV requests from Seerr, with Approve and Decline buttons.
-- **Downloads:** qBittorrent's progress and speeds, plus a warning if your real IP address is showing instead of your
-  VPN's.
-- **System:** CPU, memory, network and temperatures, with a live view that updates every second.
-- **GPU:** usage and video encoding for NVIDIA cards. Other GPUs aren't supported yet.
-- **Drives, security and backups:** disk space and health, blocked login attempts, SSH logins from new places, changed
-  scheduled jobs, and whether your last backup ran. These need the optional [collector](#optional-install-the-collector).
+## Security
 
-It also has a wall mode for an always-on screen, three themes in light and dark, and its own sign-in.
+A dashboard sees a lot about your server, so security came first, not last. The design goal: even someone who fully
+breaks into the dashboard gets as little as possible.
 
-## What you need
+### How it's built
 
-- A Linux server with Docker and Docker Compose
-- A reverse proxy that gives the dashboard an HTTPS address (any one you already use is fine)
-- Optional, for the collector: Python 3.11 or newer, systemd and `smartctl` on the server
+- **Root and the network never meet.** The dashboard is reachable from the network but has no special permissions.
+  The collector runs as root but never touches the network, in the strictest systemd sandbox it still works under.
+  It only writes files; the dashboard only reads them.
+- **The container is locked down:** normal user, read-only file system, no capabilities, 256 MB memory cap.
+- **Root never acts on a web request by itself.** A settings change that would make root read a new file waits until
+  you approve it on the server (`sudo homelab-dash-collector --apply`), which shows exactly what changes.
+
+### Signing in
+
+- **Nothing is visible without signing in**, either with Fishbowl's own sign-in or your existing login page
+  (Authelia, Authentik, …) with `AUTH: proxy`.
+- **Strong passwords:** at least 15 characters, checked against a list of common ones.
+- **Two-step codes** from an authenticator app, with one-time recovery codes.
+- **Guessing gets slow:** every wrong try makes the next one wait longer, and if someone gets your password right but
+  not your code, you're warned the next time you sign in.
+
+### Talking to the network and other apps
+
+- **Only your reverse proxy can connect**, and changes are only accepted from the dashboard's own page.
+- **API keys never reach the browser.** Changing an app's address means entering its key again, so a saved key can't
+  be redirected.
+- **Everything from other apps is untrusted:** qBittorrent, Seerr, Tautulli and `zpool` output is checked, size- and
+  time-limited, and escaped, so a compromised app can't take over the page or crash the dashboard.
+
+### How it was tested
+
+Most of the code was written with AI (Claude Code) and designed, directed and tested by a person. Because AI-written
+code deserves extra suspicion, before 1.0 it went through four rounds of focused AI security review (sign-in, web
+requests, browser attacks, the collector) against test copies behind real reverse proxies, plus HTTP fuzzing. Every
+finding was fixed with a test that failed before the fix; [the full list](SECURITY-TESTING.md#every-finding-of-the-10-audit)
+is public. 370+ tests run in CI.
+
+This is not a professional audit, and AI reviewers can share blind spots with the AI that wrote the code: see
+[THREAT-MODEL.md](THREAT-MODEL.md) for the known limits. Found a problem? Report it privately ([SECURITY.md](SECURITY.md)).
 
 ## Install
 
-### 1. Download Fishbowl
+You need Linux with Docker Compose and a reverse proxy that gives the dashboard an HTTPS address.
 
 ```sh
-git clone https://github.com/CoreXI7/fishbowl
-cd fishbowl
+git clone https://github.com/CoreXI7/fishbowl && cd fishbowl
+mkdir data && sudo chown 1000:1000 data
+cp .env.example .env && chmod 600 .env
 ```
 
-This gets the compose file and the optional collector. The dashboard itself runs from the image.
-
-### 2. Create the data folder and the `.env` file
-
-Fishbowl saves its settings in `data/`. The `.env` file can hold your API keys, but it can stay empty, since you can
-also enter keys on the settings page later.
-
-```sh
-mkdir data
-sudo chown 1000:1000 data
-cp .env.example .env
-chmod 600 .env
-```
-
-### 3. Edit `docker-compose.yml`
-
-Open `docker-compose.yml` and change these lines to match your server:
-
-- `ORIGIN`: the address you'll open the dashboard at, for example `https://dash.example.com`
-- `TRUSTED_PROXY`: the container name of your reverse proxy (it's set to `nginx` by default)
-- `networks`: the Docker network your reverse proxy is on (`reverse_proxy` by default)
-- The `proxy_host` volume: the path to Nginx Proxy Manager's `data/nginx/proxy_host` folder. Delete this line if you
-  don't use Nginx Proxy Manager.
-
-### 4. Start it
+Set `ORIGIN`, `TRUSTED_PROXY` and the proxy network in `docker-compose.yml`, then:
 
 ```sh
 docker compose up -d
-```
-
-### 5. Connect your reverse proxy
-
-In your reverse proxy, send your chosen address (for example `dash.example.com`) to `dash`, port `8000`.
-
-Your proxy also needs to pass on each visitor's real IP address, so Fishbowl can tell visitors apart. The exact lines
-for each proxy are in [docs/SETTINGS.md](docs/SETTINGS.md#signing-in-auth-login-the-default). The settings page will
-remind you if this is missing.
-
-### 6. Create your account
-
-Open your dashboard's address. The first time, it asks for a one-time setup code. Get it from the container's log:
-
-```sh
 docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1
 ```
 
-Then choose a name and a password of at least 15 characters (a few random words work well).
+Point your reverse proxy at `dash:8000`, open the address, enter the setup code and create your account. The
+**Setup** page under ⚙ checks the rest of your install. Step by step, with every option: [docs/INSTALL.md](docs/INSTALL.md).
 
-Already have a login page in front of your services, like Authelia or Authentik? Then you can turn Fishbowl's own
-sign-in off: add `AUTH: proxy` under `environment:` in `docker-compose.yml` and run `docker compose up -d` again.
+### The collector
 
-### 7. Finish setup in the browser
-
-Click the **⚙** button and open **Setup**. It checks your install and tells you how to fix anything that's missing.
-Then connect your apps under **Integrations**: qBittorrent, Seerr and Tautulli each have a **Test** button.
-
-### Optional: install the collector
-
-The collector is a small helper that runs directly on your server, outside Docker. It reads things the dashboard
-can't see from inside its container: drives, the GPU, power use, and security logs.
+Some data can only be read as root (SMART, firewall, SSH log, cron, backup logs). Instead of giving the dashboard
+those powers, a small root service on the host reads them and writes files the dashboard mounts read-only.
 
 ```sh
 sudo bash collector/install.sh
-sudo nano /etc/homelab-dash/collector.toml
-sudo systemctl restart homelab-dash-collector
 ```
 
-In `collector.toml`, list your drives and, if you use them, your fail2ban jail and backup log. To remove the
-collector: `sudo bash collector/install.sh --uninstall`.
-
-#### How the collector works
-
-Some of what Fishbowl shows can only be read as root: SMART data from your drives, the firewall and fail2ban, the
-SSH login log, scheduled jobs, and backup logs. Instead of giving the dashboard those powers, a separate program
-does that part:
-
-1. **It runs on the host as a systemd service,** as root, once every few seconds.
-2. **It writes what it found to files** in `/var/lib/homelab-dash/`.
-3. **The dashboard only reads those files.** They're mounted into its container read-only.
-
-The collector never connects to the network. The installer tests it under three systemd sandboxes and keeps the
-strictest one it still works under: no network at all, a read-only system apart from its own folder, and only the
-root permissions it needs.
-
-You can change most of its settings on the dashboard's settings page. Simple switches, like which drives to show,
-apply by themselves. Anything that would make root read a file or run a search pattern, like a new log file to
-watch, waits until you approve it on the server:
-
-```sh
-sudo homelab-dash-collector --apply
-```
-
-It shows exactly what will change and asks first.
-
-## Using it
-
-- **Settings:** click ⚙ (or go to `/settings`). Everything from your services to themes to your account is set there,
-  and changes apply right away.
-- **Two-step sign-in:** go to ⚙ → **Account** to add an authenticator app. Keep the recovery codes it gives you.
-- **Locked out or forgot your password:** run `docker exec -it dash python /app/auth.py reset` on the server. It
-  removes the account (your settings stay) and prints a new setup code.
-
-Every setting is explained in [docs/SETTINGS.md](docs/SETTINGS.md).
-
-### Wall mode and buttons
+## Wall mode
 
 ![Wall mode, dark](docs/screenshot-wall-dark.png)
 
-Wall mode is made for a TV or spare monitor that stays on: everything fits one 1920×1080 screen, it stays calm while all
-is well and stands out when something needs you. Turn it on with `W`, the 🖥 button, or `?wall` at the end of the address
-(for a screen that opens the dashboard at startup). The cursor and buttons hide after 3 seconds without movement, and
-the page reloads itself every 6 hours to keep the browser light.
+Made for a TV or spare monitor: everything fits one 1920×1080 screen, calm while all is well, loud when something
+needs you. Press `W`, click 🖥, or add `?wall` to the address. `T` switches theme, `M` turns the background animation
+on or off.
 
-| Key | Button | What it does |
+## Themes and dark mode
+
+Four themes, each with its own colours, tab icon and greeting. Bubbles, Miku and Gura have a light and a dark version
+and follow your device's light/dark setting on their own; Neon is always dark. Pick a theme in ⚙ (it becomes the
+default for every browser) or cycle with `T` (remembered by that browser only).
+Each theme can also have your own mascot picture, tab icon and lines: upload them in ⚙ under Themes.
+
+| Theme | Light | Dark |
 |---|---|---|
-| `W` | 🖥 (top right) | Wall mode on or off |
-| `T` | 🎨 | Next theme, remembered by this browser |
-| `M` | 🫧 | Background animation on or off, remembered by this browser |
-| | ⚙ | Settings (`Ctrl+S` saves there) |
-| | **live** on Temperatures | Live view: temperatures, power, clocks, disks and every CPU thread, updated every second |
-| | **⚡ breakdown** on System | What's using the CPU and memory, by container and program |
-| | A title in Security & backups | The details behind that check |
-| | The Plex tile | Gives Now Playing the whole row |
-| | **Downloading** / **Seeding** | Switches the torrent list |
-| `Esc` | ✕ | Closes the live view, the breakdown or a details view |
-
-## Updating
-
-```sh
-cd fishbowl
-git pull
-docker compose pull
-docker compose up -d
-```
-
-If you use the collector, update it too: `sudo bash collector/install.sh`.
-
-Tip: if you changed `docker-compose.yml`, `git pull` may refuse to update it. Putting your changes in a file called
-`docker-compose.override.yml` instead avoids that.
+| **Bubbles** (default) | ![Bubbles, light](docs/screenshot-wall-light.png) | ![Bubbles, dark](docs/screenshot-wall-dark.png) |
+| **Miku** | ![Miku, light](docs/screenshot-miku-light.png) | ![Miku, dark](docs/screenshot-miku.png) |
+| **Gura** | ![Gura, light](docs/screenshot-gura.png) | ![Gura, dark](docs/screenshot-gura-dark.png) |
+| **Neon** | (always dark) | ![Neon](docs/screenshot-neon.png) |
 
 ## Screenshots
 
@@ -209,64 +128,24 @@ All screenshots use the demo's made-up data.
 | ![Setup checklist](docs/screenshot-setup.png) Setup checklist | ![Sign-in](docs/screenshot-signin.png) Sign-in |
 | ![SSH logins](docs/screenshot-security.png) Security: SSH logins | ![Backups](docs/screenshot-backups.png) Security: backups |
 | ![Live view](docs/screenshot-live.png) Live view | ![Breakdown](docs/screenshot-breakdown.png) What's using the CPU |
-| ![Gura theme](docs/screenshot-gura.png) Gura theme | ![Gura theme, dark](docs/screenshot-gura-dark.png) Gura theme, dark |
-| ![Miku theme](docs/screenshot-miku.png) Miku theme | ![Account](docs/screenshot-account.png) Account settings |
+| ![Account](docs/screenshot-account.png) Account settings | |
 
-## Security
+## Updating
 
-A dashboard like this sees a lot about your server, so it was built to be hard to misuse.
+```sh
+git pull && docker compose pull && docker compose up -d
+sudo bash collector/install.sh    # if you use the collector
+```
 
-**Signing in**
+## More
 
-- Nobody can see or change anything without signing in, either with Fishbowl's own sign-in or your existing login
-  page (`AUTH: proxy`).
-- Passwords must be at least 15 characters and are checked against a list of common passwords. Length is what
-  protects a password if a copy of its stored form ever leaks.
-- Two-step sign-in with an authenticator app is built in, with one-time recovery codes.
-- Repeated wrong guesses make everyone wait longer between tries. If someone types your correct password but not
-  your two-step code, you're warned the next time you sign in.
-
-**The dashboard**
-
-- Only your reverse proxy can connect to it (`TRUSTED_PROXY`), and changes are only accepted from the dashboard's own
-  page, so other websites can't act on your behalf.
-- Your API keys stay on the server and are never sent to the browser. Changing an app's address means entering its
-  key again, so nobody can send your saved key somewhere else.
-- Everything that comes from qBittorrent, Seerr or Tautulli is treated as untrusted: checked, size-limited and
-  time-limited, so a compromised app can't take over the page or crash the dashboard.
-- Connections that carry an API key or password (qBittorrent, Seerr, Tautulli) check HTTPS certificates normally.
-  The up/down checks and icon downloads accept self-signed certificates, since most home services use them; they
-  send no keys or passwords, don't follow redirects to other hosts, and only keep plain images. Details:
-  [THREAT-MODEL.md](THREAT-MODEL.md#outbound-requests-certificates-redirects-and-whats-sent).
-- The container runs as a normal user, with a read-only file system and no extra permissions, and is limited to
-  256 MB of memory.
-
-**Kept apart:** the dashboard, which is reachable from the network, has no special permissions. The collector, which
-runs as root, can't be reached from the network at all. So someone who breaks into the dashboard still can't control
-your server.
-
-### How it was tested
-
-Before 1.0, AI agents reviewed Fishbowl in four rounds, each focused on one area (sign-in, web requests, browser
-attacks, the collector), against test copies behind real reverse proxies, and fuzzed its HTTP API. Every problem they
-found was fixed, and each fix has a test in `tests/` that failed before the fix and passes now (how to run them:
-[TESTING.md](TESTING.md)).
-
-This was an AI review, not a professional security audit, and AI reviewers can share blind spots with the AI that
-helped write the code. [SECURITY-TESTING.md](SECURITY-TESTING.md#every-finding-of-the-10-audit) lists every finding
-with its fix and test, and [THREAT-MODEL.md](THREAT-MODEL.md) lists the known limits.
-
-Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
+- [docs/INSTALL.md](docs/INSTALL.md): full install, the collector, reverse proxy headers
+- [docs/SETTINGS.md](docs/SETTINGS.md): every setting
+- [Architecture](ARCHITECTURE.md) · [Testing](TESTING.md)
 
 ## Contributing
 
-Bug reports and pull requests are welcome. Before sending a change, run the tests:
-
-```sh
-python3 -m unittest discover -s tests
-```
-
-[ARCHITECTURE.md](ARCHITECTURE.md) explains how the code is laid out.
+Issues and pull requests are welcome. Run `python3 -m unittest discover -s tests` before sending a change.
 
 ## License
 
