@@ -53,6 +53,25 @@ class QbitSync(unittest.TestCase):
         stored = next(iter(self.app.qb.state.values()))
         self.assertNotIn("magnet_uri", stored)
 
+    def test_all_time_totals_merge_and_reset(self):
+        """The header's all-time totals come from server_state, which later updates send only when they change."""
+        self.answers = [
+            (200, {}, {"rid": 1, "full_update": True, "torrents": {"a": t("A")},
+                       "server_state": {"alltime_ul": 5_000_000, "alltime_dl": 900, "up_info_data": 10}}),
+            (200, {}, {"rid": 2, "server_state": {"alltime_ul": 5_000_100}}),          # alltime_dl unchanged: not sent
+            (200, {}, {"rid": 3, "server_state": {"alltime_ul": "<b>x</b>"}}),         # junk is a number, never text
+            (200, {}, {"rid": 1, "full_update": True, "torrents": {"a": t("A")}}),    # restarted, no server_state yet
+        ]
+        q = self.app.qbit()
+        self.assertEqual((q["up_alltime"], q["dl_alltime"]), (5_000_000, 900))
+        self.assertNotIn("up_info_data", self.app.qb.alltime)
+        q = self.app.qbit()
+        self.assertEqual((q["up_alltime"], q["dl_alltime"]), (5_000_100, 900))
+        q = self.app.qbit()
+        self.assertIsInstance(q["up_alltime"], (int, float))
+        q = self.app.qbit()
+        self.assertEqual((q["up_alltime"], q["dl_alltime"]), (None, None))   # page falls back to "this session"
+
 
 if __name__ == "__main__":
     unittest.main()

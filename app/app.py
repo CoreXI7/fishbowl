@@ -860,6 +860,7 @@ class Qbit:
         self.lock = threading.Lock()
         self.sync_lock = threading.Lock()
         self.rid, self.state = 0, {}        # sync/maindata position + hash -> the torrent fields the page shows
+        self.alltime = {}                   # server_state's all-time totals (alltime_ul / alltime_dl), merged like torrents
 
     def login(self):
         user, pw = QBIT["secrets"]
@@ -891,7 +892,10 @@ class Qbit:
             if not isinstance(d, dict):
                 raise ValueError("unexpected answer from qBittorrent's sync API")
             if d.get("full_update") or not self.rid:
-                self.state = {}
+                self.state, self.alltime = {}, {}
+            server = d.get("server_state")
+            if isinstance(server, dict):            # (later updates carry only the fields that changed)
+                self.alltime.update((k, num(server[k])) for k in ("alltime_ul", "alltime_dl") if k in server)
             for h, fields in (d.get("torrents") or {}).items():
                 if isinstance(fields, dict) and len(h) <= 64:   # typed and clipped as stored (ids too): the map stays small
                     self.state.setdefault(h, {}).update((k, text(v) if k in SLIM_TEXT else num(v))
@@ -932,7 +936,8 @@ def qbit():
         "vpn_check": bool(HOME_IP),
         "vpn_leak": bool(HOME_IP and ext == HOME_IP),
         "dl_speed": num(t.get("dl_info_speed")), "up_speed": num(t.get("up_info_speed")),
-        "dl_total": num(t.get("dl_info_data")), "up_total": num(t.get("up_info_data")),
+        "dl_total": num(t.get("dl_info_data")), "up_total": num(t.get("up_info_data")),   # this qBittorrent session
+        "dl_alltime": qb.alltime.get("alltime_dl"), "up_alltime": qb.alltime.get("alltime_ul"),   # None: not reported
         "total": len(slim),
         "downloading": downloading, "seeding": seeding[:30], "seeding_active": len(seeding),
     }

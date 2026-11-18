@@ -26,7 +26,11 @@ async function loadQbit() {
     setHTML("seed", q.seeding.length ? q.seeding.map(t => torRow(t, false)).join("") : `<div class="empty">No active uploads right now.</div>`);
     setText("t-dl", `Downloading (${q.downloading.length})`);
     setText("t-seed", `Seeding (${q.seeding_active})`);
-    setText("tor-n", `· ${q.total} torrents · lifetime ↑ ${size(q.up_total)} ↓ ${size(q.dl_total)}`);
+    // all-time totals when qBittorrent reports them (this session's in the tooltip), else this session's, labelled so
+    const all = q.up_alltime != null && q.dl_alltime != null;
+    setText("tor-n", all ? `· ${q.total} torrents · all time ↑ ${size(q.up_alltime)} ↓ ${size(q.dl_alltime)}`
+                         : `· ${q.total} torrents · this session ↑ ${size(q.up_total)} ↓ ${size(q.dl_total)}`);
+    $("tor-n").title = all ? `this qBittorrent session: ↑ ${size(q.up_total)} ↓ ${size(q.dl_total)}` : "";
     // VPN check: qbit's external IP equal to your home IP means it's NOT going through the VPN
     const connOk = q.connection !== "disconnected" && !q.vpn_leak && q.external_ip;
     const mbs = b => (b / 1048576).toFixed(b >= 10485760 ? 0 : 1);

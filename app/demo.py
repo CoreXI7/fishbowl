@@ -62,7 +62,7 @@ def qbit():
                                      ("Spring.2019.1080p.mkv", 3e5, 9e8, 1, 1.4, "radarr")]]
     return {"connection": "connected", "external_ip": "203.0.113.42", "vpn_check": True, "vpn_leak": False,
             "dl_speed": sum(t["dlspeed"] for t in dl), "up_speed": sum(t["upspeed"] for t in seed),
-            "dl_total": 2.9e12, "up_total": 11.4e12, "total": 412,
+            "dl_total": 41.7e9, "up_total": 318.2e9, "dl_alltime": 2.9e12, "up_alltime": 11.4e12, "total": 412,
             "downloading": dl, "seeding": seed, "seeding_active": len(seed)}
 
 
