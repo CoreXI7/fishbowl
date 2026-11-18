@@ -31,7 +31,7 @@ class Fonts(unittest.TestCase):
     def test_font_files_served(self):
         css = urllib.request.urlopen(self.url + "/fonts.css").read().decode()
         files = re.findall(r"url\((/static/fonts/[\w.-]+\.woff2)\)", css)
-        self.assertEqual(len(set(files)), 5)
+        self.assertEqual(len(set(files)), 7)
         for f in files:
             r = urllib.request.urlopen(self.url + f)
             self.assertEqual(r.headers["Content-Type"], "font/woff2")

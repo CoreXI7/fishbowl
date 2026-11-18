@@ -63,6 +63,13 @@ THEMES = {
                         "I'm a smart shark. Look at this uptime 🦈", "Low on shrimp, never on uptime 🦐",
                         "Sharks never stop swimming. Neither does Plex 🌊", "chomp chomp, logs eaten 🦷",
                         "Blub blub… that means \"all good\" in shark 🫧"]},
+    "neon": {"label": "Neon", "click_emoji": "⚡💜✨💾", "favicon": "/static/favicon-neon.svg",
+             "tagline": "all systems nominal", "tagline_down": "exit code 1: something is down",
+             "greeting": "session started. welcome back ⚡",
+             "quotes": ["uptime: yes", "$ ping everything → all replies in", "0 errors, 0 warnings, 1 happy server",
+                        "ssh, but make it pretty", "all containers present and accounted for", "load average: chill",
+                        "sudo make me a sandwich 🥪", "there is no place like 127.0.0.1", "cron ran. nobody noticed. perfect.",
+                        "rm -rf worries/"]},
 }
 THEME_FIELDS = ("mascot", "mascot_credit", "greeting", "quotes", "click_emoji", "tagline", "tagline_down", "favicon")
 

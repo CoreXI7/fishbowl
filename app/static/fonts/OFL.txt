@@ -1,9 +1,11 @@
-The fonts in this folder are Latin subsets, as served by Google Fonts, of three fonts under the SIL Open Font
+The fonts in this folder are Latin subsets, as served by Google Fonts, of five fonts under the SIL Open Font
 License 1.1 (full text below):
 
 - fredoka-latin.woff2: Fredoka. Copyright 2016 The Fredoka Project Authors (https://github.com/hafontia/Fredoka-One)
 - mplus-rounded-1c-*-latin.woff2: M PLUS Rounded 1c (Coji Morishita, M+ Fonts Project). Copyright 2016 The Rounded M+ Project Authors.
 - orbitron-latin.woff2: Orbitron. Copyright 2018 The Orbitron Project Authors (https://github.com/theleagueof/orbitron), with Reserved Font Name: "Orbitron"
+- space-grotesk-latin.woff2: Space Grotesk. Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk)
+- jetbrains-mono-latin.woff2: JetBrains Mono. Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
