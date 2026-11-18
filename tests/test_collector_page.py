@@ -2,7 +2,6 @@
 into req/collector-settings.json; root must only ever take from it what can't make root read a file, run a pattern
 or a command the dash chose. Those wait for a person (`--apply`)."""
 import contextlib
-import importlib.machinery
 import io
 import json
 import os
@@ -11,7 +10,7 @@ import threading
 import tomllib
 import unittest
 
-from helpers import ROOT
+from helpers import ROOT, load_source
 
 COLLECTOR = os.path.join(ROOT, "collector", "homelab-dash-collector.py")
 DET = {"mounts": ["/", "/mnt/disk1", "/media/me/big disk"], "ifaces": ["eth0", "br0"], "jails": ["sshd", "recidive"],
@@ -26,7 +25,7 @@ def load_collector(toml_text="", tmp=None):
         f.write(f'out_dir = "{tmp}/out"\ndash_uid = {os.getuid()}\n' + toml_text)
     os.environ["HOMELAB_DASH_COLLECTOR_CONFIG"] = conf
     os.makedirs(os.path.join(tmp, "out", "req"), exist_ok=True)
-    col = importlib.machinery.SourceFileLoader(f"collector_page_{os.path.basename(tmp)}_{len(os.listdir(tmp))}", COLLECTOR).load_module()
+    col = load_source(f"collector_page_{os.path.basename(tmp)}_{len(os.listdir(tmp))}", COLLECTOR)
     return col, tmp
 
 
