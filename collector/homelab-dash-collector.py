@@ -71,10 +71,10 @@ REQ_FILE = os.path.join(REQ_DIR, "cron-approve")
 CRON_APPROVED = os.path.join(OUT_DIR, "cron-approved.json")   # root-only snapshot of approved cron lines
 
 
-def run(cmd, timeout=20):
+def run(cmd, timeout=20, env=None):
     """A command's stdout, or "" if it fails or times out (every check here is optional)."""
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env).stdout
     except Exception:
         return ""
 
@@ -123,6 +123,16 @@ def mount_sources():
     return src
 
 
+def mount_types():
+    """mount point -> file system type (e.g. /tank -> zfs), from the same findmnt table."""
+    out = {}
+    for line in run(["findmnt", "-rno", "SOURCE,TARGET,FSTYPE"]).splitlines():
+        parts = line.split(" ")
+        if len(parts) >= 3:
+            out[parts[-2].replace("\\x20", " ")] = parts[-1]
+    return out
+
+
 def whole_disk(dev):
     """/dev/sdb1 -> /dev/sdb, /dev/nvme0n1p2 -> /dev/nvme0n1 (SMART is per disk, not per partition)."""
     base = os.path.basename(dev)
@@ -134,6 +144,7 @@ def whole_disk(dev):
 def disks():
     """Size/used/free per shown mount. A mount listed in the config but not mounted is reported as missing."""
     src = mount_sources()
+    types = mount_types()
     labels = CFG.get("mount_labels", {})
     out = []
     for m in mounts():
@@ -142,12 +153,19 @@ def disks():
             if m in (CFG.get("mounts") or []):   # only explicitly listed mounts count as "missing"
                 out.append({"mount": m, "name": name, "missing": True})
             continue
-        if not src[m].startswith("/dev/"):
+        zfs = types.get(m) == "zfs"
+        if not src[m].startswith("/dev/") and not zfs:
             continue                              # skip tmpfs, overlay, network shares picked up by a glob
         try:
             st = os.statvfs(m)
         except OSError:                           # (a share whose server is gone: EIO; shown missing, not a crash)
             out.append({"mount": m, "name": name, "missing": True})
+            continue
+        if zfs:   # a dataset is not one disk: no dev, no model
+            dataset = clip(src[m], 120)
+            out.append({"mount": m, "name": name, "zfs": dataset, "pool": dataset.split("/", 1)[0],
+                        "system": m == "/", "total": st.f_blocks * st.f_frsize,
+                        "used": (st.f_blocks - st.f_bfree) * st.f_frsize, "free": st.f_bavail * st.f_frsize})
             continue
         dev = whole_disk(src[m])
         model_f = f"/sys/block/{os.path.basename(dev)}/device/model"
@@ -185,6 +203,238 @@ def smart(dev):
         }
     except (AttributeError, KeyError, TypeError):
         return {"error": "unexpected output"}
+
+
+# ---------- ZFS: datasets as drives, and pool health (issue #4) ----------
+
+GROUP_VDEV = re.compile(r"^(mirror|raidz[123]?|draid[123]?(:[^ ]*)?|replacing|spare)-?\d*")
+BLOCK_DEV = re.compile(r"^(?:sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+n\d+|mmcblk\d+)(?:p?\d+)?$")
+POOL_LINE = re.compile(r"^ *pool:\s*(.*)$")
+STATUS_KEY = re.compile(r"^\s*(pool|state|status|action|see|scan|scrub|remove|trim|config|errors):(.*)$")
+
+
+def zfs_int(text):
+    """An exact count from zpool -p, or a K/M/G number from an older one; anything else None."""
+    s = str(text or "").strip().rstrip("%")
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    m = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([KMGTP]?)", s, re.I)
+    mult = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4, "P": 1024 ** 5}
+    try:
+        return int(float(m[1]) * mult[m[2].upper()]) if m else None
+    except (ValueError, OverflowError):
+        return None
+
+
+def zfs_dev(path):
+    """A disk path's whole disk (/dev/sda) when it resolves under /dev/, else None (only a link is read)."""
+    if not isinstance(path, str) or not path.startswith("/dev/"):
+        return None
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return None
+    return whole_disk(real) if real.startswith("/dev/") and BLOCK_DEV.match(os.path.basename(real)) else None
+
+
+def zfs_data_errors(text):
+    """The N in "N data errors" (0 for "No known data errors", None without the line)."""
+    if text is None:
+        return None
+    if "No known data errors" in text:
+        return 0
+    m = re.search(r"([0-9]{1,12}) data errors", text)
+    return int(m[1]) if m else None
+
+
+def zfs_vdev(line, levels):
+    """One `zpool status` config row, or None for the pool's own root row (depth comes from the indentation)."""
+    body = line[1:] if line.startswith("\t") else line
+    level = max((len(body) - len(body.lstrip(" "))) // 2, 0)
+    tok = body.split()
+    if not tok:
+        return None
+    cls = len(tok) == 1
+    if cls:
+        depth = 0
+    else:
+        under = [l for l in levels if l < level]
+        depth = levels[max(under)] + 1 if under else -1
+    for stale in [l for l in levels if l > level]:      # a new branch: forget the previous branch's deeper levels
+        del levels[stale]
+    levels[level] = depth
+    if depth < 0:
+        return None
+    raw = tok[0]
+    kind = "class" if cls else "group" if GROUP_VDEV.match(raw) else "disk"
+    rw = [zfs_int(tok[i]) if len(tok) > i else None for i in (2, 3, 4)]
+    return {"name": clip(os.path.basename(raw) if kind == "disk" and raw.startswith("/") else raw, 80),
+            "depth": depth, "state": None if cls else clip(tok[1], 40) if len(tok) > 1 else None,
+            "read": rw[0], "write": rw[1], "cksum": rw[2], "kind": kind,
+            "dev": zfs_dev(raw) if kind == "disk" else None,
+            "note": clip(" ".join(tok[5:]), 80) or None if len(tok) > 5 else None}
+
+
+def parse_zpool_status(text):
+    """Pools from `zpool status -P -p`: state, scan, errors, data errors and the vdev tree, in order."""
+    pools, cur, key, buf, in_cfg, levels = [], None, None, [], False, {}
+
+    def flush():
+        nonlocal key
+        if cur is not None and key is not None:
+            cur["_text"][key] = " ".join(" ".join(buf).split())
+        key = None
+        del buf[:]
+
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.rstrip("\r")
+        m = POOL_LINE.match(line)
+        if m:
+            flush()
+            if cur is not None and len(pools) < 32:
+                pools.append(cur)
+            cur = None
+            if len(pools) >= 32:
+                break
+            cur = {"name": clip(m[1].strip(), 120), "state": None, "size": None, "alloc": None, "free": None,
+                   "frag": None, "cap": None, "scan": None, "errors": None, "data_errors": None, "vdevs": [], "_text": {}}
+            in_cfg, levels = False, {}
+            continue
+        if cur is None:
+            continue
+        if in_cfg and line[:1].isspace():            # a row of the config table
+            tok = line.split()
+            if tok and not (len(tok) >= 2 and tok[0] == "NAME" and tok[1] == "STATE"):
+                row = zfs_vdev(line, levels)
+                if row is not None and len(cur["vdevs"]) < 256:
+                    cur["vdevs"].append(row)
+            continue
+        if not line.strip():
+            continue
+        m = STATUS_KEY.match(line)
+        if m:
+            flush()
+            in_cfg = False
+            k, v = m[1], m[2].strip()
+            if k == "state":
+                cur["state"] = clip(v, 40) or None
+            elif k == "config":
+                in_cfg, levels = True, {}
+            else:
+                key = k
+                buf.append(v)
+            continue
+        if key is not None and line[:1].isspace():    # a continuation of status:, action:, scan: ...
+            buf.append(line.strip())
+    flush()
+    if cur is not None and len(pools) < 32:
+        pools.append(cur)
+    for p in pools:
+        raw = p.pop("_text", {})
+        p["scan"] = clip(" ".join(raw.get("scan", "").split()), 160) or None
+        p["errors"] = clip(" ".join(raw.get("errors", "").split()), 120) or None
+        p["data_errors"] = zfs_data_errors(p["errors"])
+    return pools
+
+
+def parse_zpool_list(text):
+    """name -> {size, alloc, free, frag, cap, health} from `zpool list -Hp` (frag/cap may be "-")."""
+    out = {}
+    for line in str(text or "").splitlines():
+        f = line.rstrip("\r").split("\t")
+        if len(f) < 7 or not f[0].strip():
+            continue
+        out[clip(f[0], 120)] = {"size": zfs_int(f[1]), "alloc": zfs_int(f[2]), "free": zfs_int(f[3]),
+                                "frag": zfs_int(f[4]), "cap": zfs_int(f[5]), "health": clip(f[6], 40) or None}
+        if len(out) >= 32:
+            break
+    return out
+
+
+ZFS_KSTAT = "/proc/spl/kstat/zfs"
+_ZFS_STUCK = []   # zpool children that outlived their deadline (stuck in the kernel on a suspended pool)
+
+
+def zfs_run(cmd, timeout=20):
+    """stdout of a zpool command, or None with no answer. Unlike run(), a zpool stuck in the kernel (a suspended pool;
+    SIGKILL waits until the I/O returns) can't freeze the collector: on timeout the child is killed and handed to a reaper
+    thread instead of being waited on, and while one is still stuck no new zpool is started (they would pile up)."""
+    _ZFS_STUCK[:] = [p for p in _ZFS_STUCK if p.poll() is None]
+    if _ZFS_STUCK:
+        return None
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             text=True, env=dict(os.environ, LC_ALL="C"), start_new_session=True)
+    except OSError:
+        return None
+    try:
+        out, _ = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            p.kill()
+        except OSError:
+            pass
+        try:
+            p.stdout.close()
+        except OSError:
+            pass
+        _ZFS_STUCK.append(p)
+        threading.Thread(target=p.wait, daemon=True).start()   # reaps it whenever it finally exits
+        return None
+    return out if p.returncode == 0 else None
+
+
+def zfs_kstat_states(base=ZFS_KSTAT):
+    """pool -> state straight from the kernel (/proc/spl/kstat/zfs/<pool>/state): no subprocess, so it still answers
+    when zpool hangs. Pool names are checked; at most 32 pools, 32 bytes per state."""
+    out = {}
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return out
+    for name in names:
+        if len(out) >= 32:
+            break
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", name):
+            continue
+        try:
+            with open(os.path.join(base, name, "state"), encoding="ascii", errors="replace") as f:
+                state = f.read(32).strip()
+        except OSError:
+            continue
+        if re.fullmatch(r"[A-Z_]{1,20}", state):
+            out[name] = state
+    return out
+
+
+def zfs_pools():
+    """Pool health ({"pools": [...]}); when zpool gives no answer the kernel's pool states are still reported, marked
+    "stuck", so a hanging pool shows as a problem instead of as no pools."""
+    try:
+        kstat = zfs_kstat_states()
+        listed_raw = zfs_run(["zpool", "list", "-Hp", "-o", "name,size,alloc,free,frag,cap,health"])
+        status_raw = zfs_run(["zpool", "status", "-P", "-p"]) if listed_raw is not None else None
+        if status_raw is None:
+            names = sorted(set(kstat) | set(parse_zpool_list(listed_raw or "")))
+            if not names:
+                return {"pools": [], "stuck": True} if _ZFS_STUCK else {"pools": []}
+            hung = bool(_ZFS_STUCK)                        # timed out (a hang) vs. zpool simply failed
+            return {"stuck": hung, "failed": not hung, "pools": [{"name": n, "state": kstat.get(n) or "UNKNOWN", "size": None,
+                    "alloc": None, "free": None, "frag": None, "cap": None, "scan": None, "errors": None,
+                    "data_errors": None, "vdevs": [], "stuck": hung, "failed": not hung} for n in names[:32]]}
+        listed = parse_zpool_list(listed_raw)
+        pools = parse_zpool_status(status_raw)[:32]
+        for p in pools:
+            info = listed.get(p["name"]) or {}
+            for k in ("size", "alloc", "free", "frag", "cap"):
+                p[k] = info.get(k)
+            if p.get("state") is None and p["name"] in kstat:
+                p["state"] = kstat[p["name"]]
+        return {"pools": pools}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"[:200]}
 
 
 # ---------- GPU / containers / network ----------
@@ -2745,8 +2995,15 @@ def main():
                 data["collector"] = {"v": 3, "error": f"page settings: {type(e).__name__}: {e}"[:300]}
         if due("disks", 60):
             data["disks"] = disks()
+        if (have("zpool") or os.path.isdir(ZFS_KSTAT)) and due("zfs", 60):
+            data["zfs"] = zfs_pools()
         if have("smartctl") and due("smart", 300):
             devs = {d["dev"] for d in data["disks"] if d.get("dev")}
+            zfs = data.get("zfs")
+            if isinstance(zfs, dict) and "error" not in zfs:   # pool members get SMART too
+                for p in zfs.get("pools") or []:
+                    if isinstance(p, dict):
+                        devs.update(v["dev"] for v in p.get("vdevs") or [] if isinstance(v, dict) and v.get("dev"))
             data["smart"] = {dev: smart(dev) for dev in sorted(devs)}
         if due("gpu", 10):
             data["gpu"] = gpu()
