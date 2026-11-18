@@ -136,6 +136,7 @@ class ZfsTests(unittest.TestCase):
                 "\tbig ONLINE 0 0 0\n" + rows)
         pools = _rows(self.col.parse_zpool_status(text))
         self.assertLessEqual(len(pools[0]["vdevs"]), 256)
+        self.assertTrue(pools[0].get("truncated"))           # flagged, so rows are never silently lost
 
     def test_pool_name_is_plain_text(self):
         text = ("  pool: <script>alert(1)</script>\n state: ONLINE\nconfig:\n\n"
@@ -221,6 +222,77 @@ class ZfsTests(unittest.TestCase):
         self.assertFalse(res.get("stuck"))
         self.assertTrue(res.get("failed"))
         self.assertEqual([(p["name"], p["state"], p["failed"]) for p in res["pools"]], [("datos", "ONLINE", True)])
+
+    # ---- review fixes 2026-11-18 ----
+
+    def test_smart_only_for_members_in_use(self):
+        old = self.col.zfs_dev
+        self.col.zfs_dev = lambda path: "/dev/sdx"
+        self.addCleanup(setattr, self.col, "zfs_dev", old)
+        row = lambda st: self.col.zfs_vdev(f"\t    /dev/disk/by-id/ata-X-part1  {st}  0 0 0", {0: -1, 1: 0})
+        self.assertEqual(row("ONLINE")["dev"], "/dev/sdx")
+        self.assertEqual(row("DEGRADED")["dev"], "/dev/sdx")
+        for st in ("UNAVAIL", "AVAIL", "FAULTED", "REMOVED", "OFFLINE"):
+            self.assertIsNone(row(st)["dev"], st)
+
+    def test_a_pool_the_kernel_has_never_drops_out(self):
+        self._patch(lambda cmd, timeout=20: FIXTURE_LIST if cmd[1] == "list" else FIXTURE_STATUS_OK)
+        self.col.zfs_kstat_states = lambda base=None: {"datos": "ONLINE", "backup": "FAULTED"}
+        pools = {p["name"]: p for p in self.col.zfs_pools()["pools"]}
+        self.assertEqual((pools["backup"]["state"], pools["backup"].get("unparsed")), ("FAULTED", True))
+        self.assertNotIn("unparsed", pools["datos"])
+
+    def test_numbers_are_bounded(self):
+        for bad in ("9" * 30, "-5", "1" * 5000):
+            self.assertIsNone(self.col.zfs_int(bad), bad[:10])
+        self.assertEqual(self.col.zfs_int("2K"), 2048)
+
+    def test_a_nameless_pool_is_skipped(self):
+        self.assertEqual(self.col.parse_zpool_status("  pool: \n state: ONLINE\n"), [])
+
+    def test_a_suspended_pools_dataset_is_not_touched(self):
+        col = self.col
+        saved = [(col, "mounts"), (col, "mount_sources"), (col, "mount_types"), (col, "zfs_kstat_states"),
+                 (col.os, "statvfs"), (col.os.path, "ismount")]
+        for obj, name in saved:
+            self.addCleanup(setattr, obj, name, getattr(obj, name))
+        col.mounts = lambda: ["/tank"]
+        col.mount_sources = lambda: {"/tank": "tank\\x20a"}
+        col.mount_types = lambda: {"/tank": "zfs"}
+        col.os.path.ismount = lambda m: True
+        def boom(m):
+            raise AssertionError("statvfs on a suspended pool")
+        col.os.statvfs = boom
+        col.zfs_kstat_states = lambda base=None: {"tank a": "SUSPENDED", "tank": "SUSPENDED"}
+        rows = col.disks()
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["missing"])
+        self.assertEqual(rows[0]["zfs"], "tank a")          # findmnt's \x20 decoded
+
+    def test_findmnt_text_is_utf8(self):
+        self.assertEqual(self.col.findmnt_text("tank/caf\\xc3\\xa9\\x20x"), "tank/café x")
+
+    def test_an_exited_zpool_child_is_not_stuck(self):
+        class Done:
+            def poll(self):
+                return 0
+        self.addCleanup(self.col._ZFS_STUCK.clear)
+        self.col._ZFS_STUCK[:] = [Done()]
+        self.assertFalse(self.col.zfs_stuck())
+
+    def test_a_pool_the_kernel_doesnt_list_is_not_trusted(self):
+        col = self.col
+        for obj, name in [(col, "mounts"), (col, "mount_sources"), (col, "mount_types"), (col, "zfs_kstat_states"),
+                          (col.os, "statvfs"), (col.os.path, "ismount")]:
+            self.addCleanup(setattr, obj, name, getattr(obj, name))
+        col.mounts = lambda: ["/tank"]
+        col.mount_sources = lambda: {"/tank": "tank"}
+        col.mount_types = lambda: {"/tank": "zfs"}
+        def boom(m):
+            raise AssertionError("touched the pool")
+        col.os.statvfs, col.os.path.ismount = boom, boom
+        col.zfs_kstat_states = lambda base=None: {"other": "ONLINE"}     # kstats exist, but not for "tank"
+        self.assertTrue(col.disks()[0]["missing"])
 
     def test_kstat_states_reads_and_validates(self):
         base = os.path.join(self.tmp, "kstat")
