@@ -53,6 +53,16 @@ class CollectorGate(unittest.TestCase):
         self.ask(ID)
         self.assertEqual(self.rm_calls(), [])
 
+    def test_config_can_add_kept_names_but_never_remove_them(self):
+        col = self.col
+        self.assertTrue(col.leftover("photos_run_1", "exited", "True", "photos"))
+        col.CFG = dict(col.CFG, container_keep=["photos_run_1", "bad\nname", 7, "../x"])
+        self.assertFalse(col.leftover("photos_run_1", "exited", "True", "photos"))     # added: never offered
+        self.assertFalse(col.leftover("plex", "exited", "True", "media"))              # built-in still kept
+        self.assertEqual(col.container_keep() - col.CONTAINER_KEEP, {"photos_run_1"})  # junk entries ignored
+        col.CFG = dict(col.CFG, container_keep="plex")                                 # not a list: defaults only
+        self.assertEqual(col.container_keep(), col.CONTAINER_KEEP)
+
     def test_plex_is_refused_whatever_its_labels(self):
         self.inspect = "created\tTrue\tcontainers\t/plex"
         self.ask(ID)

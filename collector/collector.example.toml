@@ -21,6 +21,10 @@
 # Set false to skip nvidia-smi even if it is installed.
 # gpu = true
 
+# Containers the dashboard's Remove button never offers, on top of the built-in plex, gluetun, qbit, nginx,
+# nginx_mariadb, authelia and authelia-redis (it only ever offers stopped `docker compose run` leftovers).
+# container_keep = ["my-database", "my-vpn"]
+
 [security]
 # fail2ban jail to report on ("" to skip).
 fail2ban_jail = "sshd"

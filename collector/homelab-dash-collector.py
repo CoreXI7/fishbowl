@@ -458,8 +458,17 @@ def gpu():
 
 CONTAINER_NAMES = {}          # full container id -> name, refreshed with containers()
 CONTAINER_ID_RE = re.compile(r"[0-9a-f]{64}")
-# Never offered for removal, whatever their labels say (the Plex/VPN/proxy/sign-in stack).
+# Never offered for removal, whatever their labels say (the Plex/VPN/proxy/sign-in stack). collector.toml's
+# container_keep adds names to this; it can't take any away.
 CONTAINER_KEEP = frozenset({"plex", "gluetun", "qbit", "nginx", "nginx_mariadb", "authelia", "authelia-redis"})
+
+
+def container_keep():
+    """CONTAINER_KEEP plus the config's container_keep names (a list of plain container names; anything else ignored)."""
+    extra = CFG.get("container_keep")
+    if not isinstance(extra, list):
+        return CONTAINER_KEEP
+    return CONTAINER_KEEP | {n for n in extra[:200] if isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9][\w.-]{0,127}", n)}
 REMOVE_REQ = os.path.join(REQ_DIR, "container-remove")      # the dash drops one container id here (Remove button)
 LAST_REMOVE = [None]          # what happened to the latest Remove request, shown under the list
 PS_FORMAT = "{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.oneoff\"}}\t{{.Label \"com.docker.compose.project\"}}"
@@ -469,9 +478,9 @@ def leftover(name, state, oneoff, project):
     """A stopped container that is junk, so the dashboard may offer to remove it (leftovers only):
     a `docker compose run` one-off (label oneoff=True) that isn't running. Nothing else: a real compose service sits in
     "created" too when `up` can't start it (GPU, port, gluetun down) or mid-recreate, so "created" alone is not junk
-    (security review 2026-11-18). The CONTAINER_KEEP stack is never offered. Same rule on the list and again, as
+    (security review 2026-11-18). The container_keep() stack is never offered. Same rule on the list and again, as
     root, right before removing. (project is kept in the signature for the callers; it decides nothing now.)"""
-    if state not in ("created", "exited", "dead") or name in CONTAINER_KEEP:
+    if state not in ("created", "exited", "dead") or name in container_keep():
         return False
     if any(ord(ch) < 32 for ch in name + oneoff + project):   # a tab/newline in a label could fake a row: never junk
         return False
