@@ -14,7 +14,62 @@ async function loadSystem() {
   }
 }
 
+// "N stopped" on the Containers row opens the list of names (kept open across the few-second refresh)
+let sysStoppedOpen = false, sysLast = null;
+document.addEventListener("click", (e) => {
+  if (!e.target.closest || !e.target.closest("#sys-stopped-btn") || !sysLast) return;
+  sysStoppedOpen = !sysStoppedOpen;
+  renderSystem(sysLast[0], sysLast[1]);
+  const again = $("sys-stopped-btn");
+  if (again) again.focus();
+});
+// Remove button: only on leftovers the collector marked removable (containers left by `docker compose run`).
+// First click arms it ("Sure?"), a second within 4 s sends the id; the root collector checks it again before removing.
+let sysArmed = "", sysArmedAt = 0, sysArmTimer = 0, sysRemoving = {};
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest && e.target.closest("[data-rm-id]");
+  if (!b || !sysLast) return;
+  const id = b.dataset.rmId;
+  if (!/^[0-9a-f]{64}$/.test(id) || sysRemoving[id]) return;
+  const refocus = () => { const again = document.querySelector(`[data-rm-id="${id}"]`); if (again) again.focus(); };
+  if (sysArmed !== id || Date.now() - sysArmedAt < 400) {   // (a fast double-click is not a confirm)
+    if (sysArmed === id) return;
+    sysArmed = id; sysArmedAt = Date.now(); clearTimeout(sysArmTimer);
+    sysArmTimer = setTimeout(() => { sysArmed = ""; if (sysLast) { renderSystem(sysLast[0], sysLast[1]); refocus(); } }, 4000);
+    renderSystem(sysLast[0], sysLast[1]); refocus();   // (the re-render replaces the button: keep the keyboard on it)
+    return;
+  }
+  sysArmed = ""; clearTimeout(sysArmTimer); sysRemoving[id] = Date.now(); sysRmError = "";
+  renderSystem(sysLast[0], sysLast[1]);
+  try {
+    const r = await postJSON("/api/containers/remove", {id});
+    if (r && r.demo) { delete sysRemoving[id]; sysRmError = "this is the demo, nothing is removed"; sysRmErrorAt = Date.now(); renderSystem(sysLast[0], sysLast[1]); }
+  } catch (err) { delete sysRemoving[id]; sysRmError = String(err.message || err).slice(0, 120); sysRmErrorAt = Date.now(); if (sysLast) renderSystem(sysLast[0], sysLast[1]); }
+});
+let sysRmError = "", sysRmErrorAt = 0;
+function stoppedList(c) {
+  const names = Array.isArray(c.stopped) ? c.stopped.filter((x) => x && typeof x.name === "string") : null;
+  if (!names) return `<div class="stopped-list mute">Names show up once the collector is updated.</div>`;
+  const now = Date.now();
+  if (sysRmError && now - sysRmErrorAt > 15000) sysRmError = "";   // an error note doesn't hide later results for long
+  for (const id of Object.keys(sysRemoving)) if (now - sysRemoving[id] > 90000 || !names.some((x) => x.id === id)) delete sysRemoving[id];
+  const last = c.last_remove && typeof c.last_remove === "object" && now / 1000 - Number(c.last_remove.at || 0) < 600 ? c.last_remove : null;
+  // the collector answered for this click (not an older answer about the same id): no more "removing…"
+  if (last && typeof last.id === "string" && sysRemoving[last.id] && Number(last.at) * 1000 > sysRemoving[last.id] - 5000) delete sysRemoving[last.id];
+  const note = sysRmError ? `<li class="crit-t">Couldn't remove: ${esc(sysRmError)}</li>`
+    : last ? `<li class="${last.ok ? "mute" : "crit-t"}">${last.ok ? "Removed" : "Not removed"}: ${esc(String(last.name || ""))}${last.ok ? "" : " (" + esc(String(last.why || "")) + ")"}</li>` : "";
+  if (!names.length) return note ? `<ul class="stopped-list">${note}</ul>` : "";
+  return `<ul class="stopped-list">` + names.map((x) => {
+    const id = typeof x.id === "string" && /^[0-9a-f]{64}$/.test(x.id) ? x.id : "";
+    const btn = !(x.removable === true && id) ? ""
+      : sysRemoving[id] ? `<span class="mute">removing…</span>`
+      : `<button type="button" class="rm-btn${sysArmed === id ? " armed" : ""}" data-rm-id="${id}" title="Remove this leftover container (left by docker compose run). Its volumes are kept.">${sysArmed === id ? "Sure?" : "Remove"}</button>`;
+    return `<li><span class="mono">${esc(x.name)}</span><span class="rm-cell"><span class="mute">${esc(String(x.state || ""))}</span>${btn}</span></li>`;
+  }).join("") + note + `</ul>`;
+}
+
 function renderSystem(s, hw) {
+  sysLast = [s, hw];
   const memUsed = s.mem_total - s.mem_avail, memPct = 100 * memUsed / s.mem_total, cpuT = s.temps.cpu;
   setText("sys-up", "up " + dur(s.uptime));
   const cores = `<div class="cores" title="per-thread load (${s.cores.length} threads)" style="grid-template-columns:repeat(${Math.min(16, s.cores.length)},1fr)">`
@@ -27,7 +82,8 @@ function renderSystem(s, hw) {
     kvRow("Memory", `${size(memUsed)} / ${size(s.mem_total)}`) + meter(memPct, 80, 92),
     s.swap_total ? kvRow("Swap", `${size(s.swap_total - s.swap_free)} / ${size(s.swap_total)}`) : "",
     hw && hw.net ? kvRow(`Network (${esc(hw.net.if)})`, `↓ ${bits(hw.net.rx_bps)} &nbsp;↑ ${bits(hw.net.tx_bps)}`) : "",
-    hw && hw.containers ? kvRow("Containers", `${hw.containers.running} running${stopped > 0 ? ` · <span class="warn-t">${stopped} stopped</span>` : ""}`) : "",
+    hw && hw.containers ? kvRow("Containers", `${hw.containers.running} running${stopped > 0 ? ` · <button type="button" id="sys-stopped-btn" class="linkbtn warn-t" aria-expanded="${sysStoppedOpen}" title="Show which ones">${stopped} stopped</button>` : ""}`)
+      + (stopped > 0 && sysStoppedOpen ? stoppedList(hw.containers) : "") : "",
     !hw ? kvRow(`<span class="mute">Install the collector for drives, GPU and security</span>`, "")
       : hw.stale ? kvRow(`<span class="err">Collector data is stale</span>`, "") : "",
   ].join(""));
@@ -102,16 +158,18 @@ function renderDrives(hw) {
   const data = disks.filter(d => !d.system && d.total);
   const pool = data.length ? data : disks.filter(d => d.total);
   const isZfs = d => d.zfs && !d.dev;
-  let tot, used;
+  let tot, used, free;
   if (pool.some(isZfs)) {
     // datasets of one pool share its free space: count that once (largest free), each dataset's used once
     const shared = {};
     pool.filter(isZfs).forEach(d => { const k = d.pool || d.zfs; shared[k] = Math.max(shared[k] || 0, d.free); });
     used = pool.reduce((a, d) => a + d.used, 0);
-    tot = used + pool.reduce((a, d) => a + (isZfs(d) ? 0 : d.free), 0) + Object.values(shared).reduce((a, v) => a + v, 0);
+    free = pool.reduce((a, d) => a + (isZfs(d) ? 0 : d.free || 0), 0) + Object.values(shared).reduce((a, v) => a + v, 0);
+    tot = used + free;
   } else {
     tot = pool.reduce((a, d) => a + d.total, 0);
     used = pool.reduce((a, d) => a + d.used, 0);
+    free = pool.reduce((a, d) => a + (d.free || 0), 0);   // what df calls available (leaves out ext4's reserved blocks)
   }
   setText("drv-n", `${size(used)} / ${size(tot)}`);
 
@@ -125,7 +183,7 @@ function renderDrives(hw) {
   const poolWarn = z.some(p => p.state === "DEGRADED" || (p.vdevs || []).some(v => v.read > 0 || v.write > 0 || v.cksum > 0));
   const znote = (stuck ? ["<b>ZFS not responding</b>"] : []).concat(
     z.filter(p => p.state && p.state !== "ONLINE").map(p => `<b>pool ${esc(p.name || "")} ${esc(p.state)}</b>`)).join(" · ");
-  kpi("k-disk", smartBad || poolBad ? "bad" : full || sectors || poolWarn ? "warn" : "ok", `${size(tot - used)} free`,
+  kpi("k-disk", smartBad || poolBad ? "bad" : full || sectors || poolWarn ? "warn" : "ok", `${size(free)} free`,
       `${znote ? znote + " · " : ""}${(tot ? 100 * used / tot : 0).toFixed(0)}% of ${size(tot)}${smartBad ? " · <b>drive problem!</b>" : sectors ? ` · ${sectors} drive${sectors > 1 ? "s" : ""} with bad sectors` : ""}`);
 
   const drive = d => {
@@ -150,7 +208,7 @@ function renderDrives(hw) {
       <div class="md">${esc(x.model || d.model)} · ${esc(d.dev)}</div>${meter(pct, 90, 95)}
       <div class="s"><span>${size(d.used)} / ${size(d.total)}</span><span>${pct.toFixed(0)}% · ${size(d.free)} free</span></div></div>`;
   };
-  setHTML("drv", kvRow(data.length ? "All data drives" : "Total", `${size(tot - used)} free`) + meter(tot ? 100 * used / tot : 0, 90, 95)
+  setHTML("drv", kvRow(data.length ? "All data drives" : "Total", `${size(free)} free`) + meter(tot ? 100 * used / tot : 0, 90, 95)
     + disks.map(drive).join("") + z.map(p => zfsBlock(p, smart)).join("") + zerr);
 }
 

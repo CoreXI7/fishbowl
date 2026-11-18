@@ -165,7 +165,9 @@ def system():
         "updated": now, "stale": False, "disks": disks, "smart": smart, "zfs": zfs,
         "gpu": {"name": "NVIDIA GeForce GTX 1660", "temp": 52, "util": round(wobble(18, 8)), "enc": round(wobble(14, 6)),
                 "dec": round(wobble(10, 5)), "mem_used": 640, "mem_total": 6144, "power": 38, "fan": 35, "sessions": 1},
-        "containers": {"running": 31, "total": 33},
+        "containers": {"running": 31, "total": 33,
+                       "stopped": [{"name": "old-wiki", "state": "exited", "id": "1" * 64, "removable": False},
+                                   {"name": "photos_backup_run_3f2a9c1d7e40", "state": "exited", "id": "2" * 64, "removable": True}]},
         "usage": usage(),
         "net": {"if": "eth0", "rx_bps": wobble(3.5e6, 1.5e6), "tx_bps": wobble(1.4e6, 6e5)},
         "security": {

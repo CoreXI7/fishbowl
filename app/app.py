@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import urllib.error
+import tempfile
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -2235,6 +2236,35 @@ class Handler(web.SignIn, BaseHTTPRequestHandler):
             with open(os.path.join(REQ_DIR, "cron-approve"), "w") as f:   # the root collector verifies it matches the live crontabs
                 f.write(want)
             print(f"cron approval {want[:12]} requested by {who}", flush=True)
+            return self.send(200, {"ok": True})
+        if path == "/api/containers/remove":
+            # The Remove button next to a leftover container. This only hands the id to the root collector, which checks
+            # it again (still a leftover, by id) before it runs `docker rm`; here it must at least be one the collector
+            # itself listed as removable, so the page can't ask about anything else.
+            try:
+                want = self.json_body(200).get("id", "")
+            except cfgstore.Invalid:
+                want = ""
+            if not isinstance(want, str) or not re.fullmatch(r"[0-9a-f]{64}", want):
+                return self.send(400, {"error": "bad container id"})
+            if DEMO:
+                return self.send(200, {"ok": True, "demo": True})
+            listed = ((read_hw() or {}).get("containers") or {}).get("stopped") or []
+            hit = next((c for c in listed if isinstance(c, dict) and c.get("id") == want and c.get("removable") is True), None)
+            if not hit:
+                return self.send(409, {"error": "that container isn't a leftover the dashboard can remove"})
+            final = os.path.join(REQ_DIR, "container-remove")
+            fd, tmp = tempfile.mkstemp(dir=REQ_DIR, prefix=".container-remove.")   # whole file or nothing for the collector
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(want)
+                try:
+                    os.link(tmp, final)    # one at a time: fails if a request is already waiting (no check-then-write race)
+                except FileExistsError:
+                    return self.send(409, {"error": "another removal is still waiting; try again in a few seconds"})
+            finally:
+                os.remove(tmp)                                                 # the root collector checks it again
+            print(f"container remove {str(hit.get('name'))[:80]} ({want[:12]}) requested by {who}", flush=True)
             return self.send(200, {"ok": True})
         m = re.fullmatch(r"/api/requests/(\d+)/(approve|decline)", path)
         if not m or not SEERR["on"]:

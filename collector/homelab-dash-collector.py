@@ -457,18 +457,86 @@ def gpu():
 
 
 CONTAINER_NAMES = {}          # full container id -> name, refreshed with containers()
+CONTAINER_ID_RE = re.compile(r"[0-9a-f]{64}")
+# Never offered for removal, whatever their labels say (the Plex/VPN/proxy/sign-in stack).
+CONTAINER_KEEP = frozenset({"plex", "gluetun", "qbit", "nginx", "nginx_mariadb", "authelia", "authelia-redis"})
+REMOVE_REQ = os.path.join(REQ_DIR, "container-remove")      # the dash drops one container id here (Remove button)
+LAST_REMOVE = [None]          # what happened to the latest Remove request, shown under the list
+PS_FORMAT = "{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.oneoff\"}}\t{{.Label \"com.docker.compose.project\"}}"
+
+
+def leftover(name, state, oneoff, project):
+    """A stopped container that is junk, so the dashboard may offer to remove it (leftovers only):
+    a `docker compose run` one-off (label oneoff=True) that isn't running. Nothing else: a real compose service sits in
+    "created" too when `up` can't start it (GPU, port, gluetun down) or mid-recreate, so "created" alone is not junk
+    (security review 2026-11-18). The CONTAINER_KEEP stack is never offered. Same rule on the list and again, as
+    root, right before removing. (project is kept in the signature for the callers; it decides nothing now.)"""
+    if state not in ("created", "exited", "dead") or name in CONTAINER_KEEP:
+        return False
+    if any(ord(ch) < 32 for ch in name + oneoff + project):   # a tab/newline in a label could fake a row: never junk
+        return False
+    return oneoff == "True"
 
 
 def containers():
     """Running/total container counts; also refreshes CONTAINER_NAMES for the usage breakdown."""
     if not have("docker"):
         return None
-    rows = run(["docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}} {{.Names}} {{.State}}"]).split("\n")
-    rows = [r.split() for r in rows if r.strip()]
+    rows = run(["docker", "ps", "-a", "--no-trunc", "--format", PS_FORMAT]).split("\n")
+    rows = [r.split("\t") for r in rows if r.strip()]
+    rows = [r + [""] * (5 - len(r)) for r in rows if len(r) >= 2]
     CONTAINER_NAMES.clear()
-    CONTAINER_NAMES.update({r[0]: r[1] for r in rows if len(r) >= 2})
-    states = [r[2] for r in rows if len(r) >= 3]
-    return {"running": states.count("running"), "total": len(states)}
+    CONTAINER_NAMES.update({r[0]: r[1] for r in rows})
+    states = [r[2] for r in rows if r[2]]
+    # the ones that are not running, by name, so the dashboard can list them (at most 40, names as Docker reports them);
+    # "removable" marks the leftovers the page may offer a Remove button for (the id is what the button sends back)
+    stopped = sorted(({"name": r[1][:80], "state": r[2][:20], "id": r[0] if CONTAINER_ID_RE.fullmatch(r[0]) else "",
+                       "removable": bool(CONTAINER_ID_RE.fullmatch(r[0])) and leftover(r[1], r[2], r[3], r[4])}
+                      for r in rows if r[2] and r[2] != "running"), key=lambda c: c["name"])[:40]
+    return {"running": states.count("running"), "total": len(states), "stopped": stopped, "last_remove": LAST_REMOVE[0]}
+
+
+def handle_container_remove():
+    """A Remove click on the dash: the request file holds one full container id. Root looks the container up again
+    now, by that id, and removes it only if it is still a leftover() by the same rule; never forced (`docker rm`
+    refuses a running one) and never its volumes. By id, so a container that took the name meanwhile is never hit.
+    Returns True when a request was handled (the list is then refreshed at once)."""
+    if not os.path.lexists(REMOVE_REQ):
+        return False
+    try:   # the dash can write here: never follow a link it planted or wait on a FIFO (see handle_cron_approval)
+        want = read_regular(REMOVE_REQ, 100).decode("ascii", "replace").strip()
+    except CheckFailed:
+        want = ""
+    try:
+        os.remove(REMOVE_REQ)
+    except OSError:          # e.g. a directory planted there: don't handle (or re-show) it every round
+        return False
+    def done(name, ok, why):
+        LAST_REMOVE[0] = {"name": name[:80], "ok": ok, "why": why[:120], "at": int(time.time()),
+                          "id": want if CONTAINER_ID_RE.fullmatch(want) else ""}
+        return True
+    if not CONTAINER_ID_RE.fullmatch(want):
+        return done("", False, "not a container id")
+    if not have("docker"):
+        return done("", False, "docker isn't available")
+    try:
+        info = out(["docker", "inspect", "--type", "container", "--format",
+                    '{{.State.Status}}\t{{index .Config.Labels "com.docker.compose.oneoff"}}\t'
+                    '{{index .Config.Labels "com.docker.compose.project"}}\t{{.Name}}', want], timeout=15).strip().split("\t")
+    except CheckFailed as e:
+        return done("", False, f"docker couldn't look it up: {e}")
+    if len(info) != 4:
+        return done("", False, "docker gave an unexpected answer")
+    state, oneoff, project, name = info[0], info[1], info[2], info[3].lstrip("/")
+    if not leftover(name, state, oneoff, project):
+        print(f"container remove refused: {name[:80]} ({state}) is not a leftover", flush=True)
+        return done(name, False, "not a leftover (only containers left by docker compose run)")
+    try:
+        out(["docker", "rm", want], timeout=20)
+    except CheckFailed as e:
+        return done(name, False, f"docker refused: {e}")
+    print(f"container removed from the dash: {name[:80]} ({want[:12]}, {state})", flush=True)
+    return done(name, True, "removed")
 
 
 # ---------- what is using the CPU / memory: every process, grouped by container (or program name) ----------
@@ -3036,6 +3104,13 @@ def main():
                 data["usage"] = {"error": str(e)}
         else:
             data.pop("usage", None)
+
+        # a Remove click on the dash (leftover containers only): handle it now and refresh the list at once
+        try:
+            if handle_container_remove():
+                data["containers"] = containers()
+        except Exception:
+            pass
 
         # a "Looks good" click on the dash: apply it now, so the cron box clears within one round
         try:

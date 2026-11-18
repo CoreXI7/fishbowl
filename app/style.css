@@ -29,6 +29,12 @@ aside{display:grid;gap:16px;align-content:start;min-width:0}
 .tc small{display:block;color:var(--mute);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tc b{font-size:17px;font-variant-numeric:tabular-nums}
 .ok-t{color:var(--up)}.warn-t{color:var(--warn)}.crit-t{color:var(--down)}
+.linkbtn{background:none;border:0;padding:0;margin:0;font:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.linkbtn:hover{text-decoration-style:solid}.linkbtn:focus-visible{outline:2px solid var(--warn);outline-offset:2px;border-radius:3px}
+.stopped-list{list-style:none;margin:4px 0 2px;padding:6px 10px;border-left:2px solid var(--warn);font-size:.86em;display:flex;flex-direction:column;gap:3px}
+.stopped-list li{display:flex;justify-content:space-between;gap:12px}.stopped-list .rm-cell{display:inline-flex;align-items:center;gap:8px;flex:none}
+.rm-btn{font:inherit;font-size:.92em;line-height:1.2;padding:1px 8px;border-radius:6px;border:1px solid var(--down);background:transparent;color:var(--down);cursor:pointer}
+.rm-btn:hover,.rm-btn.armed{background:var(--down);color:#fff}.rm-btn:focus-visible{outline:2px solid var(--warn);outline-offset:2px}.stopped-list .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .drv{padding:8px 0;border-top:1px solid var(--line)}
 .drv:first-of-type{border-top:0}
 .drv .h{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
