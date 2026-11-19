@@ -12,7 +12,7 @@ research, or usability. This is **not** a paid outside audit. If you find someth
 **What you can re-run.** Every finding below was fixed together with a test that failed before the fix:
 
 ```sh
-python3 -m unittest discover -s tests       # 357 tests, stdlib only; page tests use headless Chrome if installed
+python3 -m unittest discover -s tests       # 430+ tests, stdlib only; page tests use headless Chrome if installed
 ```
 
 **Why the attack scripts aren't in the repo.** The reviewers wrote about 1,500 scripts. They aren't published because:
@@ -33,6 +33,7 @@ review round found the problem it checks.
 - [The 1.0 pre-release audit](#the-10-pre-release-audit-2026-10-30)
 - [Every finding of the 1.0 audit](#every-finding-of-the-10-audit)
 - [The rest of the app](#the-rest-of-the-app-2026-10-29)
+- [Transmission and SABnzbd](#transmission-and-sabnzbd-2026-11-19)
 - [Where the tests are](#where-the-tests-are)
 - [Limits of this testing](#limits-of-this-testing)
 
@@ -277,6 +278,36 @@ The settings page (four rounds, four reviewers: security, correctness, usability
 user) and the collector's settings on the page (three rounds: adversarial, reliability, the page) were reviewed the
 same way. Each fix has a test in `tests/`.
 
+## Transmission and SABnzbd (2026-11-19)
+
+The two new integrations (issues #7 and #8) were built the same way: a threat model first, then the code, then
+attacks and reviews before anything was merged.
+
+- **What they can do at most:** read. The Transmission client only sends `torrent-get` and `session-stats` (an
+  allow-list); the SABnzbd client only asks for `queue` and `history` and passes nothing but a numeric `limit`
+  (those modes also take delete and purge arguments). A stolen dashboard session can read your download lists, as it
+  already could for qBittorrent, but can't add, remove, pause or delete anything.
+- **Hostile download clients**, tested against fake Transmission and SABnzbd servers that answer whatever the test
+  wants: redirects (not followed, the other address is never contacted), a session-id header with odd characters or
+  too long (refused, never sent back), endless 409s (one retry, then an error), replies that aren't objects, 20,001
+  torrents, huge or negative numbers, numbers as text, HTML in names (kept as text, escaped by the page), 60 junk queue
+  entries. Replies are size-, value- and time-limited like the other integrations.
+- **Keys and passwords:** the SABnzbd key travels in its URL, so a failed request's error is rebuilt without the
+  query or the server's own reason text (a server could echo the key there); both secrets are also scrubbed from any
+  error the page sees. Changing either app's address on the settings page requires typing the key or login again.
+  Transmission's optional login is both-or-neither; a half login from the environment keeps Transmission off and the
+  Setup checklist says why, instead of crashing the dashboard at start (a bug the tests caught).
+- **Mutation checks:** each safety rule above (method allow-list, mode allow-list, parameter allow-list, session-id
+  check, no redirects, the key-free error, the status check, the list caps, Basic auth only when set, both-or-neither,
+  secret scrubbing) was switched off by hand, one at a time; every time, a test failed. 11 of 11.
+- **Reviews:** two independent AI reviewers (one security, one correctness) on the server side and one on the page.
+  Findings fixed: the key could stay on an HTTP error object, a half login from the environment blocked every settings
+  save, extra query parameters could reach SABnzbd's queue/history modes, odd queue counts, and four page issues (wall
+  mode layout, labels). The fixes got a second security review, which passed.
+- **Not tested:** a real Transmission or SABnzbd (the fakes follow their documented APIs). Reports welcome.
+
+The tests are in `tests/test_dlclients.py`.
+
 ## Where the tests are
 
 | File | What it checks |
@@ -286,6 +317,7 @@ same way. Each fix has a test in `tests/`.
 | `tests/test_redirects.py`, `test_upstream_*.py`, `test_plexart.py` | No off-host redirects (SSRF), size caps, hostile upstream data |
 | `tests/test_uploads.py`, `test_known_ips.py`, `test_listen.py`, `test_logging.py` | Upload limits, IP matching, `LISTEN`, log forging |
 | `tests/test_collector_*.py` | The root collector: requests from the dashboard, its settings, journal reading |
+| `tests/test_dlclients.py` | Transmission and SABnzbd: read-only calls, the session-id handshake, hostile replies, redirects, the key never in an error, the settings rules |
 | `tests/test_settings_page.py` | The settings page: validation, fields locked by the environment, no secrets in the page data, the Setup checklist (including whether a sign-in sits in front) |
 
 ## Limits of this testing

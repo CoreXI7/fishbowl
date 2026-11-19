@@ -63,7 +63,7 @@ Most of the code was written with AI (Claude Code) and designed, directed and te
 code deserves extra suspicion, before 1.0 it went through four rounds of focused AI security review (sign-in, web
 requests, browser attacks, the collector) against test copies behind real reverse proxies, plus HTTP fuzzing. Every
 finding was fixed with a test that failed before the fix; [the full list](SECURITY-TESTING.md#every-finding-of-the-10-audit)
-is public. 370+ tests run in CI.
+is public. 430+ tests run in CI.
 
 This is not a professional audit, and AI reviewers can share blind spots with the AI that wrote the code: see
 [THREAT-MODEL.md](THREAT-MODEL.md) for the known limits. Found a problem? Report it privately ([SECURITY.md](SECURITY.md)).
