@@ -71,7 +71,7 @@ sign-in off: add `AUTH: proxy` under `environment:` in `docker-compose.yml` and 
 ### 7. Finish setup in the browser
 
 Click the **⚙** button and open **Setup**. It checks your install and tells you how to fix anything that's missing.
-Then connect your apps under **Integrations**: qBittorrent, Seerr and Tautulli each have a **Test** button.
+Then connect your apps under **Integrations**: qBittorrent or Transmission, SABnzbd, Seerr and Tautulli each have a **Test** button.
 
 ### Optional: install the collector
 

@@ -31,7 +31,7 @@ Known gaps are under [Still open](#still-open). The rest of this file is the det
 | Asset | Where it lives | Why it matters |
 |---|---|---|
 | The dashboard account (password hash, authenticator secret, recovery-code hashes, sessions) | `data/auth.json`, `data/sessions.json` (0600) | Whoever signs in is the admin |
-| Integration secrets (qBittorrent login, Seerr and Tautulli API keys) | `data/secrets.json` (0600) or the container environment | Control over downloads, requests, Plex activity |
+| Integration secrets (qBittorrent and Transmission logins, SABnzbd, Seerr and Tautulli API keys) | `data/secrets.json` (0600) or the container environment | Control over downloads, requests, Plex activity |
 | Security state: known IPs, acknowledged logins, approved crontabs | `data/settings.json`, `data/acks.json`, the collector's `cron-approved.json` (root) | Changing it silences the alerts the dashboard exists for |
 | The root collector | systemd service, runs as root | Anything that steers it runs with root's power |
 | Information about the host | `hw.json`, `sec-detail.json`, the API | Firewall rules, cron lines, who logs in from where, backup paths: reconnaissance for a next step |
@@ -46,7 +46,7 @@ Known gaps are under [Still open](#still-open). The rest of this file is the det
                 dash container  (uid 1000, read-only rootfs, cap_drop ALL, 256 MB, answers only the proxy's IP)
                  │   reads: NPM proxy_host/*.conf (ro), /proc + hwmon (ro), hw.json + sec-detail.json (ro)
                  │   writes: data/ (settings, secrets, acks, uploads), req/cron-approve (a 64-hex hash)
-                 │   calls out: qBittorrent, Seerr, Tautulli (API keys); every service upstream (health check,
+                 │   calls out: qBittorrent, Transmission, SABnzbd, Seerr, Tautulli (API keys); every service upstream (health check,
                  │              favicon); the proxy itself (checks via the proxy: which hosts and paths is a
                  │              setting on the page since Oct 29, so a page user can make a down service look up)
                  ▼
@@ -95,7 +95,7 @@ Known gaps are under [Still open](#still-open). The rest of this file is the det
 
 | Source | Sink | Control |
 |---|---|---|
-| qBittorrent / Seerr / Tautulli JSON | page `innerHTML` | the server passes on only typed, clipped fields (`num()`, `text()`; ids must be ints); the page escapes every integration value, numbers included (the collector's own numbers are typed by the collector); CSP `script-src 'self'` with no inline script or handlers |
+| qBittorrent / Transmission / SABnzbd / Seerr / Tautulli JSON | page `innerHTML` | the server passes on only typed, clipped fields (`num()`, `text()`; ids must be ints); the page escapes every integration value, numbers included (the collector's own numbers are typed by the collector); CSP `script-src 'self'` with no inline script or handlers |
 | Tautulli poster art, service icons | `/api/plexart`, `/api/icon` on the dash's origin | raster image types only (the type read case-blind, trimmed); icons only from the service's own origin (`/` and `/favicon.ico`, never its URL's path or query); `Content-Security-Policy: default-src 'none'; sandbox` and `Cross-Origin-Resource-Policy: same-origin` (as on every answer) |
 | NPM `server_name`, settings text | page `innerHTML`, attributes | `esc()`; settings validated server-side |
 | Log lines, process names, cron lines | `hw.json` / `sec-detail.json` → page | crontabs split on `\n` only, as cron does (a `\r` can't hide the rest of a line); lines over 8 KB cut when read, over 1,000 characters before `redact()`, the card says what was cut and how many lines it didn't list; `clip()` (length, control and bidi characters), `redact()` (common ways of putting a secret on a command line; a bare argument can't be told apart), `esc()` in the page |
@@ -103,9 +103,9 @@ Known gaps are under [Still open](#still-open). The rest of this file is the det
 | Authelia SQLite file | root collector's SQLite | bytes read with `O_NOFOLLOW`/`O_NONBLOCK`, size cap, in-memory copy, defensive mode, plain tables only (no virtual tables, no generated columns: either runs code the file chose), cell size checks, 256 KB values, parameter-free fixed queries, row + time limits |
 | `req/cron-approve` | root collector | read with `O_NOFOLLOW`/`O_NONBLOCK`, regular files only, 100 bytes; must be 64 hex chars and equal the live crontab hash |
 | Upstream redirects | dash outbound requests | never followed off-host (health checks count a 3xx as up; icons follow at most 3 on the same host; integrations none) |
-| A fake service on the LAN (someone intercepting traffic between the dashboard and a service) | health status, service icons | the integrations, which send keys or passwords (qBittorrent, Seerr, Tautulli), check HTTPS certificates normally; the up/down checks and icon fetches accept any certificate (self-signed ones are the norm on a LAN), but send no keys or passwords, and an icon must be a raster image. So the worst a fake service can do is show the wrong status or icon |
+| A fake service on the LAN (someone intercepting traffic between the dashboard and a service) | health status, service icons | the integrations, which send keys or passwords (qBittorrent, Transmission, SABnzbd, Seerr, Tautulli), check HTTPS certificates normally; the up/down checks and icon fetches accept any certificate (self-signed ones are the norm on a LAN), but send no keys or passwords, and an icon must be a raster image. So the worst a fake service can do is show the wrong status or icon |
 | Upstream answer speed (one byte every few seconds) | dash threads and connection slots | connecting (all of a name's addresses together) and then the answer each have an overall deadline (3x the timeout: 15 s for checks and icons, 30 s for integrations); at the deadline the socket is shut down; an icon cut short isn't kept; an icon lookup starts no new URL after 20 s (at most 5, one lookup at a time per service), and a Seerr refresh looks titles up for 20 s at most. A request can take a few of these in a row (a health check retries once, a qBittorrent call signs in again once), so the worst case is a few minutes, not for ever |
-| Upstream answer size | dash memory | headers at most 64 KB an answer (http.client alone takes ~6 MB), chunk sizes must be plain hex (http.client reads "-1" as "to the end": [CVE-2026-103995](https://osv.dev/vulnerability/CVE-2026-103995), still in 3.12.16); `read_json()`: 32 MB qBittorrent, 8 MB Seerr/Tautulli, at most 1,000,000 JSON values; the torrent state is capped at 20,000 (ids at 64 characters), lists at 100 Plex sessions and 50 requests, qBittorrent's cookies at 50 |
+| Upstream answer size | dash memory | headers at most 64 KB an answer (http.client alone takes ~6 MB), chunk sizes must be plain hex (http.client reads "-1" as "to the end": [CVE-2026-103995](https://osv.dev/vulnerability/CVE-2026-103995), still in 3.12.16); `read_json()`: 32 MB qBittorrent/Transmission, 8 MB SABnzbd/Seerr/Tautulli, at most 1,000,000 JSON values; the torrent state is capped at 20,000 (ids at 64 characters), lists at 100 Plex sessions and 50 requests, qBittorrent's cookies at 50 |
 | SSH journal (log lines an attacker writes) | root collector | one bounded read a minute: lines over 1,100 bytes skipped without being held, ASCII only, newest 100,000 kept, process group killed on timeout; the card and the details use the same anchored parser |
 | Authelia's log (failed sign-ins anyone can cause, user names they choose) | root collector | streamed line by line, lines over 2,000 bytes skipped without being held, only the count and the newest 6 kept; docker's process group killed after 30 s |
 | Shell | none | every command is an argument list, never a shell string |
@@ -117,7 +117,7 @@ Every request the dashboard makes to another service, in one place. Code: `app/u
 
 | Request | HTTPS certificate | Sends | Redirects | What's kept from the answer |
 |---|---|---|---|---|
-| qBittorrent, Seerr, Tautulli (the integrations), and Plex poster art through Tautulli | checked (normal verification) | the integration's key or login | never followed | JSON within size and value limits (8 MB, 32 MB for qBittorrent), typed field by field; posters: raster images only, 2 MB |
+| qBittorrent, Transmission, SABnzbd, Seerr, Tautulli (the integrations), and Plex poster art through Tautulli | checked (normal verification) | the integration's key or login | never followed | JSON within size and value limits (8 MB, 32 MB for qBittorrent and Transmission), typed field by field; Transmission and SABnzbd get read-only calls only (an allow-list of methods and modes); posters: raster images only, 2 MB |
 | Up/down check of each service | not checked (self-signed is the norm on a LAN) | only `User-Agent` and `Host`; no cookies, keys or passwords | never followed: a redirect counts as "up" | the status code only |
 | Up/down check "through the proxy" | not checked | only `User-Agent` and `Host` | never followed | the status code only |
 | Service icons | not checked | only `User-Agent` and `Host` | at most 3, and only while they stay on the service's own scheme and host:port | PNG, JPEG, WebP, GIF or ICO only (never SVG or HTML); the page read is capped at 200 KB, an icon at 512 KB, at most 5 URLs and 20 s per lookup |
@@ -350,7 +350,7 @@ For reviewers: each boundary above and the code that enforces it. Function names
 |---|---|
 | Outbound deadline, connecting included | `app/upstream.py`: `_create_connection()`, `watch()` and `_reap()`, used by `DeadlineHTTPConnection` / `DeadlineHTTPSConnection` |
 | Answer limits (headers, chunk sizes, chunked bodies, JSON) | `app/upstream.py`: `_HeaderBudget`, `StrictResponse`, `read_capped()`, `read_json()` |
-| Which requests check certificates, and redirects | `app/upstream.py`: `NOFOLLOW` and `STRICT` (both with `_NoRedirect`), `fetch_same_host()`; qBittorrent's own client in `app/app.py` (`Qbit`) |
+| Which requests check certificates, and redirects | `app/upstream.py`: `NOFOLLOW` and `STRICT` (both with `_NoRedirect`), `fetch_same_host()`; qBittorrent's own client in `app/app.py` (`Qbit`); Transmission's and SABnzbd's in `app/dlclients.py` |
 | Icons (raster only, 20 s budget) | `app/app.py`: `favicon()`, `_favicon()`, `ICON_TYPES` |
 | Who may connect, and proxy headers | `app/app.py`: `allowed_ip()`, `Handler.allowed()`, `proxy_ips()`, `forwarded_alike()`, `real_ip()`, `proxy_gaps()`, `plain_http_ok()` |
 | Sign-in, sessions, the code step | `app/auth.py` (accounts, sessions, throttling, TOTP); `app/app.py`: `gate()`, `_auth_post()`, `pending()`, `ended_unfinished()` |

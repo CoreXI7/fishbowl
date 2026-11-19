@@ -46,10 +46,12 @@ followed). Health checks run at most every 25 s whatever the number of open brow
 | Field | Keys (settings page or env) | What it adds |
 |---|---|---|
 | `qbittorrent.url`, `qbittorrent.home_ip` | `QBIT_USER`, `QBIT_PASS` | Torrents panel, speeds, VPN check: qBittorrent reporting `home_ip` as its external IP means the VPN leaked (red banner) |
+| `transmission.url` | `TRANSMISSION_USER`, `TRANSMISSION_PASS` (both optional: only if Transmission asks for a login) | Torrents panel and speeds from Transmission instead of qBittorrent (no VPN check: Transmission doesn't report its external IP). If both are set up, qBittorrent is used |
+| `sabnzbd.url` | `SAB_KEY` | Usenet tab in the Downloads card: SABnzbd's queue and its last 10 jobs |
 | `seerr.url` | `SEERR_KEY` | Pending requests with Approve / Decline (Overseerr, Jellyseerr, Seerr) |
 | `tautulli.url` | `TAUTULLI_KEY` | Plex now playing |
 
-An integration turns on when its URL and keys are set. Changing an integration's URL on the page requires typing its
+An integration turns on when its URL and keys are set (Transmission: its URL alone, if it has no login). Changing an integration's URL on the page requires typing its
 keys again, so a changed address can't receive the saved ones. Keys never go back to the browser (the page only sees
 "set" / "not set"). The integrations never follow redirects; the settings page's **Test** says so if one redirects.
 
@@ -70,7 +72,7 @@ Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes en
 | `USER_HEADER` | (off) | A header naming the SSO user (e.g. `Remote-User`), logged with each change. Only if your proxy sets it itself, and only trusted on requests from `TRUSTED_PROXY` |
 | `NPM_DIR` | `/npm` | Nginx Proxy Manager's `proxy_host` folder, mounted read-only: the service list |
 | `CHECK_VIA_PROXY` | (none) | `host[/path] …`: the same as `via_proxy` on the settings page. When set, it wins and the field is locked |
-| `QBIT_URL`, `SEERR_URL`, `TAUTULLI_URL` and the keys above | (none) | Integration settings from the environment; the settings page then shows them locked |
+| `QBIT_URL`, `TRANSMISSION_URL`, `SAB_URL`, `SEERR_URL`, `TAUTULLI_URL` and the keys above | (none) | Integration settings from the environment; the settings page then shows them locked |
 | `HOME_IP` | (none) | Same as `qbittorrent.home_ip` |
 | `DATA_DIR` | `/data` | Settings, keys, acknowledgements, uploads (writable by uid 1000) |
 | `HW_FILE`, `SEC_DETAIL_FILE`, `REQ_DIR` | `/hw/hw.json`, next to it, `/req` | Where the root collector's files are mounted |
@@ -79,7 +81,7 @@ Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes en
 | `REPO_URL` | (none) | Link for the demo's "demo · fake data" pill (`https://…` only) |
 
 Limits that aren't settings: uploads are raster images (PNG, JPEG, GIF, WebP) of at most 2 MB, 200 files / 100 MB in
-all; answers from qBittorrent are read up to 32 MB, from Seerr and Tautulli up to 8 MB.
+all; answers from qBittorrent and Transmission are read up to 32 MB, from SABnzbd, Seerr and Tautulli up to 8 MB.
 
 ## Lock the dash to the proxy (`LISTEN`)
 

@@ -41,6 +41,7 @@ from hostinfo import (_live_prev, cpu_model, cpu_mhz, cpu_topology, cpu_usage,  
                       disk_io, hwmon)
 from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _DeadlineHTTP, _DeadlineHTTPS,  # noqa: E402
                       StrictResponse, _NoRedirect, fetch_same_host, num, read_capped, read_json, text, watch)
+import dlclients                        # noqa: E402  (Transmission + SABnzbd)
 
 DEMO = cfgstore.DEMO
 HW_FILE = os.environ.get("HW_FILE", "/hw/hw.json")
@@ -128,6 +129,7 @@ def local_name(host):
 def apply_settings():
     """(Re)build everything that depends on settings. Called at start and after every save from the GUI."""
     global ED, STORE, SITE, SKIP_HOSTS, EXTRA_SERVICES, KNOWN_IPS, KNOWN, QBIT, SEERR, TAUTULLI, HOME_IP, SECRETS, qb, VIA_PROXY
+    global TRANSMISSION, SAB, tr, sabc
     ED, STORE = cfgstore.load(), cfgstore.load_secrets()
     SITE = ED["site"]
     SKIP_HOSTS = set(ED["skip_hosts"])
@@ -139,13 +141,18 @@ def apply_settings():
     def integration(name):
         url, _ = cfgstore.url_of(name, ED)
         secrets = [cfgstore.secret(field, STORE)[0] for field, _env in cfgstore.INTEGRATIONS[name][1]]
-        return {"url": url, "secrets": secrets, "on": bool(url and all(secrets)) or DEMO}
+        ok = all(secrets) or (name in cfgstore.OPTIONAL_LOGIN and not any(secrets))   # (an optional login: both or none)
+        return {"url": url, "secrets": secrets, "on": bool(url and ok) or DEMO}
 
     QBIT, SEERR, TAUTULLI = integration("qbittorrent"), integration("seerr"), integration("tautulli")
+    TRANSMISSION, SAB = integration("transmission"), integration("sabnzbd")
     _answered.clear()                                    # new addresses/keys: the last tries don't count any more
     HOME_IP = os.environ.get("HOME_IP") or ED["qbittorrent"]["home_ip"]   # real WAN IP; qbit showing it = VPN leak
-    SECRETS = sorted({v for i in (QBIT, SEERR, TAUTULLI) for v in i["secrets"] if len(v) >= 4}, key=len, reverse=True)
+    SECRETS = sorted({v for i in (QBIT, SEERR, TAUTULLI, TRANSMISSION, SAB) for v in i["secrets"] if len(v) >= 4},
+                     key=len, reverse=True)
     qb = Qbit()                                          # fresh login with the (possibly new) credentials
+    tr = dlclients.Transmission(TRANSMISSION["url"], *(TRANSMISSION["secrets"] if all(TRANSMISSION["secrets"]) else ("", "")))
+    sabc = dlclients.Sabnzbd(SAB["url"], SAB["secrets"][0])
     with _lock:
         _cache.clear()
     _icons.clear()
@@ -918,7 +925,17 @@ MAX_TORRENTS = 20_000
 
 
 def qbit():
-    """/api/qbit: speeds, the VPN check (external IP vs your home IP) and the torrent lists, trimmed to what the page shows."""
+    """/api/qbit: the torrents card, from qBittorrent, or from Transmission when only that one is set up."""
+    return qbit_view() if QBIT["on"] or not TRANSMISSION["on"] else dlclients.transmission_view(tr, HOME_IP)
+
+
+def sab():
+    """/api/sab: SABnzbd's queue and recent history (the Usenet tab)."""
+    return dlclients.sab_view(sabc)
+
+
+def qbit_view():
+    """qBittorrent: speeds, the VPN check (external IP vs your home IP) and the torrent lists, trimmed to what the page shows."""
     t = qb.get("/api/v2/transfer/info")
     torrents = qb.torrents()
     torrents = torrents if isinstance(torrents, list) else []
@@ -932,6 +949,7 @@ def qbit():
     t = t if isinstance(t, dict) else {}
     ext = text(t.get("last_external_address_v4"), 64)
     return {
+        "client": "qbittorrent",
         "connection": text(t.get("connection_status"), 40),
         "external_ip": ext,
         "vpn_check": bool(HOME_IP),
@@ -1073,7 +1091,8 @@ def page_config():
         "mascot": SITE["mascot"], "mascot_credit": SITE["mascot_credit"], "favicon": SITE["favicon"],
         "greeting": SITE["greeting"], "quotes": SITE["quotes"], "click_emoji": SITE["click_emoji"],
         "groups": ED["groups"], "apps": ED["apps"],
-        "features": {"qbit": QBIT["on"], "seerr": SEERR["on"], "plex": TAUTULLI["on"]},
+        "features": {"qbit": QBIT["on"] or TRANSMISSION["on"], "sab": SAB["on"], "seerr": SEERR["on"], "plex": TAUTULLI["on"],
+                     "downloads": QBIT["on"] or TRANSMISSION["on"] or SAB["on"]},
         "hidden_panels": SITE["hidden_panels"], "motion": SITE["motion"], "settings_ui": cfgstore.UI_ENABLED, "demo": DEMO,
         "auth": AUTH,
         "repo": os.environ.get("REPO_URL", "") if re.fullmatch(r"https://[\w./-]+", os.environ.get("REPO_URL", "")) else "",
@@ -1588,8 +1607,8 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
                     "; ".join(f"{COLLECTOR_LABELS.get(k, k)}: {why}" for k, why in cv["rejected"][:5])[:600],
                     link=collector_section(cv["rejected"][0][0]))
 
-    on = {"Torrents": QBIT["on"], "Requests": SEERR["on"], "Now playing": TAUTULLI["on"]}
-    paths = {"Torrents": "/api/qbit", "Requests": "/api/requests", "Now playing": "/api/plex"}
+    on = {"Torrents": QBIT["on"] or TRANSMISSION["on"], "Usenet": SAB["on"], "Requests": SEERR["on"], "Now playing": TAUTULLI["on"]}
+    paths = {"Torrents": "/api/qbit", "Usenet": "/api/sab", "Requests": "/api/requests", "Now playing": "/api/plex"}
     failing = [k for k, v in on.items() if v and not _answered.get(paths[k], (True, 0))[0]
                and time.time() - _answered[paths[k]][1] < 900]
     if failing:
@@ -1603,8 +1622,17 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             + ". Test in Integrations checks that each one answers.", link="#integrations", optional=True)
     else:
         add("integrations", "todo", "Integrations",
-            "Connect qBittorrent, Seerr/Overseerr/Jellyseerr or Tautulli to show torrents (with the VPN-leak check), requests "
-            "and Plex now playing. Until then those panels stay hidden.", link="#integrations", optional=True)
+            "Connect qBittorrent or Transmission, SABnzbd, Seerr/Overseerr/Jellyseerr or Tautulli to show torrents (qBittorrent "
+            "adds the VPN-leak check), Usenet downloads, requests and Plex now playing. Until then those panels stay hidden.",
+            link="#integrations", optional=True)
+    if TRANSMISSION["url"] and any(TRANSMISSION["secrets"]) and not all(TRANSMISSION["secrets"]) and not DEMO:
+        add("transmission_login", "warn", "Transmission's login is half set",
+            "Transmission has a username or a password, but not both, so it stays off. Fill in both, or neither if it "
+            "doesn't ask for a login (TRANSMISSION_USER / TRANSMISSION_PASS, or Integrations).", link="#integrations")
+    if QBIT["on"] and TRANSMISSION["on"] and not DEMO:
+        add("two_torrent_clients", "warn", "Two torrent clients set up",
+            "qBittorrent and Transmission are both set up. The Downloads card shows qBittorrent; Transmission is ignored. "
+            "Clear one of them in Integrations.", link="#integrations")
 
     if not DEMO and code_signature() != _code_at_start:
         add("restart", "warn", "A newer version is on disk",
@@ -1633,12 +1661,14 @@ def test_integration(name):
     """Try an integration with its SAVED settings (never an address typed in, so keys can't be sent elsewhere)."""
     if DEMO:
         return {"ok": True, "detail": "demo mode"}
-    i = {"qbittorrent": QBIT, "seerr": SEERR, "tautulli": TAUTULLI}.get(name)
+    i = {"qbittorrent": QBIT, "transmission": TRANSMISSION, "sabnzbd": SAB, "seerr": SEERR, "tautulli": TAUTULLI}.get(name)
     if not i:
         raise cfgstore.Invalid("unknown integration")
     r = _test_integration(name, i)
     if i["on"]:
-        _answered[{"qbittorrent": "/api/qbit", "seerr": "/api/requests", "tautulli": "/api/plex"}[name]] = (r["ok"], time.time())
+        if name != "transmission" or not QBIT["on"]:   # (Transmission is ignored while qBittorrent is set up)
+            _answered[{"qbittorrent": "/api/qbit", "transmission": "/api/qbit", "sabnzbd": "/api/sab", "seerr": "/api/requests",
+                       "tautulli": "/api/plex"}[name]] = (r["ok"], time.time())
     return r
 
 
@@ -1647,8 +1677,14 @@ def _test_integration(name, i):
         return {"ok": False, "detail": "not configured: needs a URL and its key(s)"}
     try:
         if name == "qbittorrent":
-            d = qbit()
+            d = qbit_view()
             detail = f"connected · {d['total']} torrents · external IP {d['external_ip'] or '?'}"
+        elif name == "transmission":
+            d = dlclients.transmission_view(tr, HOME_IP)
+            detail = f"connected · {d['total']} torrents"
+        elif name == "sabnzbd":
+            d = dlclients.sab_view(sabc)
+            detail = f"connected · {d['queue_total']} in the queue"
         elif name == "seerr":
             d = seerr("/status")
             detail = f"connected · version {text(d.get('version'), 40) or '?'}"
@@ -1720,13 +1756,15 @@ API = {
     "/api/config": (0, page_config),
     "/api/services": (25, services),
     "/api/qbit": (4, qbit),
+    "/api/sab": (5, sab),
     "/api/requests": (10, requests_pending),
     "/api/plex": (5, plex),
     "/api/system": (2, system),
     "/api/live": (0.9, live),          # the live window polls every second
     "/api/security/detail": (0, security_detail),   # the Security & backups detail views (cached by file change)
 }
-FEATURE = {"/api/qbit": lambda: QBIT, "/api/requests": lambda: SEERR, "/api/plex": lambda: TAUTULLI}
+FEATURE = {"/api/qbit": lambda: QBIT if QBIT["on"] else TRANSMISSION, "/api/sab": lambda: SAB,
+           "/api/requests": lambda: SEERR, "/api/plex": lambda: TAUTULLI}
 PAGES = {"/": "index.html", "/settings": "settings.html"}
 SCRIPTS = {f[:-3] for f in os.listdir(os.path.join(HERE, "js")) if f.endswith(".js")}   # app/js/*.js, read at start
 

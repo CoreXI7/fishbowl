@@ -33,7 +33,7 @@ const slices = d => ({   // which part of the settings each section edits (for t
   look: [d.site.title, d.site.hidden_panels],
   themes: [d.site.theme, d.site.motion, PERSONALITY.map(k => d.site[k]), d.site.themes],
   services: [d.groups, d.apps, d.services, d.skip_hosts, d.via_proxy],
-  integrations: [d.qbittorrent, d.seerr, d.tautulli],
+  integrations: [d.qbittorrent, d.transmission, d.sabnzbd, d.seerr, d.tautulli],
   security: [d.known_ips],
 });
 function changedSections() {
@@ -121,10 +121,11 @@ function clearErr(el) {
 
 // ---------- error summary (a failed save, upload or load): what's wrong, and a link to the field or section ----------
 const FIELD_OF = {"known IP": "f-known", "check through the proxy": "f-via", "title": "f-title", "home IP": "i-home",
-                  "qbittorrent URL": "i-qbittorrent-url", "seerr URL": "i-seerr-url", "tautulli URL": "i-tautulli-url"};
+                  "qbittorrent URL": "i-qbittorrent-url", "seerr URL": "i-seerr-url", "tautulli URL": "i-tautulli-url",
+                  "transmission URL": "i-transmission-url", "sabnzbd URL": "i-sabnzbd-url"};
 const FIELD_LABEL = {"known IP": "Your own IPs", "check through the proxy": "Check these through the proxy", "title": "Title",
                      "home IP": "Your home's public IP", "qbittorrent URL": "qBittorrent address", "seerr URL": "Seerr address",
-                     "tautulli URL": "Tautulli address"};
+                     "tautulli URL": "Tautulli address", "transmission URL": "Transmission address", "sabnzbd URL": "SABnzbd address"};
 function showErr(msg, section, title = "Not saved") {
   const k = Object.keys(FIELD_OF).find(k => msg.startsWith(k + ":")), field = k && $(FIELD_OF[k]);
   if (field) {
@@ -446,6 +447,11 @@ const INTEG = [
    extra: `<div class="field"><label for="i-home">Your home's public IP (optional)</label><input type="text" id="i-home" data-k="qbittorrent.home_ip" aria-describedby="i-home-d">`
         + `<small id="i-home-d">What a "what is my IP" site shows with the VPN off. If qBittorrent ever reports this address, the VPN leaked: big red banner.</small></div>`,
    url: "http://qbittorrent:8080 or http://192.168.1.10:8080"},
+  {k: "transmission", title: "Transmission", what: "torrents (instead of qBittorrent)", optional: true,
+   fields: [["tr_user", "Username (optional)", "text"], ["tr_pass", "Password (optional)", "password"]], url: "http://transmission:9091",
+   help: "Only if Transmission asks for a login (rpc-authentication-required). Fill in both or neither."},
+  {k: "sabnzbd", title: "SABnzbd", what: "Usenet downloads", fields: [["sab_key", "API key", "password"]], url: "http://sabnzbd:8080",
+   help: "In SABnzbd: Config → General → Security → API Key."},
   {k: "seerr", title: "Seerr / Overseerr / Jellyseerr", what: "approve requests", fields: [["seerr_key", "API key", "password"]], url: "http://overseerr:5055",
    help: "In Seerr: Settings → General → API Key."},
   {k: "tautulli", title: "Tautulli", what: "Plex now playing", fields: [["tautulli_key", "API key", "password"]], url: "http://tautulli:8181",
@@ -454,7 +460,8 @@ const INTEG = [
 const LOCKED = "🔒 set in .env / docker-compose.yml";
 function renderInteg() {
   $("integ").innerHTML = INTEG.map(it => {
-    const urlLocked = V.locked_urls[it.k], on = S[it.k].url && it.fields.every(([f]) => V.secrets[f].set);
+    const urlLocked = V.locked_urls[it.k], set = it.fields.filter(([f]) => V.secrets[f].set).length;
+    const on = S[it.k].url && (set === it.fields.length || (it.optional && !set));   // (an optional login: both or none)
     return `<div class="integ" data-it="${it.k}" role="group" aria-labelledby="ih-${it.k}">
       <h3><span id="ih-${it.k}">${esc(it.title)} <small class="mute">${esc(it.what)}</small></span>
         <span class="${on ? "ok-t" : "mute"} integ-st">${on ? "● set up" : "○ not set up"}</span></h3>
