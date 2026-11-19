@@ -27,7 +27,7 @@ def load_app(**env):
             "HW_FILE": os.path.join(tmp, "hw", "hw.json"), "REQ_DIR": os.path.join(tmp, "req"), "DEMO": "",
             "ORIGIN": "", "SETTINGS_UI": "1"}
     for k in ("QBIT_URL", "QBIT_USER", "QBIT_PASS", "SEERR_URL", "SEERR_KEY", "TAUTULLI_URL", "TAUTULLI_KEY",
-              "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER", "LISTEN", "AUTH"):
+              "TRANSMISSION_URL", "TRANSMISSION_USER", "TRANSMISSION_PASS", "SAB_URL", "SAB_KEY", "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER", "LISTEN", "AUTH"):
         os.environ.pop(k, None)
     os.environ.update({**base, **env})
     for m in ("settings", "demo", "auth", "signin_core", "signin_core.web", "signin_core.auth", "signin_core.verify",
@@ -57,9 +57,9 @@ def serve(handler, host="127.0.0.1"):
 
 class Upstream:
     """A fake web service. routes: path (without query) -> (status, headers dict, body bytes|str|dict|list).
-    Every request is recorded in .hits as (method, full path, headers)."""
+    Every request is recorded in .hits as (method, full path, headers), and its body (bytes) in .bodies."""
     def __init__(self, routes=None):
-        self.routes, self.hits = dict(routes or {}), []
+        self.routes, self.hits, self.bodies = dict(routes or {}), [], []
         up = self
 
         class H(BaseHTTPRequestHandler):
@@ -69,8 +69,7 @@ class Upstream:
             def answer(self):
                 up.hits.append((self.command, self.path, dict(self.headers)))
                 n = int(self.headers.get("Content-Length") or 0)
-                if n:
-                    self.rfile.read(n)
+                up.bodies.append(self.rfile.read(n) if n else b"")
                 route = up.routes.get(self.path.split("?")[0])
                 if callable(route):
                     route = route(self)

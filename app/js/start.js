@@ -24,6 +24,7 @@ document.addEventListener("visibilitychange", () => pollers.forEach(p => documen
   bubbles();
   poll(loadSystem, 3000);     // CPU/RAM/temps/drives/security (the collector writes every 5 s)
   poll(loadQbit, 5000);
+  poll(loadSab, 5000);
   poll(loadPlex, 10000);
   poll(loadServices, 30000);  // the server checks every service at most every 25 s anyway
   poll(loadRequests, 30000);

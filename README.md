@@ -17,7 +17,8 @@ Plain Python, no extra packages, one Docker image (`ghcr.io/corexi7/fishbowl`, a
 - **Services:** up or down, found on their own from Nginx Proxy Manager or added by hand
 - **Plex:** who is watching what (via Tautulli)
 - **Requests:** new Seerr requests, with Approve and Decline
-- **Downloads:** qBittorrent progress and speeds, and a warning if your real IP shows instead of your VPN's
+- **Downloads:** qBittorrent or Transmission progress and speeds, SABnzbd's Usenet queue, and a warning if qBittorrent shows
+  your real IP instead of your VPN's
 - **System:** CPU, memory, network, temperatures and NVIDIA GPU, with a live view that updates every second
 - **Drives:** space, SMART health and temperatures, and ZFS pools (state, per-disk errors, scrub)
 - **Security:** blocked logins, SSH logins from new places, changed cron jobs, last backup
@@ -53,7 +54,7 @@ breaks into the dashboard gets as little as possible.
 - **Only your reverse proxy can connect**, and changes are only accepted from the dashboard's own page.
 - **API keys never reach the browser.** Changing an app's address means entering its key again, so a saved key can't
   be redirected.
-- **Everything from other apps is untrusted:** qBittorrent, Seerr, Tautulli and `zpool` output is checked, size- and
+- **Everything from other apps is untrusted:** qBittorrent, Transmission, SABnzbd, Seerr, Tautulli and `zpool` output is checked, size- and
   time-limited, and escaped, so a compromised app can't take over the page or crash the dashboard.
 
 ### How it was tested

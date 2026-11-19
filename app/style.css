@@ -276,6 +276,11 @@ body.wall #dl{max-height:none;overflow:hidden;flex:none}
 body.wall #seed,body.wall #seed[hidden]{display:block;max-height:none;overflow:hidden;flex:1;min-height:0;margin-top:6px}
 body.wall #dl::before,body.wall #seed::before{display:block;font:600 12.5px Fredoka,sans-serif;color:var(--mute);margin:2px 0}
 body.wall #dl::before{content:"⬇ Downloading"}body.wall #seed::before{content:"⬆ Seeding now"}
+body.wall.has-sab.no-tor-client #nzb{display:block!important;flex:1;min-height:0;overflow:hidden}
+body.wall #nzb::before{content:"📰 Usenet";display:block;font:600 12.5px Fredoka,sans-serif;color:var(--mute);margin:2px 0}
+body.wall.no-tor-client #dl,body.wall.no-tor-client #seed{display:none!important}
+body.wall #nzb .nzb-h,body.wall #nzb .nzb-h~*{display:none}
+body.wall:not(.no-tor-client) #nzb{display:none!important}body.wall:not(.no-tor-client) #dl[hidden]{display:block!important}
 body.wall .tor{padding:5px 0}
 body.wall #seed{-webkit-mask-image:linear-gradient(#000 85%,transparent);mask-image:linear-gradient(#000 85%,transparent)}
 body.wall .duo section{min-height:190px}
@@ -717,3 +722,4 @@ body.wall .sd-open i{display:none}                       /* the wall's card stay
 .acct-key{word-break:break-all}
 .acct-rc{font:600 15px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--fg) 7%,var(--bg));white-space:pre;overflow-x:auto;margin:8px 0;
   font-size:clamp(9px,3vw,15px)}   /* one code per line, even on a phone: half a code on its own line looks like a code */
+.nzb-h{font:600 12.5px Fredoka,sans-serif;color:var(--mute);margin:10px 0 2px}

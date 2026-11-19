@@ -60,10 +60,25 @@ def qbit():
             for n, s, z, p, r, c in [("Tears.of.Steel.2012.4K.mkv", 2.4e6, 6.3e9, 5, 3.1, "radarr"),
                                      ("Elephants.Dream.2006.1080p.mkv", 9e5, 1.2e9, 2, 7.8, "radarr"),
                                      ("Spring.2019.1080p.mkv", 3e5, 9e8, 1, 1.4, "radarr")]]
-    return {"connection": "connected", "external_ip": "203.0.113.42", "vpn_check": True, "vpn_leak": False,
+    return {"client": "qbittorrent", "connection": "connected", "external_ip": "203.0.113.42", "vpn_check": True, "vpn_leak": False,
             "dl_speed": sum(t["dlspeed"] for t in dl), "up_speed": sum(t["upspeed"] for t in seed),
             "dl_total": 41.7e9, "up_total": 318.2e9, "dl_alltime": 2.9e12, "up_alltime": 11.4e12, "total": 412,
             "downloading": dl, "seeding": seed, "seeding_active": len(seed)}
+
+
+def sab():
+    """Fake SABnzbd queue + history for the Usenet tab."""
+    p = (time.time() / 900) % 1
+    q = [{"name": "Cosmos.Laundromat.2015.1080p.WEB-DL", "status": "Downloading", "progress": p, "size": 3.2e9,
+          "size_left": 3.2e9 * (1 - p), "time_left": f"0:{int((1 - p) * 14):02d}:{int(wobble(30, 25)):02d}", "category": "movies"},
+         {"name": "Agent.327.S01E03.720p.WEB", "status": "Queued", "progress": 0.0, "size": 7.4e8, "size_left": 7.4e8,
+          "time_left": "0:00:00", "category": "tv"}]
+    h = [{"name": n, "status": st, "size": z, "fail": f, "completed": int(time.time()) - ago, "category": c}
+         for n, st, z, f, ago, c in [("Agent.327.S01E02.720p.WEB", "Completed", 6.9e8, "", 1800, "tv"),
+                                     ("Caminandes.Llamigos.2016.1080p", "Completed", 1.1e9, "", 7200, "movies"),
+                                     ("Glass.Half.2015.720p", "Failed", 4.2e8, "Repair failed, not enough repair blocks", 20000, "movies")]]
+    return {"client": "sabnzbd", "speed": int(wobble(22e6, 6e6)), "paused": False, "size_left": sum(x["size_left"] for x in q),
+            "time_left": q[0]["time_left"], "queue": q, "queue_total": len(q), "history": h}
 
 
 def requests_pending():

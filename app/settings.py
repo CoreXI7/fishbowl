@@ -34,7 +34,11 @@ INTEGRATIONS = {   # name -> url env var, [(secret field, env var)]
     "qbittorrent": ("QBIT_URL", [("qbit_user", "QBIT_USER"), ("qbit_pass", "QBIT_PASS")]),
     "seerr": ("SEERR_URL", [("seerr_key", "SEERR_KEY")]),
     "tautulli": ("TAUTULLI_URL", [("tautulli_key", "TAUTULLI_KEY")]),
+    "transmission": ("TRANSMISSION_URL", [("tr_user", "TRANSMISSION_USER"), ("tr_pass", "TRANSMISSION_PASS")]),
+    "sabnzbd": ("SAB_URL", [("sab_key", "SAB_KEY")]),
 }
+OPTIONAL_LOGIN = ("transmission",)   # works with a URL alone; its username + password are both set or both empty
+LOGIN_NAMES = ("qbittorrent", "transmission")   # (what the "type it again" message calls their secrets)
 SECRET_ENV = {field: env for _, (_, fields) in INTEGRATIONS.items() for field, env in fields}
 
 DEFAULT_SITE = {"title": "my homelab", "tagline": "everything's running ✨", "tagline_down": "uh oh, something's down!",
@@ -142,6 +146,8 @@ def _seed():
         "qbittorrent": {"url": t.get("qbittorrent", {}).get("url", ""), "home_ip": t.get("qbittorrent", {}).get("home_ip", "")},
         "seerr": {"url": t.get("seerr", {}).get("url", "")},
         "tautulli": {"url": t.get("tautulli", {}).get("url", "")},
+        "transmission": {"url": t.get("transmission", {}).get("url", "")},
+        "sabnzbd": {"url": t.get("sabnzbd", {}).get("url", "")},
     }
 
 
@@ -397,7 +403,13 @@ def apply_secret_changes(new, old_editable, changes, store):
                 store.pop(field, None)
             elif url_changed and store.get(field):
                 raise Invalid(f"{name}: you changed its URL, so please type its "
-                              f"{'login' if name == 'qbittorrent' else 'API key'} again (keys are never sent to a new address unconfirmed)")
+                              f"{'login' if name in LOGIN_NAMES else 'API key'} again (keys are never sent to a new address unconfirmed)")
+    for name in OPTIONAL_LOGIN:   # an optional login is all or nothing: a username alone would be sent with an empty password
+        if any(os.environ.get(env) for _, env in INTEGRATIONS[name][1]):
+            continue                  # (set in the environment: the Setup check says what's missing, saving elsewhere still works)
+        got = [bool(store.get(field)) for field, _ in INTEGRATIONS[name][1]]
+        if any(got) and not all(got):
+            raise Invalid(f"{name}: fill in both the username and the password, or leave both empty")
     return store
 
 
