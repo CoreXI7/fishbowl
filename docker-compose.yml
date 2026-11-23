@@ -13,25 +13,30 @@ services:
     logging:                        # every visitor's request is logged: keep the log from filling the disk
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
-    user: "1000:1000"
+    user: "${PUID:-1000}:${PGID:-1000}"   # who the dashboard runs as: set PUID/PGID in .env (or the shell) to use another user
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    env_file: .env                  # create it even if empty (cp .env.example .env); keys can go on the settings page instead
+    env_file:                       # optional: keys typed on the settings page are stored in data/secrets.json (mode 600)
+      - path: .env                  # a .env here can set the same keys instead (they then show as locked on the page)
+        required: false             # needs Docker Compose 2.24+
     environment:
       # Security-critical settings live here, never on the settings page:
       ORIGIN: ""                          # e.g. https://dash.example.com (CSRF guard); empty = the address it's opened on
       # AUTH: proxy                       # turn Fishbowl's own sign-in off: ONLY if your proxy's SSO (Authelia, Authentik, ...) protects it
       TRUSTED_PROXY: nginx                # your reverse proxy's container name; empty = no proxy (anyone who can reach port 8000 gets the sign-in page)
       NPM_DIR: /npm
+      # NGINX_DIR: /nginx                 # plain Nginx (no NPM): services from sites-enabled/ and conf.d/ (mount below)
       # SETTINGS_UI: "0"                  # make the settings page read-only
       # USER_HEADER: Remote-User          # name the SSO user in the log; ONLY if your proxy sets this header itself
       # LISTEN: "127.0.0.1 10.89.250.2"  # answer only on these addresses: see "Lock the dash to the proxy" in docs/SETTINGS.md
       # CHECK_VIA_PROXY: demo.example.com vault.example.com/alive # hosts on networks the dash can't reach: health-check them through the proxy (optional path instead of /). Also on the settings page (Services → Advanced); set here, it wins and locks that field
     volumes:
-      - ./data:/data                  # settings + saved keys + uploads (must be writable by uid 1000)
+      - ./data:/data                  # settings + saved keys (secrets.json) + uploads (must be writable by PUID:PGID)
       # Nginx Proxy Manager's proxy host configs (adjust the left side to your NPM data folder):
       - ../nginx/data/nginx/proxy_host:/npm:ro
+      # Plain Nginx instead of NPM: your Nginx config folder, read-only (and set NGINX_DIR: /nginx above):
+      # - /etc/nginx:/nginx:ro
       # Written by the optional root collector (see collector/). Remove both lines if you don't install it.
       - /var/lib/homelab-dash:/hw:ro
       - /var/lib/homelab-dash/req:/req

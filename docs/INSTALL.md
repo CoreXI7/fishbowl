@@ -19,17 +19,32 @@ cd fishbowl
 
 This gets the compose file and the optional collector. The dashboard itself runs from the image.
 
-### 2. Create the data folder and the `.env` file
+### 2. Create the data folder
 
-Fishbowl saves its settings in `data/`. The `.env` file can hold your API keys, but it can stay empty, since you can
-also enter keys on the settings page later.
+Fishbowl keeps everything in `data/`: settings, and the API keys you type on the settings page (in `data/secrets.json`,
+mode 600). No other secrets file is needed.
 
 ```sh
 mkdir data
 sudo chown 1000:1000 data
-cp .env.example .env
-chmod 600 .env
 ```
+
+**Another user than 1000?** Fishbowl runs as `PUID:PGID` (1000:1000 by default). To use your own user, put its ids in a
+`.env` next to `docker-compose.yml`, give it the data folder, and tell the collector (step 6) the same uid:
+
+```sh
+printf 'PUID=%s\nPGID=%s\n' "$(id -u myuser)" "$(id -g myuser)" > .env && chmod 600 .env
+sudo chown "$(id -u myuser):$(id -g myuser)" data
+```
+
+The Setup page checks both and tells you the exact fix if they don't match.
+
+**Docker Compose older than 2.24?** It doesn't know the optional `env_file` form and refuses the file. Replace the
+`env_file:` block in `docker-compose.yml` with the single line `env_file: .env` and create an empty one: `touch .env`.
+(`docker compose version` shows yours.)
+
+**Prefer keys in a file?** `.env` can also hold the keys from `.env.example` instead of the settings page; a key set there
+wins and is locked on the page.
 
 ### 3. Edit `docker-compose.yml`
 

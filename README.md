@@ -14,7 +14,7 @@ Plain Python, no extra packages, one Docker image (`ghcr.io/corexi7/fishbowl`, a
 
 ## Features
 
-- **Services:** up or down, found on their own from Nginx Proxy Manager or added by hand
+- **Services:** up or down, found on their own from Nginx Proxy Manager or plain Nginx configs, or added by hand
 - **Plex:** who is watching what (via Tautulli)
 - **Requests:** new Seerr requests, with Approve and Decline
 - **Downloads:** qBittorrent or Transmission progress and speeds, SABnzbd's Usenet queue, and a warning if qBittorrent shows
@@ -74,8 +74,7 @@ You need Linux with Docker Compose and a reverse proxy that gives the dashboard 
 
 ```sh
 git clone https://github.com/CoreXI7/fishbowl && cd fishbowl
-mkdir data && sudo chown 1000:1000 data
-cp .env.example .env && chmod 600 .env
+mkdir data && sudo chown 1000:1000 data      # or your own user: see PUID/PGID in docs/INSTALL.md
 ```
 
 Set `ORIGIN`, `TRUSTED_PROXY` and the proxy network in `docker-compose.yml`, then:
@@ -85,7 +84,9 @@ docker compose up -d
 docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1
 ```
 
-Point your reverse proxy at `dash:8000`, open the address, enter the setup code and create your account. The
+Point your reverse proxy at `dash:8000`, open the address, enter the setup code and create your account. API keys
+(qBittorrent, Seerr, Tautulli...) go on the settings page; they're stored in `data/secrets.json` (mode 600), so there's
+no separate secrets file to manage. The
 **Setup** page under ⚙ checks the rest of your install. Step by step, with every option: [docs/INSTALL.md](docs/INSTALL.md).
 
 ### The collector
@@ -94,7 +95,7 @@ Some data can only be read as root (SMART, firewall, SSH log, cron, backup logs)
 those powers, a small root service on the host reads them and writes files the dashboard mounts read-only.
 
 ```sh
-sudo bash collector/install.sh
+sudo bash collector/install.sh              # dashboard running as another user? add --uid <PUID>
 ```
 
 ## Wall mode

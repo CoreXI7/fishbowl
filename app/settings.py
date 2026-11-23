@@ -131,6 +131,8 @@ def infra():
         "origins": [o.rstrip("/") for o in origins.split() + proxy.get("extra_origins", []) if o],
         "trusted_proxy": os.environ.get("TRUSTED_PROXY", proxy.get("trusted_proxy", "")),
         "npm_dir": os.environ.get("NPM_DIR", proxy.get("npm_dir", "/npm")),
+        # plain Nginx (no NPM): the host's /etc/nginx mounted read-only; empty = off
+        "nginx_dir": os.environ.get("NGINX_DIR", proxy.get("nginx_dir", "")),
     }
 
 

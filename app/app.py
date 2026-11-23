@@ -42,12 +42,14 @@ from hostinfo import (_live_prev, cpu_model, cpu_mhz, cpu_topology, cpu_usage,  
 from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _DeadlineHTTP, _DeadlineHTTPS,  # noqa: E402
                       StrictResponse, _NoRedirect, fetch_same_host, num, read_capped, read_json, text, watch)
 import dlclients                        # noqa: E402  (Transmission + SABnzbd)
+import nginxconf                        # noqa: E402  (plain Nginx site configs as services)
 
 DEMO = cfgstore.DEMO
 HW_FILE = os.environ.get("HW_FILE", "/hw/hw.json")
 REQ_DIR = os.environ.get("REQ_DIR", "/req")
 INFRA = cfgstore.infra()
 NPM_DIR = INFRA["npm_dir"]
+NGINX_DIR = INFRA.get("nginx_dir", "")   # plain Nginx site configs (app/nginxconf.py); empty = off
 TRUSTED_PROXY = INFRA["trusted_proxy"]      # e.g. "nginx" or "nginx 10.89.250.3": only those hosts may talk to us
 ALLOWED_ORIGINS = set(INFRA["origins"])
 USER_HEADER = os.environ.get("USER_HEADER", "")   # e.g. Remote-User: logged only if your proxy sets (overwrites) it
@@ -317,6 +319,10 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 
 # ---------- services (from NPM + config) ----------
 
+# behind an SSO proxy: its auth_request block, or the include snippet Authelia's NPM guide uses (NPM and plain Nginx)
+AUTH_SNIPPET = re.compile(r"auth_request\s+/(authelia|authentik|outpost)|include\s+[^\s;]*(?:authelia|authentik)[^\s;]*[ \t]*;")
+
+
 def parse_npm_conf(path):
     """One NPM proxy host file -> {name, upstream, auth}, or None if it isn't a plain proxy host. Read like data from
     another program: a regular file only (not through a link, never waiting on a FIFO), at most 256 KB, any bytes;
@@ -347,7 +353,7 @@ def parse_npm_conf(path):
         "name": name.group(1),
         "upstream": f"{scheme.group(1) if scheme else 'http'}://{server.group(1)}:{port.group(1)}",
         # behind an SSO proxy: its auth_request block, or the include snippet Authelia's NPM guide uses
-        "auth": bool(re.search(r"auth_request\s+/(authelia|authentik|outpost)|include\s+\S*(authelia|authentik)\S*\s*;", txt)),
+        "auth": bool(AUTH_SNIPPET.search(txt)),
         "login": has_login(txt),   # any sign-in in front of / (for the Setup check)
         # NPM's "Cache Assets": caches .css/.js/.png/... for 30 minutes whatever the app says (cookies and
         # Cache-Control ignored), so one visitor's images or a "sign in first" answer could reach everyone
@@ -454,7 +460,7 @@ def has_login(txt):
     return root or (server and not root_off)
 
 
-_npm = {"sig": None, "hosts": [], "conf": [], "n_npm": 0}   # last host list (+ every parsed .conf, hidden ones too) + the folder state
+_npm = {"sig": None, "hosts": [], "conf": [], "n_npm": 0, "n_plain": 0}   # last host list (+ every parsed .conf, hidden ones too) + the folder state
 
 
 def read_npm_hosts():
@@ -464,25 +470,34 @@ def read_npm_hosts():
         sig = tuple(sorted((e.name, e.stat().st_mtime_ns) for e in os.scandir(NPM_DIR) if e.name.endswith(".conf")))
     except OSError:
         sig = ()
+    picked = None
+    if NGINX_DIR:
+        picked = nginxconf.files(NGINX_DIR)          # one scan: the signature and the parse use the same file list
+        sig = (sig, tuple((n, m) for n, _, m in picked))
     with _npm_lock:   # (one re-parse at a time: requests arriving meanwhile use its result)
         if sig != _npm["sig"]:
-            _reparse_npm(sig)
+            _reparse_npm(sig, picked)
     return _npm["hosts"]
 
 
 _npm_lock = threading.Lock()
 
 
-def _reparse_npm(sig):
+def _reparse_npm(sig, picked=None):
     """Re-read the NPM proxy-host files (read_npm_hosts calls it under _npm_lock)."""
-    conf = [h for h in (parse_npm_conf(os.path.join(NPM_DIR, n)) for n, _ in sig) if h]
+    npm_sig = sig[0] if NGINX_DIR else sig
+    conf = [h for h in (parse_npm_conf(os.path.join(NPM_DIR, n)) for n, _ in npm_sig) if h]
+    if NGINX_DIR:                                   # plain Nginx hosts; an NPM host of the same name wins
+        names = {h["name"] for h in conf}
+        conf += [h for h in nginxconf.read_hosts(NGINX_DIR, has_login, AUTH_SNIPPET, picked) if h["name"] not in names]
     hosts = [h for h in conf if h["name"] not in SKIP_HOSTS]
-    n_npm = len(hosts)
+    n_npm = sum(1 for h in hosts if not h.get("plain"))   # shown, from NPM
+    n_plain = len(hosts) - n_npm                          # shown, from plain Nginx (NGINX_DIR)
     for s in EXTRA_SERVICES:
         if s.get("name") and s.get("url") and s["name"] not in SKIP_HOSTS:
             hosts.append({"name": s["name"], "upstream": s["url"].rstrip("/"), "auth": bool(s.get("auth"))})
     hosts.sort(key=lambda h: (h["name"].split(".", 1)[-1], h["name"]))   # group by domain, then name
-    _npm.update(sig=sig, hosts=hosts, conf=conf, n_npm=n_npm)
+    _npm.update(sig=sig, hosts=hosts, conf=conf, n_npm=n_npm, n_plain=n_plain)
 
 
 def check(host):
@@ -1502,18 +1517,25 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
     else:
         add("saving", "problem", "Settings can't be saved",
             f"The data folder (./data next to docker-compose.yml, {cfgstore.DATA_DIR} inside the container) isn't writable by "
-            "the container's user (uid 1000), so Save, uploads and \"add to known IPs\" fail.",
-            [("On the host, in the folder with docker-compose.yml, then click Check again (no restart needed):", "sudo chown -R 1000:1000 ./data")])
+            f"the container's user (uid {os.getuid()}, gid {os.getgid()}: PUID/PGID, 1000 by default), so Save, uploads and "
+            "\"add to known IPs\" fail.",
+            [("On the host, in the folder with docker-compose.yml, then click Check again (no restart needed):",
+              f"sudo chown -R {os.getuid()}:{os.getgid()} ./data"),
+             ("Or run the dashboard as the folder's owner instead: set PUID and PGID (in .env next to docker-compose.yml) to "
+              "its uid and gid, then docker compose up -d.", "")])
 
     npm_ok = os.path.isdir(NPM_DIR) and os.access(NPM_DIR, os.R_OK | os.X_OK)
     from_npm = _npm["n_npm"] if npm_ok else 0            # counted as read_npm_hosts() builds the list (not by name)
-    extra, in_npm = len(shown) - from_npm, len(_npm["conf"]) if npm_ok else 0
+    from_nginx = _npm.get("n_plain", 0) if NGINX_DIR else 0
+    extra = len(shown) - from_npm - from_nginx
+    in_npm = sum(1 for h in _npm["conf"] if not h.get("plain")) if npm_ok else 0
     hidden = in_npm - from_npm
     by_hand = [] if not cfgstore.UI_ENABLED else [("No NPM? Add your services by hand in Services → Services not in NPM.", "")]
-    if from_npm or extra or hidden:
+    if from_npm or from_nginx or extra or hidden:
         add("services", "ok", "Services found",
             (f"{from_npm} from Nginx Proxy Manager" + (f" ({hidden} hidden)" if hidden else "")
              if npm_ok else "Nginx Proxy Manager isn't connected")
+            + (f", {from_nginx} from plain Nginx ({NGINX_DIR})" if from_nginx else "")
             + (f", {extra} added by hand." if extra else "."), link="#services")
     elif npm_ok:
         add("services", "warn", "No services yet",
@@ -1529,8 +1551,9 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             f"Services are read from Nginx Proxy Manager's proxy_host folder, which isn't mounted at {NPM_DIR}.",
             [("Using Nginx Proxy Manager? In docker-compose.yml, set the left side of the /npm line to the proxy_host folder "
               "inside NPM's data folder (the one that holds 1.conf, 2.conf…):", f"- /path/to/npm/data/nginx/proxy_host:{NPM_DIR}:ro")],
-            alt="Or, without NPM: delete that line, and add your services by hand in Services → Services not in NPM."
-                if by_hand else "", link="#services", compose=True)
+            alt="Or, without NPM: with plain Nginx, mount your Nginx config folder read-only and set NGINX_DIR "
+                "(- /etc/nginx:/nginx:ro and NGINX_DIR: /nginx, see docs/SETTINGS.md); or delete that line and add your "
+                "services by hand in Services → Services not in NPM." if by_hand else "", link="#services", compose=True)
 
     hw = read_hw()
     install = [("On the host, in the folder you cloned (the one with docker-compose.yml). It needs Python 3.11+ and systemd, "
@@ -1549,10 +1572,17 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
         add("collector", "problem", "The collector's file can't be read",
             f"{HW_FILE} is there, but the dashboard can't read it" + ("." if os.access(HW_FILE, os.R_OK) else
             f" (it runs as uid {os.getuid()}). The collector makes the file readable by dash_uid from its config, which "
-            "must match the user: line in docker-compose.yml (1000 by default)."),
-            [("Check dash_uid:", "sudo grep dash_uid /etc/homelab-dash/collector.toml"),
-             ("Then restart the collector:", "sudo systemctl restart homelab-dash-collector")])
+            "must match the dashboard's user (PUID, 1000 by default)."),
+            [("Tell the collector the dashboard's uid (it sets dash_uid and restarts itself):",
+              f"sudo bash collector/install.sh --uid {os.getuid()}")])
     else:
+        if os.path.isdir(REQ_DIR) and not os.access(REQ_DIR, os.W_OK | os.X_OK):
+            add("collector-uid", "problem", "The dashboard can't hand settings to the collector",
+                f"The collector's request folder ({REQ_DIR}) isn't writable by the dashboard's user (uid {os.getuid()}): the "
+                "collector was set up for a different uid (its dash_uid), so collector settings from this page, Remove buttons "
+                "and similar requests fail.",
+                [("Tell the collector the dashboard's uid (it sets dash_uid and restarts itself):",
+                  f"sudo bash collector/install.sh --uid {os.getuid()}")])
         age = time.time() - num(hw.get("updated"), 0)
         sd_age = time.time() - (_mtime(SEC_DETAIL_FILE) or 0) / 1e9
         if age >= 120:

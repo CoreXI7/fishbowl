@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Installs (or updates) Fishbowl's collector as a systemd service. Its service, config and data names keep the
 # original homelab-dash name (homelab-dash-collector, /etc/homelab-dash, /var/lib/homelab-dash), so updates stay in place.
-# Usage: sudo bash collector/install.sh            uninstall: sudo bash collector/install.sh --uninstall
+# Usage: sudo bash collector/install.sh [--uid N]   uninstall: sudo bash collector/install.sh --uninstall
+# --uid N: the dashboard's user id, PUID; sets dash_uid.
 set -euo pipefail
 cd "$(dirname "$0")"
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
 
+[ $# -eq 0 ] || [ "${1:-}" = "--uid" ] || [ "${1:-}" = "--uninstall" ] || { echo "usage: sudo bash collector/install.sh [--uid N] | --uninstall"; exit 1; }
 if [ "${1:-}" = "--uninstall" ]; then
   systemctl disable --now homelab-dash-collector 2>/dev/null || true
   rm -f /etc/systemd/system/homelab-dash-collector.service /usr/local/sbin/homelab-dash-collector
@@ -13,6 +15,17 @@ if [ "${1:-}" = "--uninstall" ]; then
   systemctl daemon-reload
   echo "removed. Config (/etc/homelab-dash) and data (/var/lib/homelab-dash) were left in place."
   exit 0
+fi
+
+N=""
+if [ "${1:-}" = "--uid" ]; then
+  N="${2:-}"
+  [ $# -le 2 ] || { echo "usage: sudo bash collector/install.sh [--uid N]  (nothing else after N)"; exit 1; }
+  [ -n "$N" ] || { echo "usage: sudo bash collector/install.sh [--uid N]"; exit 1; }
+  # checked before anything is installed (set_dash_uid.py checks again): 1..2147483646, plain digits
+  if ! [[ "$N" =~ ^[1-9][0-9]{0,9}$ ]] || [ "$N" -gt 2147483646 ]; then
+    echo "--uid wants the dashboard's user id (PUID): a number from 1 to 2147483646 (0 = root is refused)"; exit 1
+  fi
 fi
 
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || { echo "needs Python 3.11+"; exit 1; }
@@ -24,6 +37,9 @@ install -m 0755 homelab-dash-collector.py /usr/local/sbin/homelab-dash-collector
 install -m 0644 homelab-dash-collector.service /etc/systemd/system/homelab-dash-collector.service
 install -d -m 0755 /etc/homelab-dash
 [ -f /etc/homelab-dash/collector.toml ] || install -m 0644 collector.example.toml /etc/homelab-dash/collector.toml
+if [ -n "$N" ]; then
+  python3 -I set_dash_uid.py /etc/homelab-dash/collector.toml "$N"   # -I: isolated (no user site, no env, no cwd imports)
+fi
 systemctl daemon-reload
 systemctl enable homelab-dash-collector >/dev/null
 systemctl restart homelab-dash-collector

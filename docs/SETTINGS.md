@@ -71,10 +71,12 @@ Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes en
 | `SETTINGS_UI` | `1` | `0` makes the settings page read-only |
 | `USER_HEADER` | (off) | A header naming the SSO user (e.g. `Remote-User`), logged with each change. Only if your proxy sets it itself, and only trusted on requests from `TRUSTED_PROXY` |
 | `NPM_DIR` | `/npm` | Nginx Proxy Manager's `proxy_host` folder, mounted read-only: the service list |
+| `NGINX_DIR` | (off) | Plain Nginx (no NPM): your Nginx config folder mounted read-only (e.g. `- /etc/nginx:/nginx:ro`, then `NGINX_DIR: /nginx`). Services come from the files in `sites-enabled/` and `conf.d/*.conf`: each `server` block with a `server_name` and a `proxy_pass` to an http(s) address (an `upstream` in the same file is followed). Links in `sites-enabled` are followed only inside that folder; redirect-only blocks are skipped; an NPM host with the same name wins |
+| `PUID`, `PGID` | `1000` | Compose only: the user the container runs as (`user:` line). The data folder must belong to it, and the collector must know it (`sudo bash collector/install.sh --uid <PUID>`) |
 | `CHECK_VIA_PROXY` | (none) | `host[/path] …`: the same as `via_proxy` on the settings page. When set, it wins and the field is locked |
 | `QBIT_URL`, `TRANSMISSION_URL`, `SAB_URL`, `SEERR_URL`, `TAUTULLI_URL` and the keys above | (none) | Integration settings from the environment; the settings page then shows them locked |
 | `HOME_IP` | (none) | Same as `qbittorrent.home_ip` |
-| `DATA_DIR` | `/data` | Settings, keys, acknowledgements, uploads (writable by uid 1000) |
+| `DATA_DIR` | `/data` | Settings, keys (`secrets.json`, mode 600), acknowledgements, uploads (writable by `PUID:PGID`) |
 | `HW_FILE`, `SEC_DETAIL_FILE`, `REQ_DIR` | `/hw/hw.json`, next to it, `/req` | Where the root collector's files are mounted |
 | `PORT` | `8000` | |
 | `DEMO` | (off) | `1` = fake data, nothing saved, no uploads (the public demo) |
@@ -134,7 +136,8 @@ open that file:
 - **The last change wins**: a change on the page applies only if the setting still has the value the page showed, and
   editing a setting in `collector.toml` later (then restarting the collector) wins over what the page set for it.
 - `sudo homelab-dash-collector --apply --undo` drops everything the page set: back to `collector.toml` alone.
-- `out_dir` and `dash_uid` can only be set in `collector.toml`.
+- `out_dir` and `dash_uid` can only be set in `collector.toml`. `sudo bash collector/install.sh --uid <PUID>` sets
+  `dash_uid` for you (and restarts the collector).
 
 ## Signing in (`AUTH: login`, the default)
 

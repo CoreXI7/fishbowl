@@ -152,9 +152,54 @@ class Setup(unittest.TestCase):
                 self.skipTest("running as root: every file is readable")
             item = {i["id"]: i for i in app.setup_checks()}["collector"]
             self.assertEqual(item["state"], "problem", "installed but unreadable isn't 'not installed'")
-            self.assertIn("dash_uid", " ".join(s["code"] for s in item["steps"]))
+            self.assertIn(f"collector/install.sh --uid {os.getuid()}", " ".join(s["code"] for s in item["steps"]),
+                          "the fix tells the collector the dashboard's real uid")
         finally:
             os.chmod(app.HW_FILE, 0o644)
+
+    def test_saving_names_the_real_uid(self):
+        """An unwritable data folder: the fix names the uid:gid the dashboard really runs as (PUID/PGID), not 1000."""
+        app = load_app()
+        os.chmod(app.cfgstore.DATA_DIR, 0o555)
+        try:
+            if os.access(app.cfgstore.DATA_DIR, os.W_OK):
+                self.skipTest("running as root: every folder is writable")
+            item = {i["id"]: i for i in app.setup_checks()}["saving"]
+            self.assertEqual(item["state"], "problem")
+            self.assertIn(f"sudo chown -R {os.getuid()}:{os.getgid()} ./data", [s["code"] for s in item["steps"]])
+            self.assertIn("PUID", " ".join(s["text"] for s in item["steps"]))
+        finally:
+            os.chmod(app.cfgstore.DATA_DIR, 0o755)
+
+    def test_collector_request_folder_unwritable(self):
+        """The collector set up for another uid: its request folder isn't writable -> a problem with the --uid fix."""
+        app = load_app()
+        collector_files(app)
+        os.makedirs(app.REQ_DIR, exist_ok=True)
+        os.chmod(app.REQ_DIR, 0o555)
+        try:
+            if os.access(app.REQ_DIR, os.W_OK):
+                self.skipTest("running as root: every folder is writable")
+            st = {i["id"]: i for i in app.setup_checks()}
+            self.assertEqual(st["collector-uid"]["state"], "problem")
+            self.assertIn(f"collector/install.sh --uid {os.getuid()}", st["collector-uid"]["steps"][0]["code"])
+        finally:
+            os.chmod(app.REQ_DIR, 0o755)
+        self.assertNotIn("collector-uid", {i["id"] for i in app.setup_checks()}, "writable again: no problem shown")
+
+    def test_plain_nginx_services_counted(self):
+        """Services from plain Nginx (NGINX_DIR) are counted as such, not as added by hand, NPM or not."""
+        app = load_app()
+        root = os.path.join(app.TEST_TMP, "nginx")
+        os.makedirs(os.path.join(root, "conf.d"))
+        with open(os.path.join(root, "conf.d", "a.conf"), "w") as f:
+            f.write("server { server_name jelly.example.com; location / { proxy_pass http://10.0.0.9:8096; } }\n")
+        app.NGINX_DIR = root
+        app._npm["sig"] = None
+        npm_conf(app.NPM_DIR, "plex.example.com")
+        item = {i["id"]: i for i in app.setup_checks()}["services"]
+        self.assertEqual(item["detail"], f"1 from Nginx Proxy Manager, 1 from plain Nginx ({root}).")
+        self.assertIn("jelly.example.com", [h["name"] for h in app.read_npm_hosts()])
 
     def test_services_count(self):
         """Hand-added services aren't counted twice, and hidden NPM hosts aren't counted as shown."""
