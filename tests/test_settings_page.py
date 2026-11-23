@@ -203,6 +203,22 @@ class Setup(unittest.TestCase):
         self.assertEqual(item["detail"], f"1 from Nginx Proxy Manager, 1 from plain Nginx ({root}).")
         self.assertIn("jelly.example.com", [h["name"] for h in app.read_npm_hosts()])
 
+    def test_caddy_services_counted(self):
+        """Caddy sites (CADDYFILE) are counted as such; NPM wins a name clash."""
+        app = load_app()
+        root = os.path.join(app.TEST_TMP, "caddy")
+        os.makedirs(root)
+        with open(os.path.join(root, "Caddyfile"), "w") as f:
+            f.write("plex.example.com {\n\treverse_proxy other:1\n}\nsonarr.example.com {\n\treverse_proxy sonarr:8989\n}\n")
+        app.CADDYFILE = os.path.join(root, "Caddyfile")
+        app._npm["sig"] = None
+        npm_conf(app.NPM_DIR, "plex.example.com")
+        item = {i["id"]: i for i in app.setup_checks()}["services"]
+        self.assertEqual(item["detail"], f"1 from Nginx Proxy Manager, 1 from Caddy ({app.CADDYFILE}).")
+        hosts = {h["name"]: h for h in app.read_npm_hosts()}
+        self.assertIn("sonarr.example.com", hosts)
+        self.assertFalse(hosts["plex.example.com"].get("caddy"), "the NPM host of the same name wins")
+
     def test_services_count(self):
         """Hand-added services aren't counted twice, and hidden NPM hosts aren't counted as shown."""
         app = load_app()

@@ -43,6 +43,7 @@ from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _De
                       StrictResponse, _NoRedirect, fetch_same_host, num, read_capped, read_json, text, watch)
 import dlclients                        # noqa: E402  (Transmission + SABnzbd)
 import nginxconf                        # noqa: E402  (plain Nginx site configs as services)
+import caddyconf                        # noqa: E402  (Caddyfile sites as services)
 
 DEMO = cfgstore.DEMO
 HW_FILE = os.environ.get("HW_FILE", "/hw/hw.json")
@@ -50,6 +51,7 @@ REQ_DIR = os.environ.get("REQ_DIR", "/req")
 INFRA = cfgstore.infra()
 NPM_DIR = INFRA["npm_dir"]
 NGINX_DIR = INFRA.get("nginx_dir", "")   # plain Nginx site configs (app/nginxconf.py); empty = off
+CADDYFILE = INFRA.get("caddyfile", "")   # Caddyfile sites (app/caddyconf.py); empty = off
 TRUSTED_PROXY = INFRA["trusted_proxy"]      # e.g. "nginx" or "nginx 10.89.250.3": only those hosts may talk to us
 ALLOWED_ORIGINS = set(INFRA["origins"])
 USER_HEADER = os.environ.get("USER_HEADER", "")   # e.g. Remote-User: logged only if your proxy sets (overwrites) it
@@ -460,7 +462,7 @@ def has_login(txt):
     return root or (server and not root_off)
 
 
-_npm = {"sig": None, "hosts": [], "conf": [], "n_npm": 0, "n_plain": 0}   # last host list (+ every parsed .conf, hidden ones too) + the folder state
+_npm = {"sig": None, "hosts": [], "conf": [], "n_npm": 0, "n_plain": 0, "n_caddy": 0}   # last host list (+ every parsed .conf, hidden ones too) + the folder state
 
 
 def read_npm_hosts():
@@ -470,34 +472,36 @@ def read_npm_hosts():
         sig = tuple(sorted((e.name, e.stat().st_mtime_ns) for e in os.scandir(NPM_DIR) if e.name.endswith(".conf")))
     except OSError:
         sig = ()
-    picked = None
-    if NGINX_DIR:
-        picked = nginxconf.files(NGINX_DIR)          # one scan: the signature and the parse use the same file list
-        sig = (sig, tuple((n, m) for n, _, m in picked))
+    picked = nginxconf.files(NGINX_DIR) if NGINX_DIR else None     # one scan each: signature and parse share it
+    cpicked = caddyconf.files(os.path.dirname(CADDYFILE)) if CADDYFILE else None
+    sig = (sig, tuple((n, m) for n, _, m in picked or ()), tuple((n, m) for n, _, m in cpicked or ()))
     with _npm_lock:   # (one re-parse at a time: requests arriving meanwhile use its result)
         if sig != _npm["sig"]:
-            _reparse_npm(sig, picked)
+            _reparse_npm(sig, picked, cpicked)
     return _npm["hosts"]
 
 
 _npm_lock = threading.Lock()
 
 
-def _reparse_npm(sig, picked=None):
+def _reparse_npm(sig, picked=None, cpicked=None):
     """Re-read the NPM proxy-host files (read_npm_hosts calls it under _npm_lock)."""
-    npm_sig = sig[0] if NGINX_DIR else sig
-    conf = [h for h in (parse_npm_conf(os.path.join(NPM_DIR, n)) for n, _ in npm_sig) if h]
+    conf = [h for h in (parse_npm_conf(os.path.join(NPM_DIR, n)) for n, _ in sig[0]) if h]
     if NGINX_DIR:                                   # plain Nginx hosts; an NPM host of the same name wins
         names = {h["name"] for h in conf}
         conf += [h for h in nginxconf.read_hosts(NGINX_DIR, has_login, AUTH_SNIPPET, picked) if h["name"] not in names]
+    if CADDYFILE:                                   # Caddy sites; NPM and plain Nginx win a name clash
+        names = {h["name"] for h in conf}
+        conf += [h for h in caddyconf.read_hosts(CADDYFILE, cpicked) if h["name"] not in names]
     hosts = [h for h in conf if h["name"] not in SKIP_HOSTS]
     n_npm = sum(1 for h in hosts if not h.get("plain"))   # shown, from NPM
-    n_plain = len(hosts) - n_npm                          # shown, from plain Nginx (NGINX_DIR)
+    n_caddy = sum(1 for h in hosts if h.get("caddy"))     # shown, from the Caddyfile (CADDYFILE)
+    n_plain = len(hosts) - n_npm - n_caddy                # shown, from plain Nginx (NGINX_DIR)
     for s in EXTRA_SERVICES:
         if s.get("name") and s.get("url") and s["name"] not in SKIP_HOSTS:
             hosts.append({"name": s["name"], "upstream": s["url"].rstrip("/"), "auth": bool(s.get("auth"))})
     hosts.sort(key=lambda h: (h["name"].split(".", 1)[-1], h["name"]))   # group by domain, then name
-    _npm.update(sig=sig, hosts=hosts, conf=conf, n_npm=n_npm, n_plain=n_plain)
+    _npm.update(sig=sig, hosts=hosts, conf=conf, n_npm=n_npm, n_plain=n_plain, n_caddy=n_caddy)
 
 
 def check(host):
@@ -1527,15 +1531,17 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
     npm_ok = os.path.isdir(NPM_DIR) and os.access(NPM_DIR, os.R_OK | os.X_OK)
     from_npm = _npm["n_npm"] if npm_ok else 0            # counted as read_npm_hosts() builds the list (not by name)
     from_nginx = _npm.get("n_plain", 0) if NGINX_DIR else 0
-    extra = len(shown) - from_npm - from_nginx
+    from_caddy = _npm.get("n_caddy", 0) if CADDYFILE else 0
+    extra = len(shown) - from_npm - from_nginx - from_caddy
     in_npm = sum(1 for h in _npm["conf"] if not h.get("plain")) if npm_ok else 0
     hidden = in_npm - from_npm
     by_hand = [] if not cfgstore.UI_ENABLED else [("No NPM? Add your services by hand in Services → Services not in NPM.", "")]
-    if from_npm or from_nginx or extra or hidden:
+    if from_npm or from_nginx or from_caddy or extra or hidden:
         add("services", "ok", "Services found",
             (f"{from_npm} from Nginx Proxy Manager" + (f" ({hidden} hidden)" if hidden else "")
              if npm_ok else "Nginx Proxy Manager isn't connected")
             + (f", {from_nginx} from plain Nginx ({NGINX_DIR})" if from_nginx else "")
+            + (f", {from_caddy} from Caddy ({CADDYFILE})" if from_caddy else "")
             + (f", {extra} added by hand." if extra else "."), link="#services")
     elif npm_ok:
         add("services", "warn", "No services yet",
@@ -1552,7 +1558,8 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             [("Using Nginx Proxy Manager? In docker-compose.yml, set the left side of the /npm line to the proxy_host folder "
               "inside NPM's data folder (the one that holds 1.conf, 2.conf…):", f"- /path/to/npm/data/nginx/proxy_host:{NPM_DIR}:ro")],
             alt="Or, without NPM: with plain Nginx, mount your Nginx config folder read-only and set NGINX_DIR "
-                "(- /etc/nginx:/nginx:ro and NGINX_DIR: /nginx, see docs/SETTINGS.md); or delete that line and add your "
+                "(- /etc/nginx:/nginx:ro and NGINX_DIR: /nginx); with Caddy, mount its folder and set CADDYFILE (- /etc/caddy:/caddy:ro "
+                "and CADDYFILE: /caddy/Caddyfile; see docs/SETTINGS.md); or delete that line and add your "
                 "services by hand in Services → Services not in NPM." if by_hand else "", link="#services", compose=True)
 
     hw = read_hw()

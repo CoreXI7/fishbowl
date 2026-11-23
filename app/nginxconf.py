@@ -33,7 +33,7 @@ def _inside(path, root):
     return real == root or real.startswith(root + os.sep)
 
 
-def _resolve(entry, folder, root):
+def _resolve(entry, folder, root, prefix=NGINX_PREFIX):
     """The real file behind a directory entry, or None. A link may point anywhere under NGINX_PREFIX on the host; its
     target is mapped into the mounted root and must stay inside it."""
     try:
@@ -50,13 +50,18 @@ def _resolve(entry, folder, root):
         return None
     if os.path.isabs(target):
         norm = os.path.normpath(target)
-        if norm != NGINX_PREFIX and not norm.startswith(NGINX_PREFIX + "/"):
+        if norm != prefix and not norm.startswith(prefix + "/"):
             return None
-        mapped = os.path.join(root, os.path.relpath(norm, NGINX_PREFIX))
+        mapped = os.path.join(root, os.path.relpath(norm, prefix))
     else:
         mapped = os.path.normpath(os.path.join(folder, target))
     if not _inside(mapped, root):
         return None
+    rel = os.path.relpath(mapped, root)
+    if any(part.startswith(".") for part in rel.split(os.sep)):
+        return None                                      # no hidden files or folders behind a link
+    if os.path.realpath(mapped) != os.path.join(os.path.realpath(root), rel):
+        return None                                      # a link inside the target's path: no link chains
     try:
         if not stat.S_ISREG(os.lstat(mapped).st_mode):   # the target must be a plain file itself: no link chains
             return None
@@ -94,7 +99,7 @@ def files(root):
     return picks
 
 
-def read_text(path, root=None):
+def read_text(path, root=None, strip=None):
     """A regular file's text with comments and over-long lines dropped, or None (same rules as the NPM reader). With
     root: the file actually opened must lie inside root (a folder swapped for a link after files() checked it)."""
     try:
@@ -121,7 +126,7 @@ def read_text(path, root=None):
     for line in raw.splitlines():
         if len(line) > 4096:
             continue
-        out.append(_strip_comment(line))
+        out.append((strip or _strip_comment)(line))
     return "\n".join(out)
 
 

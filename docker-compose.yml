@@ -27,6 +27,7 @@ services:
       TRUSTED_PROXY: nginx                # your reverse proxy's container name; empty = no proxy (anyone who can reach port 8000 gets the sign-in page)
       NPM_DIR: /npm
       # NGINX_DIR: /nginx                 # plain Nginx (no NPM): services from sites-enabled/ and conf.d/ (mount below)
+      # CADDYFILE: /caddy/Caddyfile       # Caddy (no NPM): services from your Caddyfile and what it imports (mount below)
       # SETTINGS_UI: "0"                  # make the settings page read-only
       # USER_HEADER: Remote-User          # name the SSO user in the log; ONLY if your proxy sets this header itself
       # LISTEN: "127.0.0.1 10.89.250.2"  # answer only on these addresses: see "Lock the dash to the proxy" in docs/SETTINGS.md
@@ -37,6 +38,8 @@ services:
       - ../nginx/data/nginx/proxy_host:/npm:ro
       # Plain Nginx instead of NPM: your Nginx config folder, read-only (and set NGINX_DIR: /nginx above):
       # - /etc/nginx:/nginx:ro
+      # Caddy instead of NPM: the folder that holds your Caddyfile, read-only (and set CADDYFILE above):
+      # - /etc/caddy:/caddy:ro
       # Written by the optional root collector (see collector/). Remove both lines if you don't install it.
       - /var/lib/homelab-dash:/hw:ro
       - /var/lib/homelab-dash/req:/req

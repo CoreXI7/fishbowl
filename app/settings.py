@@ -133,6 +133,8 @@ def infra():
         "npm_dir": os.environ.get("NPM_DIR", proxy.get("npm_dir", "/npm")),
         # plain Nginx (no NPM): the host's /etc/nginx mounted read-only; empty = off
         "nginx_dir": os.environ.get("NGINX_DIR", proxy.get("nginx_dir", "")),
+        # Caddy: the Caddyfile's path inside the container (its folder mounted read-only); empty = off
+        "caddyfile": os.environ.get("CADDYFILE", proxy.get("caddyfile", "")),
     }
 
 
