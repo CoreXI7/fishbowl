@@ -311,7 +311,7 @@ def proxy_refusal_note():
         return (f" (TRUSTED_PROXY {TRUSTED_PROXY!r} names the proxy, but the dashboard is on more than one network, where a "
                 "name isn't trusted: give the proxy's IP, or set LISTEN)")
     return (f" (TRUSTED_PROXY {TRUSTED_PROXY!r} doesn't resolve, so every connection is refused: set it to your proxy's "
-            "container name (docker ps), on a network the dashboard shares)")
+            "container name (docker ps), on a network the dashboard shares, or to its IP if it isn't a container here)")
 
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -1535,7 +1535,7 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
     extra = len(shown) - from_npm - from_nginx - from_caddy
     in_npm = sum(1 for h in _npm["conf"] if not h.get("plain")) if npm_ok else 0
     hidden = in_npm - from_npm
-    by_hand = [] if not cfgstore.UI_ENABLED else [("No NPM? Add your services by hand in Services → Services not in NPM.", "")]
+    by_hand = [] if not cfgstore.UI_ENABLED else [("No NPM? Add your services by hand in Services → Services added by hand.", "")]
     if from_npm or from_nginx or from_caddy or extra or hidden:
         add("services", "ok", "Services found",
             (f"{from_npm} from Nginx Proxy Manager" + (f" ({hidden} hidden)" if hidden else "")
@@ -1551,7 +1551,7 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
               "ls /path/to/npm/data/nginx/proxy_host/"),
              ("Fix the path in docker-compose.yml.", "")],
             alt="Or, without NPM: delete the /npm line (Docker made that empty folder), and add your services by hand in "
-                "Services → Services not in NPM." if by_hand else "", link="#services", compose=True)
+                "Services → Services added by hand." if by_hand else "", link="#services", compose=True)
     else:
         add("services", "problem", "No services yet",
             f"Services are read from Nginx Proxy Manager's proxy_host folder, which isn't mounted at {NPM_DIR}.",
@@ -1560,7 +1560,7 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
             alt="Or, without NPM: with plain Nginx, mount your Nginx config folder read-only and set NGINX_DIR "
                 "(- /etc/nginx:/nginx:ro and NGINX_DIR: /nginx); with Caddy, mount its folder and set CADDYFILE (- /etc/caddy:/caddy:ro "
                 "and CADDYFILE: /caddy/Caddyfile; see docs/SETTINGS.md); or delete that line and add your "
-                "services by hand in Services → Services not in NPM." if by_hand else "", link="#services", compose=True)
+                "services by hand in Services → Services added by hand." if by_hand else "", link="#services", compose=True)
 
     hw = read_hw()
     install = [("On the host, in the folder you cloned (the one with docker-compose.yml). It needs Python 3.11+ and systemd, "

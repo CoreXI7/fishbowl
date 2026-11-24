@@ -89,7 +89,8 @@
 
     <section id="services" aria-labelledby="h-services">
       <h2 id="h-services">Services <small id="svc-count"></small></h2>
-      <p class="hint">Found automatically from Nginx Proxy Manager. Group them, rename them and pick icons: an icon is a name from
+      <p class="hint">Found automatically from your proxy's config (Nginx Proxy Manager, plain Nginx or a Caddyfile), plus the ones
+        you add by hand below. Group them, rename them and pick icons: an icon is a name from
         <a href="https://dashboard-icons.homarr.dev" target="_blank" rel="noopener">dashboard-icons</a> (like <code>plex</code> or <code>sonarr</code>),
         or leave it empty for the site's own icon. Services you haven't grouped show under "New / other" on the dashboard.</p>
       <div id="svc-empty" class="empty" hidden></div>
@@ -97,8 +98,9 @@
       <button type="button" id="add-group">+ Add group</button>
       <div id="unassigned"></div>
       <div id="hidden-wrap"></div>
-      <h3 id="h-extras">Services not in NPM</h3>
-      <p class="hint">Anything else you want health-checked: a NAS, a router, a box on another network.</p>
+      <h3 id="h-extras">Services added by hand</h3>
+      <p class="hint">Anything your proxy's config doesn't list: a NAS, a router, a box on another network. Click
+        <b>+ Add service</b> once for each one (typing a new name into a row renames that service). Then group them above.</p>
       <div id="extras"></div>
       <button type="button" id="add-extra">+ Add service</button>
       <details class="adv" id="adv-services">

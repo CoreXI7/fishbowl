@@ -323,7 +323,7 @@ function renderServices() {
   $("svc-count").textContent = `${all.length} found`;
   $("svc-empty").hidden = !!(all.length || S.skip_hosts.length);
   $("svc-empty").innerHTML = 'No services found yet. <a href="#setup">Setup</a> says how to connect Nginx Proxy Manager, '
-    + 'or add services by hand under <a href="#h-extras">Services not in NPM</a> below.';
+    + 'or add services by hand under <a href="#h-extras">Services added by hand</a> below.';
   $("groups").innerHTML = S.groups.map((g, gi) => `<div class="grp-ed" data-g="${gi}">
       <div class="gh"><input type="text" value="${esc(g.name)}" data-gname aria-label="Group name">
         <button type="button" class="ibtn" data-ga="up" ${gi === 0 ? "disabled" : ""} aria-label="move group ${esc(g.name)} up" title="move group up">↑</button>
@@ -408,7 +408,7 @@ $("add-group").onclick = () => {
   const n = document.querySelector(`.grp-ed[data-g="${S.groups.length - 1}"] [data-gname]`); n.focus(); n.select();
 };
 
-// ---------- services not in NPM ----------
+// ---------- services added by hand ----------
 function renderExtras() {
   $("extras").innerHTML = S.services.map((x, i) => `<div class="xrow" data-i="${i}">
       <div class="field"><label for="x-name-${i}">Name</label><input type="text" id="x-name-${i}" value="${esc(x.name)}" data-x="name" data-was="${esc(x.name)}"${i ? "" : ` aria-describedby="x-d-0"`}>

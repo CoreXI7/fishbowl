@@ -48,13 +48,31 @@ wins and is locked on the page.
 
 ### 3. Edit `docker-compose.yml`
 
-Open `docker-compose.yml` and change these lines to match your server:
+Set `ORIGIN` to the address you'll open the dashboard at, for example `https://dash.example.com`. The rest depends on
+two things about your setup.
 
-- `ORIGIN`: the address you'll open the dashboard at, for example `https://dash.example.com`
-- `TRUSTED_PROXY`: the container name of your reverse proxy (it's set to `nginx` by default)
-- `networks`: the Docker network your reverse proxy is on (`reverse_proxy` by default)
-- The `proxy_host` volume: the path to Nginx Proxy Manager's `data/nginx/proxy_host` folder. Delete this line if you
-  don't use Nginx Proxy Manager.
+**Where does your reverse proxy run?**
+
+| Your proxy | `TRUSTED_PROXY` | How the proxy reaches Fishbowl |
+|---|---|---|
+| A Docker container on this server (Nginx Proxy Manager, Caddy, Traefik, ...) | its container name (default `nginx`) | Keep `networks:` and set it to the proxy's Docker network (default `reverse_proxy`). |
+| Another machine, an LXC or VM, or installed on this server without Docker | its IP address, e.g. `10.0.0.50` (on this same server: this server's own LAN IP) | Delete both `networks:` parts and add `ports: ["10.0.0.10:8000:8000"]` with this server's LAN address (a bare `8000:8000` would listen on every interface). |
+
+Only the address in `TRUSTED_PROXY` can connect, so get this one right. Several names or IPs can be listed, separated by
+spaces. Not sure which address your proxy connects from? Open the dashboard through it once, then
+`docker logs dash 2>&1 | grep "blocked direct connection"` shows the address that was turned away.
+
+**Where do your services come from?**
+
+| Your services are in | What to do |
+|---|---|
+| Nginx Proxy Manager | Keep the `proxy_host` volume and point it at NPM's `data/nginx/proxy_host` folder. |
+| Plain Nginx config files | Delete the `proxy_host` line, uncomment the `/etc/nginx:/nginx:ro` volume and `NGINX_DIR: /nginx`. |
+| A Caddyfile | Delete the `proxy_host` line, uncomment the `/etc/caddy:/caddy:ro` volume and `CADDYFILE: /caddy/Caddyfile`. |
+| None of these, or the proxy is on another machine | Delete the `proxy_host` line and add your services on the settings page (step 7). |
+
+The config files are only read, never changed. If your proxy is on another machine, you can copy or mount its config
+folder onto this server and point the volume there, or just add the services by hand.
 
 ### 4. Start it
 
@@ -64,11 +82,20 @@ docker compose up -d
 
 ### 5. Connect your reverse proxy
 
-In your reverse proxy, send your chosen address (for example `dash.example.com`) to `dash`, port `8000`.
+Send your chosen address (for example `dash.example.com`) to Fishbowl: `dash:8000` if the proxy shares its Docker
+network, otherwise `http://<this server's LAN address>:8000`.
 
-Your proxy also needs to pass on each visitor's real IP address, so Fishbowl can tell visitors apart. The exact lines
-for each proxy are in [docs/SETTINGS.md](SETTINGS.md#signing-in-auth-login-the-default). The settings page will
-remind you if this is missing.
+The proxy must also tell Fishbowl each visitor's real IP and whether they came over HTTPS, and overwrite whatever the
+visitor sent in those headers. For plain Nginx, add these two lines to the dashboard's `location`:
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+Nginx Proxy Manager, Caddy and the others need slightly different lines: see
+[docs/SETTINGS.md](SETTINGS.md#signing-in-auth-login-the-default). The Setup page (step 7) shows which address Fishbowl
+sees for your proxy and tells you if a header is missing.
 
 ### 6. Create your account
 
@@ -87,6 +114,11 @@ sign-in off: add `AUTH: proxy` under `environment:` in `docker-compose.yml` and 
 
 Click the **⚙** button and open **Setup**. It checks your install and tells you how to fix anything that's missing.
 Then connect your apps under **Integrations**: qBittorrent or Transmission, SABnzbd, Seerr and Tautulli each have a **Test** button.
+
+**Adding services by hand** (Settings → Services → **Services added by hand**): click **+ Add service** once for each
+service and fill in its name and the address to check. Typing a new name into an existing row renames that service, it
+doesn't add a second one. Then put each one in a group in the list above. **Delete** removes a hand-added service;
+services found from your proxy's config can only be hidden, because they'd come back on the next scan.
 
 ### Optional: install the collector
 

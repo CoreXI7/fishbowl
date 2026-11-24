@@ -77,14 +77,15 @@ git clone https://github.com/CoreXI7/fishbowl && cd fishbowl
 mkdir data && sudo chown 1000:1000 data      # or your own user: see PUID/PGID in docs/INSTALL.md
 ```
 
-Set `ORIGIN`, `TRUSTED_PROXY` and the proxy network in `docker-compose.yml`, then:
+Set `ORIGIN`, `TRUSTED_PROXY` and the proxy network in `docker-compose.yml` (proxy on another machine or in an LXC?
+Use its IP and publish the port instead: [docs/INSTALL.md](docs/INSTALL.md#3-edit-docker-composeyml)), then:
 
 ```sh
 docker compose up -d
 docker logs dash 2>&1 | grep "^SETUP CODE" | tail -n 1
 ```
 
-Point your reverse proxy at `dash:8000`, open the address, enter the setup code and create your account. API keys
+Point your reverse proxy at `dash:8000` (or this server's LAN address, port 8000), open the address, enter the setup code and create your account. API keys
 (qBittorrent, Seerr, Tautulli...) go on the settings page; they're stored in `data/secrets.json` (mode 600), so there's
 no separate secrets file to manage. The
 **Setup** page under ⚙ checks the rest of your install. Step by step, with every option: [docs/INSTALL.md](docs/INSTALL.md).
