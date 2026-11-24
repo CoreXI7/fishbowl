@@ -1,0 +1,6 @@
+r.example.com {
+	route {
+		header X-Test 1
+		reverse_proxy r:6100
+	}
+}

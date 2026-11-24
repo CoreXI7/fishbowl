@@ -1,0 +1,482 @@
+{
+ "caddy_image": "caddy:2.11.7-alpine",
+ "cases": {
+  "01-single": {
+   "caddy": {
+    "app.example.com": [
+     "app:8080"
+    ]
+   },
+   "fishbowl": {
+    "app.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://app:8080"
+    }
+   }
+  },
+  "02-several": {
+   "caddy": {
+    "a.example.com": [
+     "10.0.0.5:3000"
+    ],
+    "b.example.com": [
+     "10.0.0.6:8443"
+    ],
+    "c.example.com": [
+     "c:80"
+    ]
+   },
+   "fishbowl": {
+    "a.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://10.0.0.5:3000"
+    },
+    "b.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "https://10.0.0.6:8443"
+    },
+    "c.example.com": {
+     "auth": false,
+     "force_ssl": false,
+     "login": false,
+     "upstream": "http://c:80"
+    }
+   }
+  },
+  "03-imports": {
+   "caddy": {
+    "one.example.com": [
+     "one:1111"
+    ],
+    "two.example.com": [
+     "two:2222"
+    ]
+   },
+   "fishbowl": {
+    "one.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://one:1111"
+    },
+    "two.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://two:2222"
+    }
+   }
+  },
+  "04-authelia": {
+   "caddy": {
+    "open.example.com": [
+     "open:9001"
+    ],
+    "secure.example.com": [
+     "secure:9000"
+    ]
+   },
+   "fishbowl": {
+    "open.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://open:9001"
+    },
+    "secure.example.com": {
+     "auth": true,
+     "force_ssl": true,
+     "login": true,
+     "upstream": "http://secure:9000"
+    }
+   }
+  },
+  "05-matchers": {
+   "caddy": {
+    "api.example.com": [
+     "backend:5000",
+     "frontend:3000"
+    ]
+   },
+   "fishbowl": {
+    "api.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://frontend:3000"
+    }
+   }
+  },
+  "06-handle": {
+   "caddy": {
+    "h.example.com": [
+     "hand:7000"
+    ]
+   },
+   "fishbowl": {
+    "h.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://hand:7000"
+    }
+   }
+  },
+  "07-to-lines": {
+   "caddy": {
+    "lb.example.com": [
+     "node1:8001",
+     "node2:8002"
+    ]
+   },
+   "fishbowl": {
+    "lb.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://node1:8001"
+    }
+   }
+  },
+  "08-snippet-args": {
+   "caddy": {
+    "s1.example.com": [
+     "s1:8101"
+    ],
+    "s2.example.com": [
+     "s2:8102"
+    ]
+   },
+   "fishbowl": {
+    "s1.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://s1:8101"
+    },
+    "s2.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://s2:8102"
+    }
+   }
+  },
+  "09-multi-address": {
+   "caddy": {
+    "media.example.com": [
+     "jellyfin:8096"
+    ],
+    "www.media.example.com": [
+     "jellyfin:8096"
+    ]
+   },
+   "fishbowl": {
+    "media.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://jellyfin:8096"
+    }
+   }
+  },
+  "10-redirect-and-static": {
+   "caddy": {
+    "new.example.com": [
+     "new:8888"
+    ]
+   },
+   "fishbowl": {
+    "new.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://new:8888"
+    }
+   }
+  },
+  "11-basic-auth": {
+   "caddy": {
+    "private.example.com": [
+     "private:4000"
+    ]
+   },
+   "fishbowl": {
+    "private.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": true,
+     "upstream": "http://private:4000"
+    }
+   }
+  },
+  "12-handle-path": {
+   "caddy": {
+    "hp.example.com": [
+     "hp-app:6000"
+    ]
+   },
+   "fishbowl": {
+    "hp.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://hp-app:6000"
+    }
+   }
+  },
+  "13-route": {
+   "caddy": {
+    "r.example.com": [
+     "r:6100"
+    ]
+   },
+   "fishbowl": {
+    "r.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://r:6100"
+    }
+   }
+  },
+  "14-heredoc": {
+   "caddy": {
+    "after.example.com": [
+     "after:6200"
+    ]
+   },
+   "fishbowl": {
+    "after.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://after:6200"
+    }
+   }
+  },
+  "15-h2c-and-port": {
+   "caddy": {
+    "grpc.example.com": [
+     "grpc:50051"
+    ],
+    "local.example.com": [
+     ":9999"
+    ]
+   },
+   "fishbowl": {
+    "grpc.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://grpc:50051"
+    },
+    "local.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://localhost:9999"
+    }
+   }
+  },
+  "16-port-site": {
+   "caddy": {
+    "(any host)": [
+     "portonly:1"
+    ],
+    "named.example.com": [
+     "named:6300"
+    ]
+   },
+   "fishbowl": {
+    "named.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://named:6300"
+    }
+   }
+  },
+  "17-named-matcher": {
+   "caddy": {
+    "nm.example.com": [
+     "ws:6400",
+     "web:6401"
+    ]
+   },
+   "fishbowl": {
+    "nm.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://web:6401"
+    }
+   }
+  },
+  "18-wildcard": {
+   "caddy": {
+    "*.example.com": [
+     "foo:6500"
+    ],
+    "plain.example.com": [
+     "plain:6501"
+    ]
+   },
+   "fishbowl": {
+    "plain.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://plain:6501"
+    }
+   }
+  },
+  "19-php": {
+   "caddy": {},
+   "fishbowl": {}
+  },
+  "20-unix": {
+   "caddy": {
+    "sock.example.com": [
+     "unix//run/app.sock"
+    ],
+    "tcp.example.com": [
+     "tcp:6600"
+    ]
+   },
+   "fishbowl": {
+    "tcp.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://tcp:6600"
+    }
+   }
+  },
+  "21-absolute-import": {
+   "caddy": {
+    "abs.example.com": [
+     "abs:6700"
+    ]
+   },
+   "fishbowl": {
+    "abs.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://abs:6700"
+    }
+   }
+  },
+  "22-comments-quotes": {
+   "caddy": {
+    "quote.example.com": [
+     "quote:6800"
+    ]
+   },
+   "fishbowl": {
+    "quote.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://quote:6800"
+    }
+   }
+  },
+  "23-tls-log": {
+   "caddy": {
+    "tl.example.com": [
+     "tl:6900"
+    ]
+   },
+   "fishbowl": {
+    "tl.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://tl:6900"
+    }
+   }
+  },
+  "24-forward-auth-only": {
+   "caddy": {},
+   "fishbowl": {}
+  },
+  "25-nested-snippets": {
+   "caddy": {
+    "nest.example.com": [
+     "nest:7100"
+    ]
+   },
+   "fishbowl": {
+    "nest.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": true,
+     "upstream": "http://nest:7100"
+    }
+   }
+  },
+  "26-glob-dirs": {
+   "caddy": {
+    "app.example.com": [
+     "app:1"
+    ],
+    "db.example.com": [
+     "db:2"
+    ]
+   },
+   "fishbowl": {
+    "app.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://app:1"
+    },
+    "db.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://db:2"
+    }
+   }
+  },
+  "27-scoped-matched": {
+   "caddy": {
+    "sc.example.com": [
+     "api:8080",
+     "web:8081"
+    ]
+   },
+   "fishbowl": {
+    "sc.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://web:8081"
+    }
+   }
+  },
+  "29-auth-on-path": {
+   "caddy": {
+    "pa.example.com": [
+     "app:8080"
+    ]
+   },
+   "fishbowl": {
+    "pa.example.com": {
+     "auth": false,
+     "force_ssl": true,
+     "login": false,
+     "upstream": "http://app:8080"
+    }
+   }
+  }
+ }
+}

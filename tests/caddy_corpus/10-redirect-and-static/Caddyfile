@@ -1,0 +1,10 @@
+old.example.com {
+	redir https://new.example.com{uri}
+}
+static.example.com {
+	root * /srv
+	file_server
+}
+new.example.com {
+	reverse_proxy new:8888
+}

@@ -1,0 +1,5 @@
+# a comment with reverse_proxy fake:1
+quote.example.com { # trailing comment
+	header "X-Note" "reverse_proxy nope:2"
+	reverse_proxy "quote:6800"
+}

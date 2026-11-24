@@ -1,0 +1,9 @@
+*.example.com {
+	@foo host foo.example.com
+	handle @foo {
+		reverse_proxy foo:6500
+	}
+}
+plain.example.com {
+	reverse_proxy plain:6501
+}

@@ -1,0 +1,8 @@
+nm.example.com {
+	@ws {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @ws ws:6400
+	reverse_proxy web:6401
+}

@@ -1,0 +1,8 @@
+doc.example.com {
+	respond <<HTML
+		<p>reverse_proxy evil:1</p>
+		HTML 200
+}
+after.example.com {
+	reverse_proxy after:6200
+}

@@ -1,0 +1,6 @@
+sock.example.com {
+	reverse_proxy unix//run/app.sock
+}
+tcp.example.com {
+	reverse_proxy tcp:6600
+}

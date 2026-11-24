@@ -24,7 +24,7 @@ services:
       # Security-critical settings live here, never on the settings page:
       ORIGIN: ""                          # e.g. https://dash.example.com (CSRF guard); empty = the address it's opened on
       # AUTH: proxy                       # turn Fishbowl's own sign-in off: ONLY if your proxy's SSO (Authelia, Authentik, ...) protects it
-      TRUSTED_PROXY: nginx                # your reverse proxy's container name; empty = no proxy (anyone who can reach port 8000 gets the sign-in page)
+      TRUSTED_PROXY: nginx                # your reverse proxy's container name, or its IP (a proxy on another machine or in an LXC); empty = no proxy (anyone who can reach port 8000 gets the sign-in page)
       NPM_DIR: /npm
       # NGINX_DIR: /nginx                 # plain Nginx (no NPM): services from sites-enabled/ and conf.d/ (mount below)
       # CADDYFILE: /caddy/Caddyfile       # Caddy (no NPM): services from your Caddyfile and what it imports (mount below)

@@ -1,0 +1,3 @@
+two.example.com {
+	reverse_proxy two:2222
+}

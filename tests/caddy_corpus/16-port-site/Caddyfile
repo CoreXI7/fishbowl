@@ -1,0 +1,6 @@
+:8080 {
+	reverse_proxy portonly:1
+}
+named.example.com:8443 {
+	reverse_proxy named:6300
+}

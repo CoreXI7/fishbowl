@@ -1,0 +1,6 @@
+hp.example.com {
+	handle_path /app/* {
+		reverse_proxy hp-app:6000
+	}
+	respond "nothing here" 404
+}

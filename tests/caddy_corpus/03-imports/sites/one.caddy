@@ -1,0 +1,3 @@
+one.example.com {
+	reverse_proxy one:1111
+}

@@ -189,7 +189,11 @@ def _import_targets(arg, here, root, listed):
     if rel.startswith("..") or os.path.isabs(rel):
         return []
     if any(c in rel for c in "*?["):
-        return sorted(n for n in listed if os.path.dirname(n) == os.path.dirname(rel) and fnmatch.fnmatchcase(n, rel))
+        # Caddy globs like Go's filepath.Glob: a wildcard matches within one folder level (`sites/*/Caddyfile` reaches
+        # sites/app/Caddyfile, `*` alone never crosses a "/"). Matched against the listed files only.
+        parts = rel.split("/")
+        return sorted(n for n in listed if len(n.split("/")) == len(parts)
+                      and all(fnmatch.fnmatchcase(a, b) for a, b in zip(n.split("/"), parts)))
     return [rel] if rel in listed else []
 
 
@@ -323,6 +327,8 @@ def _site(head, kids, snippets, budget=None):
     first = [n for n in kids if n["head"][:1] == ["reverse_proxy"] and _unmatched(n["head"][1:2])]
     scoped = [k for n in kids if n["kids"] is not None and n["head"][:1] and n["head"][0] in SCOPES
               and _unmatched(n["head"][1:2]) for k in n["kids"] if k["head"][:1] == ["reverse_proxy"]]
+    # inside an unmatched handle/route too, the proxy without a matcher is the site's main one (`/api/*` is a side door)
+    scoped = [k for k in scoped if _unmatched(k["head"][1:2])] + [k for k in scoped if not _unmatched(k["head"][1:2])]
     anywhere = [n for n in _walk(kids) if n["head"][:1] == ["reverse_proxy"]]
     upstream = None
     for node in (first + scoped + anywhere)[:100]:

@@ -1,0 +1,9 @@
+tl.example.com {
+	tls internal
+	log {
+		output file /var/log/caddy/tl.log
+	}
+	reverse_proxy tl:6900 {
+		header_up X-Real-IP {remote_host}
+	}
+}

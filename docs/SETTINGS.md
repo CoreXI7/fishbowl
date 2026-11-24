@@ -163,6 +163,9 @@ open that file:
     comes from a private address (Docker's userland proxy makes every IPv6 visitor one) and passes on a visitor's
     `X-Forwarded-Proto`. In the dashboard's proxy host, add `set_real_ip_from 127.0.0.2/32;` under **Advanced** (it
     replaces that trust for this host), and turn on **Force SSL** under **SSL**.
+  - **Plain Nginx**: `proxy_set_header X-Real-IP $remote_addr;` and `proxy_set_header X-Forwarded-Proto $scheme;` in the
+    dashboard's `location` (both replace what the visitor sent). If Nginx runs on another machine or in an LXC, set
+    `TRUSTED_PROXY` to its IP, publish the dashboard's port on the Docker host's LAN address, and drop the shared network.
   - **Caddy**: `header_up X-Real-IP {remote_host}` in the `reverse_proxy` block (required: without it a visitor's own
     X-Real-IP goes through). Caddy sets X-Forwarded-Proto itself.
   - **HAProxy**: `http-request set-header X-Real-IP %[src]`, `http-request set-header X-Forwarded-Proto https if { ssl_fc }`

@@ -1,0 +1,6 @@
+gate.example.com {
+	forward_auth authelia:9091 {
+		uri /api/authz/forward-auth
+	}
+	file_server
+}

@@ -1,0 +1,17 @@
+{
+	email admin@example.com
+}
+a.example.com {
+	encode gzip
+	reverse_proxy 10.0.0.5:3000
+}
+b.example.com {
+	reverse_proxy https://10.0.0.6:8443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}
+http://c.example.com {
+	reverse_proxy c:80
+}

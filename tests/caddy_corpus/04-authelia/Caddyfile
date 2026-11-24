@@ -1,0 +1,13 @@
+(authelia) {
+	forward_auth authelia:9091 {
+		uri /api/authz/forward-auth
+		copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+	}
+}
+secure.example.com {
+	import authelia
+	reverse_proxy secure:9000
+}
+open.example.com {
+	reverse_proxy open:9001
+}

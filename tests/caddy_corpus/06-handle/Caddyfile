@@ -1,0 +1,8 @@
+h.example.com {
+	handle /static/* {
+		file_server
+	}
+	handle {
+		reverse_proxy hand:7000
+	}
+}

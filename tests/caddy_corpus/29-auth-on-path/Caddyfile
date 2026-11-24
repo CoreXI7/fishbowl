@@ -1,0 +1,8 @@
+pa.example.com {
+	handle /admin/* {
+		forward_auth auth:9091 {
+			uri /verify
+		}
+	}
+	reverse_proxy app:8080
+}

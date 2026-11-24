@@ -1,0 +1,6 @@
+grpc.example.com {
+	reverse_proxy h2c://grpc:50051
+}
+local.example.com {
+	reverse_proxy :9999
+}

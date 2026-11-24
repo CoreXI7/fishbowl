@@ -1,0 +1,9 @@
+(proxy) {
+	reverse_proxy {args[0]}
+}
+s1.example.com {
+	import proxy s1:8101
+}
+s2.example.com {
+	import proxy s2:8102
+}
