@@ -316,6 +316,8 @@ def _services(services_in):
         name, url = _s(s.get("name"), 253, "service name", HOST), _s(s.get("url"), 500, "service URL", URL)
         if name and url:
             services.append({"name": name, "url": url, "auth": bool(s.get("auth"))})
+        elif name or url:   # (issue #13) half a row was dropped without a word; an empty row still is
+            raise Invalid(f"service '{(name or url)[:60]}': needs both a name and an address to check")
     return services
 
 

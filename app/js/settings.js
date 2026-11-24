@@ -294,7 +294,7 @@ const app = host => Object.hasOwn(S.apps, host) ? S.apps[host] : host === "__pro
 function cleanApp(host) { const a = S.apps[host]; if (a && !a.label && !a.icon && !a.url) delete S.apps[host]; }
 
 function srow(host, gi, idx, len) {
-  const a = S.apps[host] || {}, found = V.discovered.includes(host) || S.services.some(x => x.name === host);
+  const a = S.apps[host] || {}, manual = S.services.some(x => x.name === host), found = V.discovered.includes(host) || manual;
   const opts = S.groups.map((g, i) => `<option value="${i}"${i === gi ? " selected" : ""}>${esc(g.name)}</option>`).join("")
     + `<option value="-1"${gi < 0 ? " selected" : ""}>(no group)</option>`;
   const src = iconSrc(host), letter = esc(((a.label || host)[0] || "?").toUpperCase()), h = esc(host);
@@ -309,7 +309,10 @@ function srow(host, gi, idx, len) {
       <label class="sl"><span class="sl-t">Group<span class="vh"> for ${h}</span></span><select data-a="move">${opts}</select></label>
       ${gi >= 0 ? `<button type="button" class="ibtn" data-a="up" ${idx === 0 ? "disabled" : ""} aria-label="Move ${h} up" title="move up">↑</button>`
                 + `<button type="button" class="ibtn" data-a="down" ${idx === len - 1 ? "disabled" : ""} aria-label="Move ${h} down" title="move down">↓</button>` : ""}
-      <button type="button" class="ibtn danger" data-a="hide" aria-label="Hide ${h} from the dashboard" title="hide from the dashboard">hide</button>
+      ${manual || !found
+        // (issue #14) a hand-added service, or one NPM doesn't list any more, can go for good; NPM's own would only come back
+        ? `<button type="button" class="ibtn danger" data-a="del" aria-label="Delete ${h}" title="${manual ? "delete this service" : "delete: it isn't found any more"}">delete</button>`
+        : `<button type="button" class="ibtn danger" data-a="hide" aria-label="Hide ${h} from the dashboard" title="hide from the dashboard">hide</button>`}
     </span></div>`;
 }
 const SROW_HEAD = '<div class="srow-h" aria-hidden="true"><span></span><span>Service</span><span>Name on the dashboard</span><span>Icon</span><span>Group</span></div>';
@@ -383,9 +386,18 @@ function onServicesEvent(e) {
   } else if (a === "hide" && e.type === "click") {
     S.groups.forEach(g => g.hosts = g.hosts.filter(h => h !== host));
     if (!S.skip_hosts.includes(host)) S.skip_hosts.push(host);
+  } else if (a === "del" && e.type === "click") {   // (issue #14) gone from every list: group, name/icon, hidden, hand-added
+    const manual = S.services.some(x => x.name === host);
+    if (manual && !confirm(`Delete ${host}? It stops being checked and leaves the dashboard.`)) return;
+    S.groups.forEach(g => g.hosts = g.hosts.filter(h => h !== host));
+    S.skip_hosts = S.skip_hosts.filter(h => h !== host);
+    S.services = S.services.filter(x => x.name !== host);
+    if (Object.hasOwn(S.apps, host)) delete S.apps[host];
+    renderExtras();
   } else return;
   renderServices(); setDirty();
-  if (a === "hide") refocus(`[data-unhide="${CSS.escape(host)}"]`);
+  if (a === "del") refocus(grp ? `.grp-ed[data-g="${gi}"] [data-gname]` : "", "#add-group");
+  else if (a === "hide") refocus(`[data-unhide="${CSS.escape(host)}"]`);
   else refocus(rowSel(host, `[data-a=${a}]`), rowSel(host, `[data-a=${a === "up" ? "down" : "up"}]`), rowSel(host, "[data-a=move]"));
 }
 ["click", "input", "change"].forEach(ev => {
@@ -430,7 +442,17 @@ $("extras").addEventListener("change", e => {   // a finished rename takes the t
       && !Object.hasOwn(S.apps, now) && !shared) {
     S.apps[now] = S.apps[was]; delete S.apps[was]; setDirty();
   }
-  el.dataset.was = now;
+  // (issue #13) its place in a group (or on the hidden list) goes along too, else the old name stays behind as
+  // "not found any more" and the renamed one shows up ungrouped
+  if (was && now && was !== now && !shared) {
+    // (a name that already has a place keeps it: the old name's entry just goes, never two places for one name)
+    const taken = S.groups.some(g => g.hosts.includes(now)) || S.skip_hosts.includes(now);
+    S.groups.forEach(g => g.hosts = taken ? g.hosts.filter(h => h !== was) : g.hosts.map(h => h === was ? now : h));
+    S.skip_hosts = taken ? S.skip_hosts.filter(h => h !== was) : S.skip_hosts.map(h => h === was ? now : h);
+    setDirty();
+  }
+  if (now) el.dataset.was = now;   // (a name cleared on the way to a new one still carries everything along)
+  renderServices();
 });
 $("extras").addEventListener("click", e => {
   if (!e.target.hasAttribute("data-xdel")) return;

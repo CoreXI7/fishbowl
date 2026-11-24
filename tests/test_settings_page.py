@@ -2,6 +2,8 @@
 it, the "check through the proxy" list (was env-only), and a refused save that points at the section it's about."""
 import json
 import os
+import shutil
+import tempfile
 import time
 import unittest
 import urllib.error
@@ -505,6 +507,76 @@ class NewCode(unittest.TestCase):
         item = {i["id"]: i for i in app.setup_checks()}.get("restart")
         self.assertEqual((item or {}).get("state"), "warn")
         self.assertIn("--force-recreate", json.dumps(item))
+
+
+class HandAddedServices(unittest.TestCase):
+    """GitHub issues #13 and #14: retyping a hand-added service's name left its old name in the group as "not found any
+    more"; such a row (and a hand-added one) could only be hidden, never deleted; half a row was dropped without a word."""
+
+    def test_half_a_row_is_refused_and_an_empty_one_dropped(self):
+        app = load_app()
+        v = lambda svc: app.cfgstore.validate({**app.ED, "services": svc}, {})
+        for half in ({"name": "nas.lan", "url": ""}, {"name": "", "url": "http://10.0.0.5"}):
+            with self.assertRaises(app.cfgstore.Invalid):
+                v([half])
+        self.assertEqual(v([{"name": "", "url": ""}, {"name": "nas.lan", "url": "http://10.0.0.5"}])["services"],
+                         [{"name": "nas.lan", "url": "http://10.0.0.5", "auth": False}])
+
+    @unittest.skipUnless(CHROME, "needs Chrome or Chromium")
+    def test_rename_keeps_the_group_and_delete_removes_everywhere(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        npm_conf(tmp, "npm.example.com")
+        app = load_app(NPM_DIR=tmp)
+        srv, url = serve(app.Handler)
+        code, _ = post(url + "/api/settings", {"settings": {**app.settings_view()["settings"],
+                       "groups": [{"name": "Old", "hosts": ["gone.example.com"]}],
+                       "services": [{"name": "nas.lan", "url": "http://10.0.0.6"}], "skip_hosts": ["nas.lan"]}, "secrets": {}})
+        self.assertEqual(code, 200)
+        b = Browser(1440, 900)
+        typ = lambda sel, v: b.js(f"(el => {{ el.value = {v!r}; ['input', 'change'].forEach(t => el.dispatchEvent(new Event(t, {{bubbles: true}}))); }})"
+                                  f"(document.querySelector({sel!r}))")
+        rows = lambda: b.js("[...document.querySelectorAll('.srow')].map(r => [r.dataset.host, +r.closest('.grp-ed').dataset.g, !r.querySelector('small'),"
+                            " [...r.querySelectorAll('.acts button')].map(x => x.dataset.a).pop()])")
+
+        def save():
+            b.js("document.getElementById('save').click()")
+            self.assertTrue(b.wait_for("document.getElementById('save').disabled || !document.body.classList.contains('dirty')", 10))
+            time.sleep(1)
+        try:
+            b.send("Page.navigate", {"url": url + "/settings"})
+            self.assertTrue(b.wait_for("!!document.querySelector('.srow')", 15))
+            self.assertEqual(b.js("document.querySelector('.srow[data-host=\"gone.example.com\"] .acts button:last-child').dataset.a"), "del")
+            b.js("window.confirm = () => { throw new Error('asked'); }; document.querySelector('.srow[data-host=\"gone.example.com\"] [data-a=del]').click()")
+            self.assertFalse(b.js("!!document.querySelector('.srow[data-host=\"gone.example.com\"]')"), "a stale row goes without a question")
+            typ("#x-name-0", "nas2.lan")
+            self.assertEqual(b.js("[...document.querySelectorAll('#hidden-wrap [data-unhide]')].map(x => x.dataset.unhide)"), ["nas2.lan"],
+                             "a hidden hand-added service stays hidden under its new name")
+            b.js("document.querySelector('#extras [data-xdel]').click()")
+            b.js("document.querySelector('[data-unhide]') && document.querySelector('[data-unhide]').click()")
+            b.js("document.getElementById('add-extra').click()")
+            typ("#x-name-0", "Sabnzbd"); typ("#x-url-0", "http://10.0.0.5:8080")
+            b.js("document.getElementById('add-group').click()")
+            b.js("(s => { s.value = '0'; s.dispatchEvent(new Event('change', {bubbles: true})); })"
+                 "(document.querySelector('.srow[data-host=Sabnzbd] [data-a=move]'))")
+            typ(".srow[data-host=Sabnzbd] [data-f=icon]", "sabnzbd")
+            save()
+            typ("#x-name-0", "Transmission"); typ("#x-url-0", "http://10.0.0.5:9091")   # retyped instead of "+ Add service"
+            save()
+            b.send("Page.navigate", {"url": url + "/settings"})
+            self.assertTrue(b.wait_for("!!document.querySelector('.srow')", 15))
+            self.assertEqual(sorted(map(tuple, rows())), [("Transmission", 0, True, "del"), ("npm.example.com", -1, True, "hide")],
+                             "the group follows the rename, nothing left 'not found'; NPM's own host can only be hidden")
+            self.assertEqual(app.cfgstore.load()["apps"], {"Transmission": {"icon": "sabnzbd"}}, "its icon went along too")
+            b.js("window.confirm = () => true; document.querySelector('.srow[data-host=Transmission] [data-a=del]').click()")
+            self.assertEqual(b.js("document.querySelectorAll('#extras .xrow').length"), 0, "gone from the hand-added list as well")
+            save()
+            st = app.cfgstore.load()
+            self.assertEqual((st["services"], st["apps"], [h for g in st["groups"] for h in g["hosts"]], st["skip_hosts"]), ([], {}, [], []))
+            self.assertEqual(b.csp_violations(), [])
+        finally:
+            b.close()
+            srv.shutdown()
 
 
 if __name__ == "__main__":
