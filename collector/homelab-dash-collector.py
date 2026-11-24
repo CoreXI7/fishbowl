@@ -185,9 +185,38 @@ def disks():
     return out
 
 
+def nvme_hwmon_temp(dev):
+    """An NVMe drive's temperature from the kernel's own sensor (/sys/block/nvme0n1/device/hwmon*/temp1_input), or None.
+    The sensor the Temperatures card reads; used when smartctl gives no temperature (issue #11)."""
+    base = os.path.basename(dev)
+    if not re.fullmatch(r"nvme\d+n\d+", base):
+        return None
+    for f in sorted(glob.glob(f"/sys/block/{base}/device/hwmon*/temp1_input")):
+        try:
+            with open(f) as fh:
+                c = int(fh.read(16).strip()) / 1000
+        except (OSError, ValueError):
+            continue
+        if -40 < c < 150:
+            return int(c + 0.5) if c >= 0 else -int(-c + 0.5)   # (half up, as people read it: 38.5 -> 39)
+    return None
+
+
 def smart(dev):
-    """SMART health + temperature for one disk. Sleeping disks are left asleep (-n standby)."""
-    raw = run(["smartctl", "-n", "standby", "-i", "-H", "-A", "-j", dev], timeout=30)
+    """SMART health + temperature for one disk. Sleeping disks are left asleep (-n standby). That's for disks that
+    spin down only: NVMe drives get no -n (issue #11: an NVMe pool member showed no temperature), and when smartctl
+    still gives none, the kernel's NVMe sensor fills it in."""
+    nvme = os.path.basename(dev).startswith("nvme")
+    out = smart_parse(run(["smartctl"] + ([] if nvme else ["-n", "standby"]) + ["-i", "-H", "-A", "-j", dev], timeout=30))
+    if nvme and out.get("temp") is None:
+        t = nvme_hwmon_temp(dev)
+        if t is not None:
+            out["temp"] = t
+    return out
+
+
+def smart_parse(raw):
+    """smartctl -j output -> the fields the dashboard shows."""
     try:
         d = json.loads(raw)
     except Exception:
@@ -201,7 +230,7 @@ def smart(dev):
         attrs = {a["id"]: a["raw"]["value"] for a in d.get("ata_smart_attributes", {}).get("table", [])}
         nv = d.get("nvme_smart_health_information_log", {})
         return {
-            "temp": d.get("temperature", {}).get("current"),
+            "temp": next((t for t in (d.get("temperature", {}).get("current"), nv.get("temperature")) if t is not None), None),
             "passed": d.get("smart_status", {}).get("passed"),
             "hours": d.get("power_on_time", {}).get("hours"),
             "realloc": attrs.get(5, nv.get("media_errors")),

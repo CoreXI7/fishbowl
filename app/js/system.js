@@ -130,7 +130,9 @@ function zfsBlock(p, smart) {
     const st = v.state && scls(v.state) ? `<span class="chip ${scls(v.state)}">${esc(v.state)}</span>` : "";
     const pad = 12 * Math.min(4, Math.max(0, n(v.depth)));
     const label = v.kind === "class" ? `<span class="md">${esc(v.name || "")}</span>` : esc(v.name || "");
-    return `<div class="s" style="padding-left:${pad}px"${v.note ? ` title="${esc(v.note)}"` : ""}><span>${label}</span><span>${rwc} ${st} ${temp}</span></div>`;
+    // long by-id names end in "…" (full name in the tooltip) so the chips always stay in view (issue #12)
+    const tip = [v.name, v.note].filter(Boolean).map(String).join(" · ");
+    return `<div class="s zm" style="padding-left:${pad}px"${tip ? ` title="${esc(tip)}"` : ""}><span class="zn">${label}</span><span class="zc">${rwc} ${st} ${temp}</span></div>`;
   }).join("");
   const vd = p.vdevs || [], top = vd.find(v => v.kind === "group" && n(v.depth) === 0);
   const ndisk = vd.filter(v => v.kind === "disk" && !vd.slice(0, vd.indexOf(v)).some(c => c.kind === "class" && n(c.depth) === 0)).length;
