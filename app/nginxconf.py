@@ -48,6 +48,8 @@ def _resolve(entry, folder, root, prefix=NGINX_PREFIX):
         target = os.readlink(entry)
     except OSError:
         return None
+    if len(target) > 255 or target.count("/") > 16:
+        return None                                      # (a long l/l/l/... target made each check walk thousands of links)
     if os.path.isabs(target):
         norm = os.path.normpath(target)
         if norm != prefix and not norm.startswith(prefix + "/"):

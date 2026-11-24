@@ -437,5 +437,66 @@ class TestReviewRound2(CaddyTest):
         self.assertEqual(self.hosts("import x\nimport z\n"), [])
 
 
+class TestScanBudgets(CaddyTest):
+    """Found by an independent attack review (2026-11-24), each confirmed slow or memory-hungry before the fix:
+    a long l/l/l/... link target (24 s per scan, on every page load), many big imported files (5.6 GB), thousands of
+    distinct glob imports, and wide or {args}-heavy snippets imported thousands of times."""
+
+    def patch(self, name, value):
+        old = getattr(caddyconf, name)
+        setattr(caddyconf, name, value)
+        self.addCleanup(setattr, caddyconf, name, old)
+
+    def test_long_link_targets_are_refused_before_resolving(self):
+        self.write("Caddyfile", OUTSIDE)
+        os.symlink(".", os.path.join(self.root, "l"))
+        os.makedirs(os.path.join(self.root, "sub"))
+        for i in range(300):
+            os.symlink("../" + "l/" * 400 + "Caddyfile", os.path.join(self.root, "sub", f"x{i}"))
+        os.symlink("../" + "l/" * 16 + "Caddyfile", os.path.join(self.root, "sub", "deep"))   # 17 levels: refused too
+        resolved = []
+        real = os.path.realpath
+        os.path.realpath = lambda p, *a, **k: (resolved.append(p), real(p, *a, **k))[1]
+        try:
+            names = [n for n, _, _ in caddyconf.files(self.root)]
+        finally:
+            os.path.realpath = real
+        self.assertEqual(names, ["Caddyfile"])
+        self.assertFalse([p for p in resolved if "/sub/" in p or p.count("/l/") > 2],
+                         "over-long link targets are refused before anything walks them")
+
+    def test_tokens_are_counted_across_files(self):
+        self.patch("MAX_SCAN_TOKENS", 1000)
+        self.write("Caddyfile", "import f*\n")
+        for i in range(5):
+            self.write(f"f{i}", "a\n" * 600)
+        loaded = caddyconf.load(self.root, os.path.join(self.root, "Caddyfile"))
+        self.assertLessEqual(sum(len(line) for _, nodes in loaded for n in nodes for line in [n["head"]]), 1000)
+
+    def test_import_lines_are_capped_per_scan(self):
+        self.patch("MAX_IMPORT_LINES", 10)
+        self.write("Caddyfile", "".join(f"import s{i}x\n" for i in range(50)) + "import site\n")
+        for i in range(50):
+            self.write(f"s{i}x", "")
+        self.write("site", "late.example.com {\n\treverse_proxy late:1\n}\n")
+        loaded = caddyconf.load(self.root, os.path.join(self.root, "Caddyfile"))
+        self.assertLessEqual(len(loaded), 11, "the Caddyfile + at most 10 import lines followed")
+
+    def test_snippet_expansion_counts_tokens(self):
+        self.patch("MAX_EXPANDED", 5000)
+        wide = "(s) {\n\t" + " ".join(["a"] * 2000) + "\n}\n"
+        hosts = self.hosts(wide + "w.example.com {\n" + "\timport s\n" * 1000 + "\treverse_proxy w:1\n}\n")
+        self.assertEqual(hosts, [], "the budget ran out after a couple of imports, not after 1000 x 2000 tokens")
+        t = time.monotonic()
+        heavy = "(s) {\n\t" + " ".join(["{args[0]}"] * 400) + "\n}\n"
+        self.hosts(heavy + "z.example.com {\n" + "\timport s ab\n" * 5000 + "\treverse_proxy z:1\n}\n")
+        self.assertLess(time.monotonic() - t, 1.0)
+
+    def test_ordinary_files_stay_well_inside_the_budgets(self):
+        snippet = "(auth) {\n\tforward_auth authelia:9091 {\n\t\turi /api/authz/forward-auth\n\t\tcopy_headers Remote-User\n\t}\n}\n"
+        sites = "".join(f"s{i}.example.com {{\n\timport auth\n\treverse_proxy s{i}:80\n}}\n" for i in range(150))
+        self.assertEqual(len(self.hosts(snippet + sites)), 150)
+
+
 if __name__ == "__main__":
     unittest.main()

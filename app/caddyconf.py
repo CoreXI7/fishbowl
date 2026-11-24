@@ -23,10 +23,12 @@ MAX_FILES = 200
 MAX_ENTRIES = 5000                   # directory entries looked at per scan (folders count too)
 MAX_SITES = 200
 MAX_DEPTH = 20
-MAX_TOKENS = 100_000
+MAX_TOKENS = 100_000                 # per file
+MAX_SCAN_TOKENS = 200_000            # all files of one scan together
+MAX_IMPORT_LINES = 500               # import lines followed per scan (each glob is matched against the listed files)
 MAX_IMPORT_DEPTH = 5
 MAX_SNIPPET_DEPTH = 3
-MAX_EXPANDED = 50_000                # snippet lines expanded per scan, all sites together
+MAX_EXPANDED = 100_000               # tokens produced by snippet expansion per scan, all sites together
 MAX_SUB_CHARS = 2_000_000            # characters produced by {args[N]} substitution per scan
 MAX_SITE_BLOCKS = 2000               # site blocks looked at per scan (with or without a service)
 MAX_TOKEN = 4096
@@ -101,10 +103,13 @@ def signature(root):
 
 # ---- lexer and tree ------------------------------------------------------------------------------------------------
 
-def lex(txt):
+def lex(txt, budget=None):
     """[[token, ...] per line]. Quotes are kept as one token (without the quotes); a heredoc (`<<END` ... `END`) is one
-    opaque token; at most MAX_TOKENS tokens."""
+    opaque token; at most MAX_TOKENS tokens, and at most budget[0] (the scan's tokens left, which this lowers)."""
+    limit = MAX_TOKENS if budget is None else max(0, min(MAX_TOKENS, budget[0]))
     lines, cur, n, heredoc = [], [], 0, None
+    if limit <= 0:
+        return lines
     for raw in txt.split("\n"):
         if heredoc is not None:
             first = raw.split(None, 1)
@@ -135,7 +140,7 @@ def lex(txt):
                 cur.append(line[i:j])
                 i = j
             n += 1
-            if n >= MAX_TOKENS:
+            if n >= limit:
                 break
         if cur and re.fullmatch(r"<<[A-Za-z_][A-Za-z0-9_]{0,31}", cur[-1]):
             heredoc = cur.pop()[2:]          # the body up to the END line is text, not directives
@@ -143,8 +148,10 @@ def lex(txt):
         if cur:
             lines.append(cur)
             cur = []
-        if n >= MAX_TOKENS:
+        if n >= limit:
             break
+    if budget is not None:
+        budget[0] -= n
     return lines
 
 
@@ -204,14 +211,15 @@ def load(root, caddyfile, picked=None):
     start = os.path.relpath(caddyfile, root)
     out, seen, todo = [], {start}, collections.deque([(start, 0)])   # seen = read or queued: each file once
     done = set()                                                     # (import argument, folder) pairs handled
+    tokens = [MAX_SCAN_TOKENS]                                       # left for all files together
     while todo:
         name, depth = todo.popleft()
-        if name not in listed:
+        if name not in listed or tokens[0] <= 0:
             continue
         txt = nginxconf.read_text(listed[name], root, strip=_no_comment)
         if txt is None:
             continue
-        nodes = tree(lex(txt))
+        nodes = tree(lex(txt, tokens))
         out.append((name, nodes))
         if depth >= MAX_IMPORT_DEPTH:
             continue
@@ -221,6 +229,8 @@ def load(root, caddyfile, picked=None):
                 key = (h[1], os.path.dirname(name))
                 if key in done:
                     continue                 # the same import line again: already queued
+                if len(done) >= MAX_IMPORT_LINES:
+                    break                    # (thousands of distinct globs, each matched against every listed file)
                 done.add(key)
                 for t in _import_targets(h[1], os.path.dirname(name), root, listed):
                     if t not in seen and len(seen) < MAX_FILES:
@@ -238,8 +248,8 @@ def _expand(kids, snippets, depth=0, budget=None):
     for node in kids:
         if budget[0] <= 0:
             break
-        budget[0] -= 1
         h = node["head"]
+        budget[0] -= max(1, len(h))          # tokens, not lines: a 2,000-token snippet line counts 2,000
         if node["kids"] is None and len(h) >= 2 and h[0] == "import" and h[1] in snippets:
             if depth < MAX_SNIPPET_DEPTH:
                 out += _expand(_with_args(snippets[h[1]], h[2:12], budget), snippets, depth + 1, budget)
@@ -253,8 +263,8 @@ def _expand(kids, snippets, depth=0, budget=None):
 def _with_args(kids, args, budget, depth=0):
     """A snippet body with {args[N]} / {args.N} replaced by the import's arguments (Caddy's snippet arguments)."""
     def sub(tok):
-        if "{args" not in tok:
-            return tok
+        if "{args" not in tok or budget[1] <= 0:
+            return tok                       # (once the budget is spent, no more substituting at all)
         new = re.sub(r"\{args(?:\[(\d)\]|\.(\d))\}",
                      lambda m: args[int(m.group(1) or m.group(2))] if int(m.group(1) or m.group(2)) < len(args) else m.group(0), tok)
         if len(new) > MAX_TOKEN or len(new) > budget[1]:
@@ -265,7 +275,7 @@ def _with_args(kids, args, budget, depth=0):
     for node in kids:
         if budget[0] <= 0 or depth > MAX_DEPTH:
             break
-        budget[0] -= 1
+        budget[0] -= max(1, len(node["head"]))
         out.append({"head": [sub(t) for t in node["head"]],
                     "kids": None if node["kids"] is None else _with_args(node["kids"], args, budget, depth + 1)})
     return out
