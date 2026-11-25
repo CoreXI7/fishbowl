@@ -60,6 +60,7 @@ h2 small{font-weight:400;color:var(--mute);font-size:12px}
 .tor{padding:8px 0;border-top:1px solid var(--line)}
 .tor:first-child{border-top:0}
 .tor .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tor .t .src{display:inline-block;margin-right:6px;padding:0 6px;border:1px solid var(--line);border-radius:999px;font-size:11px;color:var(--mute);vertical-align:1px}
 .tor .s{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--mute);font-variant-numeric:tabular-nums}
 .bar{height:5px;background:var(--bar);border-radius:3px;margin:5px 0 4px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--acc)}

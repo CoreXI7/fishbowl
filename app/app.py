@@ -42,6 +42,7 @@ from hostinfo import (_live_prev, cpu_model, cpu_mhz, cpu_topology, cpu_usage,  
 from upstream import (API_MAX, INSECURE, MB, NOFOLLOW, QBIT_MAX, STRICT, UA, _DeadlineHTTP, _DeadlineHTTPS,  # noqa: E402
                       StrictResponse, _NoRedirect, fetch_same_host, num, read_capped, read_json, text, watch)
 import dlclients                        # noqa: E402  (Transmission + SABnzbd)
+import jellyfin                         # noqa: E402  (Jellyfin now playing, #18)
 import nginxconf                        # noqa: E402  (plain Nginx site configs as services)
 import caddyconf                        # noqa: E402  (Caddyfile sites as services)
 
@@ -133,7 +134,7 @@ def local_name(host):
 def apply_settings():
     """(Re)build everything that depends on settings. Called at start and after every save from the GUI."""
     global ED, STORE, SITE, SKIP_HOSTS, EXTRA_SERVICES, KNOWN_IPS, KNOWN, QBIT, SEERR, TAUTULLI, HOME_IP, SECRETS, qb, VIA_PROXY
-    global TRANSMISSION, SAB, tr, sabc
+    global TRANSMISSION, SAB, tr, sabc, JELLYFIN
     ED, STORE = cfgstore.load(), cfgstore.load_secrets()
     SITE = ED["site"]
     SKIP_HOSTS = set(ED["skip_hosts"])
@@ -150,9 +151,10 @@ def apply_settings():
 
     QBIT, SEERR, TAUTULLI = integration("qbittorrent"), integration("seerr"), integration("tautulli")
     TRANSMISSION, SAB = integration("transmission"), integration("sabnzbd")
+    JELLYFIN = integration("jellyfin")
     _answered.clear()                                    # new addresses/keys: the last tries don't count any more
     HOME_IP = os.environ.get("HOME_IP") or ED["qbittorrent"]["home_ip"]   # real WAN IP; qbit showing it = VPN leak
-    SECRETS = sorted({v for i in (QBIT, SEERR, TAUTULLI, TRANSMISSION, SAB) for v in i["secrets"] if len(v) >= 4},
+    SECRETS = sorted({v for i in (QBIT, SEERR, TAUTULLI, TRANSMISSION, SAB, JELLYFIN) for v in i["secrets"] if len(v) >= 4},
                      key=len, reverse=True)
     qb = Qbit()                                          # fresh login with the (possibly new) credentials
     tr = dlclients.Transmission(TRANSMISSION["url"], *(TRANSMISSION["secrets"] if all(TRANSMISSION["secrets"]) else ("", "")))
@@ -1003,7 +1005,45 @@ def listed(v, n):
 
 
 def plex():
-    """/api/plex: who's watching what, from Tautulli (so no Plex token is needed here)."""
+    """/api/plex: who's watching what, from Tautulli (so no Plex token is needed here) and/or Jellyfin (#18). With both set
+    up, one that doesn't answer leaves the other's streams showing; only when every configured source fails is it an error."""
+    views, errors = [], []
+    for on, fetch in ((TAUTULLI["on"], plex_tautulli), (JELLYFIN["on"], lambda: jellyfin.sessions_view(jellyfin_get("/Sessions?activeWithinSeconds=960")))):
+        if on:
+            try:
+                views.append(fetch())
+            except Exception as e:
+                errors.append(e)
+    if errors and not views:
+        raise errors[0]
+    return {"stream_count": sum(v["stream_count"] or 0 for v in views), "transcodes": sum(v["transcodes"] or 0 for v in views),
+            "bandwidth": sum(v["bandwidth"] or 0 for v in views), "sessions": [s for v in views for s in v["sessions"]][:100]}
+
+
+def jellyfin_get(path):
+    """GET a Jellyfin API path with the key in a header (never in the URL, so it can't end up in a log of a proxy)."""
+    req = urllib.request.Request(JELLYFIN["url"] + path, headers={
+        "Authorization": f'MediaBrowser Client="Fishbowl", Device="dashboard", DeviceId="fishbowl", Version="1", Token="{JELLYFIN["secrets"][0]}"',
+        "Accept": "application/json"})
+    with STRICT.open(req, timeout=10) as r:
+        return read_json(r, API_MAX)
+
+
+def jellyfin_art(item):
+    """A Jellyfin poster through the dashboard (the key stays here); only a 32-hex item id, only raster images."""
+    aid = jellyfin.art_id(item)
+    if not aid:
+        return None
+    req = urllib.request.Request(f"{JELLYFIN['url']}/Items/{aid}/Images/Primary?maxHeight=300&quality=85", headers={
+        "Authorization": f'MediaBrowser Token="{JELLYFIN["secrets"][0]}"'})
+    with STRICT.open(req, timeout=10) as r:
+        ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype not in ART_TYPES:
+            return None
+        return r.read(2_000_000), ctype
+
+
+def plex_tautulli():
     d = tautulli("get_activity")
     sessions = []
     d = d if isinstance(d, dict) else {}
@@ -1110,7 +1150,7 @@ def page_config():
         "mascot": SITE["mascot"], "mascot_credit": SITE["mascot_credit"], "favicon": SITE["favicon"],
         "greeting": SITE["greeting"], "quotes": SITE["quotes"], "click_emoji": SITE["click_emoji"],
         "groups": ED["groups"], "apps": ED["apps"],
-        "features": {"qbit": QBIT["on"] or TRANSMISSION["on"], "sab": SAB["on"], "seerr": SEERR["on"], "plex": TAUTULLI["on"],
+        "features": {"qbit": QBIT["on"] or TRANSMISSION["on"], "sab": SAB["on"], "seerr": SEERR["on"], "plex": TAUTULLI["on"] or JELLYFIN["on"], "tautulli": TAUTULLI["on"], "jellyfin": JELLYFIN["on"],
                      "downloads": QBIT["on"] or TRANSMISSION["on"] or SAB["on"]},
         "hidden_panels": SITE["hidden_panels"], "motion": SITE["motion"], "settings_ui": cfgstore.UI_ENABLED, "demo": DEMO,
         "auth": AUTH,
@@ -1644,7 +1684,7 @@ def setup_checks(host=None, https=None, proxy_gaps=()):
                     "; ".join(f"{COLLECTOR_LABELS.get(k, k)}: {why}" for k, why in cv["rejected"][:5])[:600],
                     link=collector_section(cv["rejected"][0][0]))
 
-    on = {"Torrents": QBIT["on"] or TRANSMISSION["on"], "Usenet": SAB["on"], "Requests": SEERR["on"], "Now playing": TAUTULLI["on"]}
+    on = {"Torrents": QBIT["on"] or TRANSMISSION["on"], "Usenet": SAB["on"], "Requests": SEERR["on"], "Now playing": TAUTULLI["on"] or JELLYFIN["on"]}
     paths = {"Torrents": "/api/qbit", "Usenet": "/api/sab", "Requests": "/api/requests", "Now playing": "/api/plex"}
     failing = [k for k, v in on.items() if v and not _answered.get(paths[k], (True, 0))[0]
                and time.time() - _answered[paths[k]][1] < 900]
@@ -1698,14 +1738,15 @@ def test_integration(name):
     """Try an integration with its SAVED settings (never an address typed in, so keys can't be sent elsewhere)."""
     if DEMO:
         return {"ok": True, "detail": "demo mode"}
-    i = {"qbittorrent": QBIT, "transmission": TRANSMISSION, "sabnzbd": SAB, "seerr": SEERR, "tautulli": TAUTULLI}.get(name)
+    i = {"qbittorrent": QBIT, "transmission": TRANSMISSION, "sabnzbd": SAB, "seerr": SEERR, "tautulli": TAUTULLI,
+         "jellyfin": JELLYFIN}.get(name)
     if not i:
         raise cfgstore.Invalid("unknown integration")
     r = _test_integration(name, i)
     if i["on"]:
         if name != "transmission" or not QBIT["on"]:   # (Transmission is ignored while qBittorrent is set up)
             _answered[{"qbittorrent": "/api/qbit", "transmission": "/api/qbit", "sabnzbd": "/api/sab", "seerr": "/api/requests",
-                       "tautulli": "/api/plex"}[name]] = (r["ok"], time.time())
+                       "tautulli": "/api/plex", "jellyfin": "/api/plex"}[name]] = (r["ok"], time.time())
     return r
 
 
@@ -1725,6 +1766,9 @@ def _test_integration(name, i):
         elif name == "seerr":
             d = seerr("/status")
             detail = f"connected · version {text(d.get('version'), 40) or '?'}"
+        elif name == "jellyfin":
+            d = jellyfin.sessions_view(jellyfin_get("/Sessions?activeWithinSeconds=960"))
+            detail = f"connected · {d['stream_count']} streams now"
         else:
             d = tautulli("get_activity")
             detail = f"connected · {d.get('stream_count', 0)} streams now"
@@ -1801,7 +1845,7 @@ API = {
     "/api/security/detail": (0, security_detail),   # the Security & backups detail views (cached by file change)
 }
 FEATURE = {"/api/qbit": lambda: QBIT if QBIT["on"] else TRANSMISSION, "/api/sab": lambda: SAB,
-           "/api/requests": lambda: SEERR, "/api/plex": lambda: TAUTULLI}
+           "/api/requests": lambda: SEERR, "/api/plex": lambda: TAUTULLI if TAUTULLI["on"] else JELLYFIN}
 PAGES = {"/": "index.html", "/settings": "settings.html"}
 SCRIPTS = {f[:-3] for f in os.listdir(os.path.join(HERE, "js")) if f.endswith(".js")}   # app/js/*.js, read at start
 
@@ -2199,6 +2243,14 @@ class Handler(web.SignIn, BaseHTTPRequestHandler):
         elif p == "/api/plexart" and TAUTULLI["on"] and not DEMO:
             try:
                 art = plex_art(query.get("img", [""])[0])
+            except Exception:
+                art = None
+            if not art:
+                return self.send(404, {"error": "no art"})
+            self.send(200, art[0], art[1], "private, max-age=86400", {"Content-Security-Policy": "default-src 'none'; sandbox"})
+        elif p == "/api/jfart" and JELLYFIN["on"] and not DEMO:
+            try:
+                art = jellyfin_art(query.get("id", [""])[0])
             except Exception:
                 art = None
             if not art:

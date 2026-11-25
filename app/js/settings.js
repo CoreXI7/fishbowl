@@ -33,7 +33,7 @@ const slices = d => ({   // which part of the settings each section edits (for t
   look: [d.site.title, d.site.hidden_panels],
   themes: [d.site.theme, d.site.motion, PERSONALITY.map(k => d.site[k]), d.site.themes],
   services: [d.groups, d.apps, d.services, d.skip_hosts, d.via_proxy],
-  integrations: [d.qbittorrent, d.transmission, d.sabnzbd, d.seerr, d.tautulli],
+  integrations: [d.qbittorrent, d.transmission, d.sabnzbd, d.seerr, d.tautulli, d.jellyfin],
   security: [d.known_ips],
 });
 function changedSections() {
@@ -122,10 +122,12 @@ function clearErr(el) {
 // ---------- error summary (a failed save, upload or load): what's wrong, and a link to the field or section ----------
 const FIELD_OF = {"known IP": "f-known", "check through the proxy": "f-via", "title": "f-title", "home IP": "i-home",
                   "qbittorrent URL": "i-qbittorrent-url", "seerr URL": "i-seerr-url", "tautulli URL": "i-tautulli-url",
-                  "transmission URL": "i-transmission-url", "sabnzbd URL": "i-sabnzbd-url"};
+                  "transmission URL": "i-transmission-url", "sabnzbd URL": "i-sabnzbd-url",
+                  "jellyfin URL": "i-jellyfin-url"};
 const FIELD_LABEL = {"known IP": "Your own IPs", "check through the proxy": "Check these through the proxy", "title": "Title",
                      "home IP": "Your home's public IP", "qbittorrent URL": "qBittorrent address", "seerr URL": "Seerr address",
-                     "tautulli URL": "Tautulli address", "transmission URL": "Transmission address", "sabnzbd URL": "SABnzbd address"};
+                     "tautulli URL": "Tautulli address", "transmission URL": "Transmission address", "sabnzbd URL": "SABnzbd address",
+                     "jellyfin URL": "Jellyfin address"};
 function showErr(msg, section, title = "Not saved") {
   const k = Object.keys(FIELD_OF).find(k => msg.startsWith(k + ":")), field = k && $(FIELD_OF[k]);
   if (field) {
@@ -285,7 +287,9 @@ $("theme-ed").addEventListener("click", e => { const k = e.target.dataset.trm; i
 // ---------- services: groups, labels, icons, hidden ----------
 const iconSrc = (host) => {
   const icon = (S.apps[host] || {}).icon || "";
-  return icon ? (icon.startsWith("/") ? icon : CDN + icon + ".png") : (V.demo ? "" : "/api/icon?host=" + encodeURIComponent(host));
+  // (#17) dashboard-icons names are lower-case-with-dashes; the server stores them that way too
+  return icon ? (icon.startsWith("/") ? icon : CDN + encodeURIComponent(icon.trim().toLowerCase().replace(/\s+/g, "-")) + ".png")
+    : (V.demo ? "" : "/api/icon?host=" + encodeURIComponent(host));
 };
 function iconFail(img) { const d = document.createElement("span"); d.className = "lt"; d.textContent = img.dataset.letter || "?"; img.replaceWith(d); }
 // broken icons fall back to their letter: one capturing listener, no inline onerror (the CSP allows no inline script)
@@ -409,14 +413,17 @@ $("add-group").onclick = () => {
 };
 
 // ---------- services added by hand ----------
+// (#19) a name may have spaces ("Home Assistant"); then it isn't an address, so the tile only opens with a link set here
+const linkHint = name => /\s/.test(name || "") ? "Empty: the tile doesn't open (a name with spaces isn't an address)"
+  : "Empty: https://" + (name || "name");
 function renderExtras() {
   $("extras").innerHTML = S.services.map((x, i) => `<div class="xrow" data-i="${i}">
       <div class="field"><label for="x-name-${i}">Name</label><input type="text" id="x-name-${i}" value="${esc(x.name)}" data-x="name" data-was="${esc(x.name)}"${i ? "" : ` aria-describedby="x-d-0"`}>
-        ${i ? "" : `<small id="x-d-${i}">A host name, like nas.lan. It's the tile's name.</small>`}</div>
+        ${i ? "" : `<small id="x-d-${i}">The tile's name, like NAS, nas.lan or Home Assistant.</small>`}</div>
       <div class="field"><label for="x-url-${i}">Address to check</label><input type="url" id="x-url-${i}" value="${esc(x.url)}" data-x="url"${i ? "" : ` aria-describedby="x-u-0"`}>
         ${i ? "" : `<small id="x-u-${i}">What the dashboard checks, like http://192.168.1.5:5000.</small>`}</div>
       <div class="field"><label for="x-link-${i}">Link on the tile (optional)</label><input type="url" id="x-link-${i}" value="${esc((S.apps[x.name] || {}).url || "")}" data-x="link" aria-describedby="x-l-${i}">
-        <small id="x-l-${i}">Empty: https://${esc(x.name || "name")}</small></div>
+        <small id="x-l-${i}">${esc(linkHint(x.name))}</small></div>
       <div class="field xauth"><label><input type="checkbox" ${x.auth ? "checked" : ""} data-x="auth"${i ? "" : ` aria-describedby="x-a-0"`}> Behind your sign-in</label>
         ${i ? "" : `<small id="x-a-${i}">Only a label in the tile's tooltip.</small>`}</div>
       <button type="button" class="ibtn danger" data-xdel aria-label="Remove ${esc(x.name || "this service")}">Remove</button></div>`).join("") || '<div class="hint">None yet.</div>';
@@ -429,7 +436,7 @@ $("extras").addEventListener("input", e => {
   const x = S.services[+row.dataset.i], k = e.target.dataset.x, v = e.target.value.trim();
   if (k === "auth") x.auth = e.target.checked;
   else if (k === "link") { app(x.name).url = v; cleanApp(x.name); }
-  else if (k === "name") { x.name = v; $("x-l-" + row.dataset.i).textContent = "Empty: https://" + (v || "name"); }
+  else if (k === "name") { x.name = v; $("x-l-" + row.dataset.i).textContent = linkHint(v); }
   else x[k] = v;
   setDirty();
 });
@@ -474,6 +481,8 @@ const INTEG = [
    help: "Only if Transmission asks for a login (rpc-authentication-required). Fill in both or neither."},
   {k: "sabnzbd", title: "SABnzbd", what: "Usenet downloads", fields: [["sab_key", "API key", "password"]], url: "http://sabnzbd:8080",
    help: "In SABnzbd: Config → General → Security → API Key."},
+  {k: "jellyfin", title: "Jellyfin", what: "now playing (like Tautulli for Plex)", fields: [["jellyfin_key", "API key", "password"]],
+   url: "http://jellyfin:8096", help: "In Jellyfin: Dashboard → API Keys → + (any name). Read-only use: the dashboard only lists sessions."},
   {k: "seerr", title: "Seerr / Overseerr / Jellyseerr", what: "approve requests", fields: [["seerr_key", "API key", "password"]], url: "http://overseerr:5055",
    help: "In Seerr: Settings → General → API Key."},
   {k: "tautulli", title: "Tautulli", what: "Plex now playing", fields: [["tautulli_key", "API key", "password"]], url: "http://tautulli:8181",

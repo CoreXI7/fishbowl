@@ -14,11 +14,13 @@ function streamCard(s) {
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div class="sub">${icon} ${esc(s.state)} · ${pct}%${left}</div>
       <div class="chips">${mode}${res ? `<span class="chip">${esc(res)}</span>` : ""}<span class="chip">${(s.bandwidth / 1000).toFixed(1)} Mbps</span>
-        <span class="chip ${s.location === "wan" ? "" : "good"}">${s.location === "wan" ? "remote" : "home"}</span></div></div></div>`;
+        <span class="chip ${s.location === "wan" ? "" : "good"}">${s.location === "wan" ? "remote" : "home"}</span>${s.server === "jellyfin" ? `<span class="chip">Jellyfin</span>` : ""}</div></div></div>`;
 }
 
 async function loadPlex() {
   if (!CFG.features.plex) return;
+  // (#18) Jellyfin too: the panel says which server(s) it shows
+  setText("plex-title", CFG.features.jellyfin ? (CFG.features.tautulli ? "Now Playing" : "Jellyfin · Now Playing") : "Plex · Now Playing");
   try {
     const d = await getJSON("/api/plex");
     const summary = `${(+d.bandwidth / 1000 || 0).toFixed(1)} Mbps · ${esc(d.transcodes)} transcoding`;
@@ -29,8 +31,9 @@ async function loadPlex() {
     if (setHTML("plex", d.sessions.length ? d.sessions.map(streamCard).join("") : `<div class="empty">Nobody's watching right now. 🍿</div>`))
       requestAnimationFrame(plexHint);
   } catch (e) {
-    setHTML("plex", `<div class="err">Tautulli: ${esc(e.message)}</div>`);
-    kpi("k-plex", "warn", "?", "Tautulli unreachable");
+    const src = CFG.features.tautulli ? (CFG.features.jellyfin ? "Tautulli and Jellyfin" : "Tautulli") : "Jellyfin";
+    setHTML("plex", `<div class="err">${esc(src)}: ${esc(e.message)}</div>`);
+    kpi("k-plex", "warn", "?", `${esc(src)} unreachable`);
   }
 }
 

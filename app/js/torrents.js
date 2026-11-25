@@ -2,12 +2,17 @@
 const TOR_STATE = {downloading: "downloading", stalledDL: "stalled", metaDL: "fetching metadata", forcedDL: "forced",
                    queuedDL: "queued", checkingDL: "checking", pausedDL: "paused", stoppedDL: "stopped"};
 
+let torDownloads = [];
+let sabQueue = [];
+let allTabPicked = false;
+
 function torTab(which) {
-  ["dl", "seed", "nzb"].forEach(w => { $(w).hidden = w !== which; $("t-" + w).classList.toggle("on", w === which); });
+  ["all", "dl", "seed", "nzb"].forEach(w => { $(w).hidden = w !== which; $("t-" + w).classList.toggle("on", w === which); });
 }
-$("t-dl").addEventListener("click", () => torTab("dl"));
-$("t-seed").addEventListener("click", () => torTab("seed"));
-$("t-nzb").addEventListener("click", () => torTab("nzb"));
+$("t-dl").addEventListener("click", () => { allTabPicked = true; torTab("dl"); });
+$("t-seed").addEventListener("click", () => { allTabPicked = true; torTab("seed"); });
+$("t-nzb").addEventListener("click", () => { allTabPicked = true; torTab("nzb"); });
+$("t-all").addEventListener("click", () => { allTabPicked = true; torTab("all"); });
 
 function torRow(t, dl) {
   const pct = (+t.progress * 100 || 0).toFixed(1);
@@ -19,10 +24,29 @@ function torRow(t, dl) {
     <div class="s">${stats}${t.category ? `<span>${esc(t.category)}</span>` : ""}</div></div>`;
 }
 
+function srcRow(html, label) {
+  return html.replace(/<div class="t"([^>]*)>/, `<div class="t"$1><span class="src">${label}</span>`);
+}
+
+function allTabCheck() {
+  if (!(CFG.features.qbit && CFG.features.sab)) return;
+  $("t-all").hidden = false;
+  if (!allTabPicked) { allTabPicked = true; torTab("all"); }
+}
+
+function renderAll() {
+  const rows = torDownloads.map(t => srcRow(torRow(t, true), "Torrent"))
+    .concat(sabQueue.map(j => srcRow(sabRow(j), "Usenet")));
+  setHTML("all", rows.length ? rows.join("") : `<div class="empty">Nothing downloading.</div>`);
+  setText("t-all", `All (${torDownloads.length + sabQueue.length})`);
+}
+
 async function loadQbit() {
   if (!CFG.features.qbit) { document.body.classList.add("no-tor-client"); return; }   // (wall mode: no empty torrent lists)
+  allTabCheck();
   try {
     const q = await getJSON("/api/qbit");
+    torDownloads = q.downloading || [];
     setHTML("dl", q.downloading.length ? q.downloading.map(t => torRow(t, true)).join("") : `<div class="empty">Nothing downloading.</div>`);
     setHTML("seed", q.seeding.length ? q.seeding.map(t => torRow(t, false)).join("") : `<div class="empty">No active uploads right now.</div>`);
     setText("t-dl", `Downloading (${q.downloading.length})`);
@@ -45,6 +69,7 @@ async function loadQbit() {
     }
     $("banner").hidden = !q.vpn_leak;
     if (q.vpn_leak) setText("banner", "qBittorrent is using your home IP. The VPN is not protecting it!");
+    renderAll();
   } catch (e) {
     setHTML("dl", `<div class="err">Torrents: ${esc(e.message)}</div>`);
     kpi("k-net", "warn", "torrents ?", "unreachable");
@@ -71,12 +96,15 @@ async function loadSab() {
   // only SABnzbd set up: show the Usenet tab instead of the (hidden) torrents tabs
   if (!CFG.features.qbit && !sabTabPicked) { sabTabPicked = true; torTab("nzb"); }
   document.body.classList.add("has-sab");   // (wall mode shows the Usenet list when there's no torrent client)
+  allTabCheck();
   try {
     const s = await getJSON("/api/sab");
+    sabQueue = s.queue || [];
     const queue = s.queue.length ? s.queue.map(sabRow).join("") : `<div class="empty">Usenet queue is empty.</div>`;
     const hist = s.history.length ? s.history.map(sabHistRow).join("") : `<div class="empty">No recent jobs.</div>`;
     setHTML("nzb", queue + `<div class="nzb-h">Recent</div>` + hist);
     setText("t-nzb", `Usenet (${s.queue_total})`);
+    renderAll();
   } catch (e) {
     setHTML("nzb", `<div class="err">SABnzbd: ${esc(e.message)}</div>`);
   }

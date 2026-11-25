@@ -113,7 +113,7 @@ sign-in off: add `AUTH: proxy` under `environment:` in `docker-compose.yml` and 
 ### 7. Finish setup in the browser
 
 Click the **⚙** button and open **Setup**. It checks your install and tells you how to fix anything that's missing.
-Then connect your apps under **Integrations**: qBittorrent or Transmission, SABnzbd, Seerr and Tautulli each have a **Test** button.
+Then connect your apps under **Integrations**: qBittorrent or Transmission, SABnzbd, Seerr, Tautulli and Jellyfin each have a **Test** button.
 
 **Adding services by hand** (Settings → Services → **Services added by hand**): click **+ Add service** once for each
 service and fill in its name and the address to check. Typing a new name into an existing row renames that service, it

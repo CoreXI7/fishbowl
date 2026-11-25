@@ -50,6 +50,7 @@ followed). Health checks run at most every 25 s whatever the number of open brow
 | `sabnzbd.url` | `SAB_KEY` | Usenet tab in the Downloads card: SABnzbd's queue and its last 10 jobs |
 | `seerr.url` | `SEERR_KEY` | Pending requests with Approve / Decline (Overseerr, Jellyseerr, Seerr) |
 | `tautulli.url` | `TAUTULLI_KEY` | Plex now playing |
+| `jellyfin.url` | `JELLYFIN_KEY` | Jellyfin now playing, in the same panel (Jellyfin: Dashboard → API Keys). The key is sent in a header, never to the browser; posters come through the dashboard |
 
 An integration turns on when its URL and keys are set (Transmission: its URL alone, if it has no login). Changing an integration's URL on the page requires typing its
 keys again, so a changed address can't receive the saved ones. Keys never go back to the browser (the page only sees
@@ -75,7 +76,7 @@ Up to 200 entries: full addresses (`198.51.100.7`, `2001:db8::1`) or prefixes en
 | `CADDYFILE` | (off) | Caddy (no NPM): your Caddyfile's path inside the container, with its folder mounted read-only (e.g. `- /etc/caddy:/caddy:ro`, then `CADDYFILE: /caddy/Caddyfile`). Each site block with a `reverse_proxy` to an http(s) upstream is a service; `import` of files in that folder and snippets (with arguments) are followed. `forward_auth` marks it as behind SSO, `basic_auth` as behind a sign-in. Only the Caddyfile and the files it imports are read; NPM and plain Nginx win a name clash. Not read: wildcard sites (`*.example.com` with `@name host` matchers), Caddy's JSON config; add those services by hand |
 | `PUID`, `PGID` | `1000` | Compose only: the user the container runs as (`user:` line). The data folder must belong to it, and the collector must know it (`sudo bash collector/install.sh --uid <PUID>`) |
 | `CHECK_VIA_PROXY` | (none) | `host[/path] …`: the same as `via_proxy` on the settings page. When set, it wins and the field is locked |
-| `QBIT_URL`, `TRANSMISSION_URL`, `SAB_URL`, `SEERR_URL`, `TAUTULLI_URL` and the keys above | (none) | Integration settings from the environment; the settings page then shows them locked |
+| `QBIT_URL`, `TRANSMISSION_URL`, `SAB_URL`, `SEERR_URL`, `TAUTULLI_URL`, `JELLYFIN_URL` and the keys above | (none) | Integration settings from the environment; the settings page then shows them locked |
 | `HOME_IP` | (none) | Same as `qbittorrent.home_ip` |
 | `DATA_DIR` | `/data` | Settings, keys (`secrets.json`, mode 600), acknowledgements, uploads (writable by `PUID:PGID`) |
 | `HW_FILE`, `SEC_DETAIL_FILE`, `REQ_DIR` | `/hw/hw.json`, next to it, `/req` | Where the root collector's files are mounted |

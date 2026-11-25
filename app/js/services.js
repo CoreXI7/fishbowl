@@ -25,7 +25,9 @@ function serviceTile(s) {
     : `<span class="lt">${letter}</span>`;
   // healthy tiles stay quiet (the group header and the Services KPI say "all up"); only problems get a badge,
   // marked by shape and text too, not just colour
-  return `<a class="app ${s.up ? "" : "down"}" href="${esc(app.url || "https://" + s.name)}" target="_blank" rel="noopener" title="${esc(tip)}">
+  // (#19) a hand-added name with spaces isn't an address: without a link of its own, the tile doesn't navigate
+  const link = app.url || (/\s/.test(s.name) ? "" : "https://" + s.name);
+  return `<a class="app ${s.up ? "" : "down"}"${link ? ` href="${esc(link)}"` : ""} target="_blank" rel="noopener" title="${esc(tip)}">
     <span class="ic">${img}${s.up ? "" : `<span class="st down" aria-hidden="true">!</span>`}</span>
     <span class="nm">${esc(label)}${s.up ? "" : `<small> · down</small>`}</span></a>`;
 }

@@ -36,6 +36,7 @@ INTEGRATIONS = {   # name -> url env var, [(secret field, env var)]
     "tautulli": ("TAUTULLI_URL", [("tautulli_key", "TAUTULLI_KEY")]),
     "transmission": ("TRANSMISSION_URL", [("tr_user", "TRANSMISSION_USER"), ("tr_pass", "TRANSMISSION_PASS")]),
     "sabnzbd": ("SAB_URL", [("sab_key", "SAB_KEY")]),
+    "jellyfin": ("JELLYFIN_URL", [("jellyfin_key", "JELLYFIN_KEY")]),   # (#18) now playing, like Tautulli
 }
 OPTIONAL_LOGIN = ("transmission",)   # works with a URL alone; its username + password are both set or both empty
 LOGIN_NAMES = ("qbittorrent", "transmission")   # (what the "type it again" message calls their secrets)
@@ -152,6 +153,7 @@ def _seed():
         "tautulli": {"url": t.get("tautulli", {}).get("url", "")},
         "transmission": {"url": t.get("transmission", {}).get("url", "")},
         "sabnzbd": {"url": t.get("sabnzbd", {}).get("url", "")},
+        "jellyfin": {"url": t.get("jellyfin", {}).get("url", "")},
     }
 
 
@@ -225,7 +227,9 @@ def _obj(v, what):
     return v
 
 
-HOST = r"(?!(__proto__|constructor|prototype)$)(\*\.)?[A-Za-z0-9_.-]{1,253}"   # NPM allows "_" and "*." (wildcards); never a JS built-in name
+# NPM allows "_" and "*." (wildcards); never a JS built-in name. (#19) Spaces inside a name, never at either end, so a hand-added
+# service can be called "Home Assistant" (it's then not an address: its tile only opens with a link of its own).
+HOST = r"(?!(__proto__|constructor|prototype)$)(\*\.)?[A-Za-z0-9_.-](?:[A-Za-z0-9_. -]{0,251}[A-Za-z0-9_.-])?"
 URL = r"https?://[^\s<>\"']{1,500}"
 # an integration's URL: a host and maybe a path, no query, fragment or user (urllib drops what follows #, so
 # "http://camera/snap.jpg#" made the poster proxy return the camera's picture)
@@ -302,8 +306,11 @@ def _apps(apps_in):
     for host, a in apps_in.items():
         host = _s(host, 253, "host", HOST)
         a = a if isinstance(a, dict) else {}
+        icon = a.get("icon")
+        if isinstance(icon, str) and not icon.strip().startswith("/"):   # (#17) dashboard-icons names are lower-case-with-dashes:
+            icon = re.sub(r"\s+", "-", icon.strip().lower())             # "Sabnzbd" / "Home Assistant" find their icon too
         entry = {k: v for k, v in {"label": _s(a.get("label"), 60, f"label for {host}"),
-                                   "icon": _s(a.get("icon"), 140, f"icon for {host}", ICON),
+                                   "icon": _s(icon, 140, f"icon for {host}", ICON),
                                    "url": _s(a.get("url"), 500, f"link for {host}", URL)}.items() if v}
         if host and entry:
             apps[host] = entry

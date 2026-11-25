@@ -15,7 +15,7 @@ Plain Python, no extra packages, one Docker image (`ghcr.io/corexi7/fishbowl`, a
 ## Features
 
 - **Services:** up or down, found on their own from Nginx Proxy Manager, plain Nginx configs or a Caddyfile, or added by hand
-- **Plex:** who is watching what (via Tautulli)
+- **Now playing:** who is watching what on Plex (via Tautulli) and/or Jellyfin
 - **Requests:** new Seerr requests, with Approve and Decline
 - **Downloads:** qBittorrent or Transmission progress and speeds, SABnzbd's Usenet queue, and a warning if qBittorrent shows
   your real IP instead of your VPN's

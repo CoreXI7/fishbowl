@@ -27,7 +27,7 @@ def load_app(**env):
             "HW_FILE": os.path.join(tmp, "hw", "hw.json"), "REQ_DIR": os.path.join(tmp, "req"), "DEMO": "",
             "ORIGIN": "", "SETTINGS_UI": "1"}
     for k in ("QBIT_URL", "QBIT_USER", "QBIT_PASS", "SEERR_URL", "SEERR_KEY", "TAUTULLI_URL", "TAUTULLI_KEY",
-              "TRANSMISSION_URL", "TRANSMISSION_USER", "TRANSMISSION_PASS", "SAB_URL", "SAB_KEY", "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER", "LISTEN", "AUTH"):
+              "TRANSMISSION_URL", "TRANSMISSION_USER", "TRANSMISSION_PASS", "SAB_URL", "SAB_KEY", "JELLYFIN_URL", "JELLYFIN_KEY", "HOME_IP", "CHECK_VIA_PROXY", "PROXY_SECRET", "USER_HEADER", "LISTEN", "AUTH"):
         os.environ.pop(k, None)
     os.environ.update({**base, **env})
     for m in ("settings", "demo", "auth", "signin_core", "signin_core.web", "signin_core.auth", "signin_core.verify",
