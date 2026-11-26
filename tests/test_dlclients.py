@@ -25,8 +25,9 @@ def tor(name, **kw):
 
 class FakeTransmission:
     """Answers 409 with a session id until the request carries it, then whatever .reply() returns for the method."""
-    def __init__(self, torrents=(), sid="abc123", always_409=False):
+    def __init__(self, torrents=(), sid="abc123", always_409=False, stats=None):
         self.torrents, self.sid, self.always_409 = list(torrents), sid, always_409
+        self.stats = stats or {}                   # extra / overriding top-level session-stats fields
         self.up = Upstream({"/transmission/rpc": self.route})
 
     def route(self, h):
@@ -36,6 +37,7 @@ class FakeTransmission:
         if method == "session-stats":
             args = {"current-stats": {"downloadedBytes": 10, "uploadedBytes": 20},
                     "cumulative-stats": {"downloadedBytes": 1000, "uploadedBytes": 2000}, "downloadSpeed": 0}
+            args.update(self.stats)
         else:
             args = {"torrents": self.torrents}
         return 200, {}, {"result": "success", "arguments": args}
@@ -90,6 +92,17 @@ class TransmissionClient(unittest.TestCase):
         self.assertTrue(all(h.get("Authorization") == "Basic bWU6cHc=" for _, _, h in f2.up.hits))
         with self.assertRaises(ValueError):
             dlclients.Transmission(f2.up.url, "me", "")
+
+    def test_session_speeds_are_read_from_the_top_level(self):          # issue #21
+        f = self.fake([tor("A", rateDownload=7)], stats={"downloadSpeed": 1500, "uploadSpeed": 300})
+        v = dlclients.transmission_view(dlclients.Transmission(f.up.url))
+        self.assertEqual((v["dl_speed"], v["up_speed"]), (1500, 300))
+
+    def test_speeds_fall_back_to_the_torrents_rates(self):
+        f = self.fake([tor("A", rateDownload=7), tor("B", rateDownload=5), tor("S", status=6, rateDownload=0, rateUpload=40, percentDone=1)],
+                      stats={"downloadSpeed": None})
+        v = dlclients.transmission_view(dlclients.Transmission(f.up.url))
+        self.assertEqual((v["dl_speed"], v["up_speed"]), (12, 40))
 
     def test_shape_matches_qbit_and_status_map(self):
         f = self.fake([tor("dl"), tor("seed", status=6, rateUpload=50, percentDone=1), tor("stopped-done", status=0, percentDone=1),

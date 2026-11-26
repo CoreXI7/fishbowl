@@ -14,13 +14,15 @@ function streamCard(s) {
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div class="sub">${icon} ${esc(s.state)} · ${pct}%${left}</div>
       <div class="chips">${mode}${res ? `<span class="chip">${esc(res)}</span>` : ""}<span class="chip">${(s.bandwidth / 1000).toFixed(1)} Mbps</span>
-        <span class="chip ${s.location === "wan" ? "" : "good"}">${s.location === "wan" ? "remote" : "home"}</span>${s.server === "jellyfin" ? `<span class="chip">Jellyfin</span>` : ""}</div></div></div>`;
+        <span class="chip ${s.location === "wan" ? "" : "good"}">${s.location === "wan" ? "remote" : "home"}</span>${CFG.features.jellyfin && CFG.features.tautulli ? `<span class="chip">${s.server === "jellyfin" ? "Jellyfin" : "Plex"}</span>` : ""}</div></div></div>`;
 }
 
 async function loadPlex() {
   if (!CFG.features.plex) return;
   // (#18) Jellyfin too: the panel says which server(s) it shows
   setText("plex-title", CFG.features.jellyfin ? (CFG.features.tautulli ? "Now Playing" : "Jellyfin · Now Playing") : "Plex · Now Playing");
+  // (#23) the top tile names the server(s) too; a source chip on each stream only when both are set up
+  setText("k-plex-l", CFG.features.jellyfin ? (CFG.features.tautulli ? "🎬 Plex & Jellyfin" : "🎬 Jellyfin") : "🎬 Plex");
   try {
     const d = await getJSON("/api/plex");
     const summary = `${(+d.bandwidth / 1000 || 0).toFixed(1)} Mbps · ${esc(d.transcodes)} transcoding`;

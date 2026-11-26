@@ -107,12 +107,19 @@ def transmission_view(client, home_ip=""):
     cur = cur if isinstance(cur, dict) else {}
     cum = stats.get("cumulative-stats")
     cum = cum if isinstance(cum, dict) else {}
+    # The session speeds are top-level in session-stats; current-stats only has byte counters (#21). If a
+    # Transmission leaves them out, add up the torrents' own rates instead.
+    dl_speed, up_speed = num(stats.get("downloadSpeed"), None), num(stats.get("uploadSpeed"), None)
+    if dl_speed is None:
+        dl_speed = sum(x["dlspeed"] for x in slim)
+    if up_speed is None:
+        up_speed = sum(x["upspeed"] for x in slim)
     return {
         "connection": "connected",
         "external_ip": "",
         "vpn_check": False,
         "vpn_leak": False,
-        "dl_speed": num(cur.get("downloadSpeed")), "up_speed": num(cur.get("uploadSpeed")),
+        "dl_speed": dl_speed, "up_speed": up_speed,
         "dl_total": num(cur.get("downloadedBytes")), "up_total": num(cur.get("uploadedBytes")),
         "dl_alltime": num(cum.get("downloadedBytes")), "up_alltime": num(cum.get("uploadedBytes")),
         "total": len(slim),
